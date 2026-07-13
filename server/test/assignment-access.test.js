@@ -1,0 +1,113 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import { schemaSql } from '../src/db/schema.js';
+import { createManagedAssignment, deleteManagedAssignment, listAssignmentsForUser } from '../src/services/assignment-access.js';
+
+function createFixtureDb() {
+  const database = new DatabaseSync(':memory:');
+  database.exec('PRAGMA foreign_keys = ON');
+  database.exec(schemaSql);
+
+  const addUser = database.prepare('INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)');
+  const teacherUserId = addUser.run('teacher', '123456', 'teacher', '陈老师').lastInsertRowid;
+  const otherTeacherUserId = addUser.run('teacher2', '123456', 'teacher', '李老师').lastInsertRowid;
+  const studentUserId = addUser.run('s51001', '123456', 'student', '赵一').lastInsertRowid;
+
+  const teacherId = database.prepare('INSERT INTO teachers (user_id, title, school) VALUES (?, ?, ?)').run(teacherUserId, '教师', '惠安一中').lastInsertRowid;
+  const otherTeacherId = database.prepare('INSERT INTO teachers (user_id, title, school) VALUES (?, ?, ?)').run(otherTeacherUserId, '教师', '惠安一中').lastInsertRowid;
+  const studentId = database.prepare('INSERT INTO students (user_id, student_no, grade, school) VALUES (?, ?, ?, ?)').run(studentUserId, '1', '高二', '惠安一中').lastInsertRowid;
+
+  const classId = database.prepare('INSERT INTO classes (name, grade, teacher_id) VALUES (?, ?, ?)').run('510班', '高二', teacherId).lastInsertRowid;
+  const otherClassId = database.prepare('INSERT INTO classes (name, grade, teacher_id) VALUES (?, ?, ?)').run('511班', '高二', otherTeacherId).lastInsertRowid;
+  database.prepare('INSERT INTO class_students (class_id, student_id) VALUES (?, ?)').run(classId, studentId);
+
+  const addAssignment = database.prepare('INSERT INTO assignments (class_id, title, prompt, essay_type, full_score, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+  const olderAssignmentId = addAssignment.run(classId, '旧任务', '旧材料', '材料作文', 60, '2026-06-20 08:00:00').lastInsertRowid;
+  const newerAssignmentId = addAssignment.run(classId, '新任务', '新材料', '材料作文', 60, '2026-06-21 08:00:00').lastInsertRowid;
+  const otherAssignmentId = addAssignment.run(otherClassId, '别班任务', '别班材料', '材料作文', 60, '2026-06-22 08:00:00').lastInsertRowid;
+  const essayId = database.prepare('INSERT INTO essays (assignment_id, student_id, title, original_text) VALUES (?, ?, ?, ?)').run(newerAssignmentId, studentId, '我的作文', '正文').lastInsertRowid;
+
+  return {
+    database,
+    teacherUser: { id: teacherUserId, role: 'teacher' },
+    otherTeacherUser: { id: otherTeacherUserId, role: 'teacher' },
+    studentUser: { id: studentUserId, role: 'student' },
+    classId,
+    olderAssignmentId,
+    newerAssignmentId,
+    otherAssignmentId,
+    essayId
+  };
+}
+
+test('teacher assignment management lists only managed assignments by newest first', () => {
+  const fixture = createFixtureDb();
+
+  const result = listAssignmentsForUser(fixture.database, fixture.teacherUser, {});
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.rows.map((row) => row.title), ['新任务', '旧任务']);
+  assert.deepEqual(result.rows.map((row) => row.class_name), ['510班', '510班']);
+});
+
+test('teacher assignment management collapses duplicate task rows and keeps submissions', () => {
+  const fixture = createFixtureDb();
+
+  const duplicateId = fixture.database.prepare(`
+    INSERT INTO assignments (class_id, title, prompt, essay_type, full_score, deadline, created_at)
+    SELECT class_id, title, prompt, essay_type, full_score, deadline, '2026-06-21 08:00:01'
+    FROM assignments WHERE id = ?
+  `).run(fixture.newerAssignmentId).lastInsertRowid;
+
+  const result = listAssignmentsForUser(fixture.database, fixture.teacherUser, {});
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.rows.map((row) => row.title), ['新任务', '旧任务']);
+  assert.equal(result.rows[0].id, fixture.newerAssignmentId);
+  assert.equal(result.rows.some((row) => row.id === duplicateId), false);
+});
+
+test('teacher publishing the same assignment twice reuses the existing task', () => {
+  const fixture = createFixtureDb();
+  const body = {
+    class_id: fixture.classId,
+    title: '重复任务',
+    prompt: '同一份材料',
+    essay_type: '材料作文',
+    full_score: 60,
+    deadline: ''
+  };
+
+  const first = createManagedAssignment(fixture.database, fixture.teacherUser, body);
+  const second = createManagedAssignment(fixture.database, fixture.teacherUser, body);
+  const count = fixture.database.prepare(`
+    SELECT COUNT(*) AS count FROM assignments
+    WHERE class_id = ? AND title = ? AND prompt = ? AND essay_type = ? AND full_score = ? AND COALESCE(deadline, '') = ''
+  `).get(fixture.classId, body.title, body.prompt, body.essay_type, body.full_score).count;
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(second.assignment.id, first.assignment.id);
+  assert.equal(count, 1);
+});
+
+test('student assignment list is scoped to joined class and hides deleted assignments', () => {
+  const fixture = createFixtureDb();
+
+  const deleted = deleteManagedAssignment(fixture.database, fixture.teacherUser, fixture.newerAssignmentId);
+  const result = listAssignmentsForUser(fixture.database, fixture.studentUser, { classId: fixture.classId });
+
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(result.rows.map((row) => row.title), ['旧任务']);
+  assert.equal(fixture.database.prepare('SELECT 1 FROM essays WHERE id = ?').get(fixture.essayId), undefined);
+});
+
+test('teacher cannot delete another teacher assignment', () => {
+  const fixture = createFixtureDb();
+
+  const result = deleteManagedAssignment(fixture.database, fixture.otherTeacherUser, fixture.newerAssignmentId);
+
+  assert.equal(result.status, 403);
+  assert.equal(fixture.database.prepare('SELECT 1 FROM assignments WHERE id = ?').get(fixture.newerAssignmentId)['1'], 1);
+});

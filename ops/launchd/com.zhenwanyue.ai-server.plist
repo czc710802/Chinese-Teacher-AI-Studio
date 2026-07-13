@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.zhenwanyue.ai-server</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/chenxiansheng/Desktop/workspace/高中作文AI批改App</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/chenxiansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node</string>
+    <string>/Users/chenxiansheng/Desktop/workspace/高中作文AI批改App/server/src/index.js</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOST</key>
+    <string>0.0.0.0</string>
+    <key>PORT</key>
+    <string>4000</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>PATH</key>
+    <string>/Users/chenxiansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PUBLIC_APP_ORIGIN</key>
+    <string>https://pi.zhenwanyue.icu</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/gaozhong-zuowen-server.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/gaozhong-zuowen-server.err.log</string>
+</dict>
+</plist>

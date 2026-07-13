@@ -1,0 +1,8 @@
+tunnel: your-tunnel-name
+credentials-file: /Users/your-user/.cloudflared/your-tunnel-credentials.json
+protocol: http2
+
+ingress:
+  - hostname: pi.zhenwanyue.icu
+    service: http://127.0.0.1:4000
+  - service: http_status:404

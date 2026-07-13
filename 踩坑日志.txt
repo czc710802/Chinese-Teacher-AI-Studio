@@ -1,0 +1,71 @@
+
+## 2026-06-21 22:30：大规模升级优化 — AI辅导老师/仿写/升格/阅卷模拟/教师报告
+### 升级内容
+1. **数据库扩展**：新增 7 张表 — ai_tutor_conversations（辅导对话）、ai_writing_exercises（仿写训练）、ai_upgrade_records（升格记录）、mock_marking_records（阅卷模拟）、teacher_reports（教师晨报/周报/月报）、material_library（素材库）、student_weekly_reports（学生周报）
+2. **后端路由**：新增 server/src/routes/ai-tutor.js，注册到 /api/ai/ 路径，包含所有新功能的 API
+3. **AI 服务**：新增 server/src/services/ai-tutor.js，包含 tutorChat/generateWritingExercise/upgradeEssay/mockMark/arbitrateMark/generateDailyBriefing/generateClassInsight 等 AI 函数
+4. **Prompt 升级**：重写 buildReviewPrompt，新增 gaokao_dimensions 字段，按高考内容/表达/发展等级三维度评分
+5. **前端组件**：AI 辅导老师聊天窗口（AiTutorChat）、仿写训练（AiWritingExercise）、升格训练（AiUpgradeTrainer）、高考阅卷模拟（MockMarkingSystem）、教师报告（TeacherReportsPanel）、素材库（MaterialLibrary）
+6. **CSS 追加**：聊天窗口、各新组件样式、手机端适配
+
+### 遇到的问题
+1. schema.js 的 SQL 追加：Python 脚本把新 SQL 写在了模板字符串反引号外部，导致 Node.js 解析报错 SyntaxError。解决：重新获取旧模板字符串内容 + 新表 SQL，在反引号内拼接后写回。
+2. openai.js export 替换：Python 的 replace 操作去掉了函数名后的括号（export function getTextProvider → 丢了()），导致 SyntaxError。解决：单独替换为带括号的版本。
+3. callTextModel 未成功 export：首次替换脚本中的条件判断 `if 'export async function callTextModel' not in content` 因为匹配不精确（import 开头有空格等）导致遗漏。解决：直接替换 `\nfunction callTextModel` 为 `\nexport async function callTextModel`。
+4. 端口占用 EADDRINUSE：旧进程未清理干净，需要多次 kill -9 并确认端口释放。
+
+### 注意事项
+- 修改前端 main.jsx 的 JSX 时，引号嵌套复杂，始终用 Python 脚本处理
+- 修改 schema.js 时，确保新 SQL 在模板字符串（反引号）内部
+- schema.js 中的 `--` SQL 注释在模板字符串内是合法的（SQLite 语法）
+- 新路由 ai-tutor.js 使用动态 import('./analytics.js') 避免循环依赖
+- 修改后端后必须重启 Express
+- 前端修改后必须 pnpm build
+- 当前服务状态：新版 Express + 新版前端 + Cloudflare Tunnel 正常运行
+- 公网访问：https://pi.zhenwanyue.icu 正常响应
+- 登录凭据：teacher / 123456（教师）；student / 123456（学生）
+
+### 升级后新增路由
+- POST /api/ai/tutor/chat — AI 辅导老师对话
+- GET /api/ai/tutor/history/:essayId — 对话历史
+- POST /api/ai/writing-exercise/generate — 生成仿写练习
+- POST /api/ai/writing-exercise/submit — 提交仿写
+- GET /api/ai/writing-exercises — 练习历史
+- POST /api/ai/upgrade — 作文升格
+- GET /api/ai/upgrade-records — 升格记录
+- POST /api/ai/mock-mark/start — 高考阅卷模拟
+- GET /api/ai/mock-mark/records/:essayId — 模拟记录
+- POST /api/ai/teacher/report/generate — 生成晨报/周报/月报
+- GET /api/ai/teacher/reports/:type — 获取报告
+- GET /api/ai/materials — 素材库查询
+- POST /api/ai/materials — 添加素材
+
+## 2026-06-21 22:50：修复 AI 辅导老师无法回复
+### 问题
+AI 辅导老师（/api/ai/tutor/chat）在浏览器中发送问题后无回复。
+
+### 原因
+1. `callTextModel()` 函数在调用 DeepSeek 时全局固定了 `response_format: { type: 'json_object' }`。
+2. DeepSeek 的 `json_object` 模式要求 prompt 中必须包含 "json" 关键字，否则 API 返回错误。
+3. `tutorChat()` 函数返回的是自然语言文本，prompt 中没有 "json" 关键字，导致 DeepSeek API 报错。
+
+### 解决
+1. 修改 `server/src/services/openai.js`：
+   - `callTextModel(prompt)` → `callTextModel(prompt, options = {})`，新增可选 `options.jsonMode` 参数
+   - `callDeepSeek(prompt)` → `callDeepSeek(prompt, options = {})`，只在 `options.jsonMode` 为 true 时才设置 `response_format: { type: 'json_object' }`
+   - `reviewEssay()` 中的调用改为 `callTextModel(prompt, { jsonMode: true })`
+2. 修改 `server/src/services/ai-tutor.js`：
+   - `generateWritingExercise`、`upgradeEssay`、`mockMark`、`arbitrateMark`、`generateDailyBriefing`、`generateClassInsight` 的 `callTextModel(prompt)` 全部改为 `callTextModel(prompt, { jsonMode: true })`
+   - `tutorChat` 保持 `return callTextModel(prompt)` 不变（无 jsonMode）
+
+### 验证
+- curl 测试 AI 辅导老师：AI 正常回复 400+ 字的建议 ✅
+- 所有 JSON 输出的 function 的 prompt 中都包含 "JSON" 或 "json" 关键字 ✅
+- 公网 https://pi.zhenwanyue.icu 可正常访问 ✅
+
+### 注意事项
+- DeepSeek 的 `json_object` response_format 模式有**两个限制**：
+  (1) prompt 必须包含 "json" 关键字
+  (2) 只能用于输出 JSON 的场景，不能用于自然语言对话
+- 因此 `callTextModel` 不能全局固定 jsonMode，需要按需传入
+- 后续新增 AI 功能时要注意选择正确的调用模式

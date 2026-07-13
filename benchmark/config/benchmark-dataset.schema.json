@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pi.zhenwanyue.icu/schemas/benchmark-dataset.schema.json",
+  "title": "BenchmarkDataset",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "title",
+    "authorId",
+    "grade",
+    "className",
+    "wordCount",
+    "originalEssay",
+    "oldReport",
+    "newReport",
+    "compareResult",
+    "benchmarkScore",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string" },
+    "authorId": { "type": "string" },
+    "grade": { "type": "string" },
+    "className": { "type": "string" },
+    "wordCount": { "type": "integer", "minimum": 0 },
+    "originalEssay": { "type": "string" },
+    "oldReport": { "type": ["object", "string", "null"] },
+    "newReport": { "type": ["object", "string", "null"] },
+    "compareResult": { "type": ["object", "null"] },
+    "benchmarkScore": { "type": ["object", "null"] },
+    "createdAt": { "type": "string" },
+    "updatedAt": { "type": "string" }
+  }
+}

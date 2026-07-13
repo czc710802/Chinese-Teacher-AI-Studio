@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>icu.zhenwanyue.gaozhong-zuowen.tunnel</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/chenxiansheng/Desktop/workspace/高中作文AI批改App</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/chenxiansheng/Desktop/workspace/高中作文AI批改App/tools/cloudflared</string>
+    <string>tunnel</string>
+    <string>--config</string>
+    <string>/Users/chenxiansheng/Desktop/workspace/高中作文AI批改App/tools/cloudflared-production.yml</string>
+    <string>run</string>
+    <string>gaozhong-yuwen</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/gaozhong-zuowen-tunnel.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/gaozhong-zuowen-tunnel.log</string>
+</dict>
+</plist>

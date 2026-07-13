@@ -1,0 +1,8 @@
+tunnel: gaozhong-yuwen
+credentials-file: /Users/chenxiansheng/.cloudflared/4399924f-3dea-4959-9d8b-944ce50d41d5.json
+protocol: http2
+
+ingress:
+  - hostname: pi.zhenwanyue.icu
+    service: http://127.0.0.1:4000
+  - service: http_status:404

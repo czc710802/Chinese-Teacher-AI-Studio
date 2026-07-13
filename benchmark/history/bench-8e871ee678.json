@@ -1,0 +1,144 @@
+{
+  "id": "bench-8e871ee678",
+  "title": "Benchmark Smoke 作文",
+  "authorId": "anon-0ba8feff41",
+  "grade": "高二",
+  "className": "Smoke班",
+  "wordCount": 33,
+  "originalEssay": "青年应当把个人选择与时代责任结合起来，在现实行动中证明理想的价值。",
+  "oldReport": {
+    "overall": "旧报告指出立意积极。",
+    "logicAnalysis": "逻辑一般。",
+    "teacherComment": "继续努力。"
+  },
+  "newReport": {
+    "title": "Benchmark Smoke 作文",
+    "provider": "mock",
+    "model": "mock-benchmark",
+    "overall": "这是一份针对《Benchmark Smoke 作文》的 Benchmark 批改报告。报告从等级原因、核心优点、真实短板和后续训练四个层面展开，重点检查是否具备高中语文教师可直接使用的指导价值。",
+    "topicIntentAnalysis": "审题立意能够围绕材料关键词展开，重点评估中心判断是否准确、是否存在偏题风险，以及价值判断是否具备现实意义与思辨深度。",
+    "structureAnalysis": "结构分析覆盖开头、主体、分论点、材料安排、层次推进、过渡照应和结尾升华，指出段落之间是否形成递进关系。",
+    "logicAnalysis": "逻辑分析重点检查观点、论据和论证之间的关系，评估概念界定、因果链条、材料与观点的一致性，以及是否存在推理跳跃或论证漏洞。",
+    "languageAnalysis": "语言分析覆盖语言风格、句式节奏、修辞意识、书面表达、口语化问题和高级表达替换方向。",
+    "materialAnalysis": "素材分析判断材料是否典型、新颖、真实、丰富、贴题，并给出可替换的素材方向。",
+    "argumentAnalysis": "论证分析要求材料后必须有解释、分析和回扣，避免只有例子没有证明。",
+    "teacherComment": "从重点高中语文教师角度看，这篇作文已经具备基本立意，但要真正提升等级，需要把宏大表态转化为可证明的判断，把材料转化为论据，把结尾转化为思想提升。",
+    "revisionSuggestions": [
+      "逐段补齐“观点-解释-材料-分析-回扣”链条",
+      "把抽象口号改成可论证判断",
+      "材料后补写因果分析句"
+    ],
+    "growthSuggestions": [
+      "审题关键词关系训练",
+      "论证链补全训练",
+      "素材迁移训练",
+      "语言升格训练"
+    ],
+    "score": 48,
+    "level": "二类文",
+    "latencyMs": 0,
+    "tokenUsage": {
+      "promptTokens": 1200,
+      "completionTokens": 1800,
+      "totalTokens": 3000
+    },
+    "cost": 0
+  },
+  "compareResult": {
+    "dimensions": {
+      "立意分析": {
+        "oldLength": 10,
+        "newLength": 58,
+        "improved": true,
+        "oldExcerpt": "旧报告指出立意积极。",
+        "newExcerpt": "审题立意能够围绕材料关键词展开，重点评估中心判断是否准确、是否存在偏题风险，以及价值判断是否具备现实意义与思辨深度。"
+      },
+      "审题分析": {
+        "oldLength": 10,
+        "newLength": 58,
+        "improved": true,
+        "oldExcerpt": "旧报告指出立意积极。",
+        "newExcerpt": "审题立意能够围绕材料关键词展开，重点评估中心判断是否准确、是否存在偏题风险，以及价值判断是否具备现实意义与思辨深度。"
+      },
+      "结构分析": {
+        "oldLength": 10,
+        "newLength": 51,
+        "improved": true,
+        "oldExcerpt": "旧报告指出立意积极。",
+        "newExcerpt": "结构分析覆盖开头、主体、分论点、材料安排、层次推进、过渡照应和结尾升华，指出段落之间是否形成递进关系。"
+      },
+      "逻辑分析": {
+        "oldLength": 5,
+        "newLength": 60,
+        "improved": true,
+        "oldExcerpt": "逻辑一般。",
+        "newExcerpt": "逻辑分析重点检查观点、论据和论证之间的关系，评估概念界定、因果链条、材料与观点的一致性，以及是否存在推理跳跃或论证漏洞。"
+      },
+      "语言分析": {
+        "oldLength": 10,
+        "newLength": 41,
+        "improved": true,
+        "oldExcerpt": "旧报告指出立意积极。",
+        "newExcerpt": "语言分析覆盖语言风格、句式节奏、修辞意识、书面表达、口语化问题和高级表达替换方向。"
+      },
+      "素材分析": {
+        "oldLength": 10,
+        "newLength": 37,
+        "improved": true,
+        "oldExcerpt": "旧报告指出立意积极。",
+        "newExcerpt": "素材分析判断材料是否典型、新颖、真实、丰富、贴题，并给出可替换的素材方向。"
+      },
+      "论证分析": {
+        "oldLength": 10,
+        "newLength": 32,
+        "improved": true,
+        "oldExcerpt": "旧报告指出立意积极。",
+        "newExcerpt": "论证分析要求材料后必须有解释、分析和回扣，避免只有例子没有证明。"
+      },
+      "教师点评": {
+        "oldLength": 5,
+        "newLength": 72,
+        "improved": true,
+        "oldExcerpt": "继续努力。",
+        "newExcerpt": "从重点高中语文教师角度看，这篇作文已经具备基本立意，但要真正提升等级，需要把宏大表态转化为可证明的判断，把材料转化为论据，把结尾转化为思想提升。"
+      },
+      "修改建议": {
+        "oldLength": 10,
+        "newLength": 46,
+        "improved": true,
+        "oldExcerpt": "旧报告指出立意积极。",
+        "newExcerpt": "逐段补齐“观点-解释-材料-分析-回扣”链条\n把抽象口号改成可论证判断\n材料后补写因果分析句"
+      },
+      "成长建议": {
+        "oldLength": 10,
+        "newLength": 31,
+        "improved": true,
+        "oldExcerpt": "旧报告指出立意积极。",
+        "newExcerpt": "审题关键词关系训练\n论证链补全训练\n素材迁移训练\n语言升格训练"
+      }
+    },
+    "comparedAt": "2026-07-13T08:49:59.833Z",
+    "summary": {
+      "improvedCount": 10,
+      "total": 10
+    }
+  },
+  "benchmarkScore": {
+    "dimensions": {
+      "批改深度": 8.12,
+      "教师价值": 8.12,
+      "逻辑分析": 8.12,
+      "语言分析": 7.56,
+      "素材分析": 7.43,
+      "修改质量": 8.12,
+      "成长指导": 8.12,
+      "可操作性": 8.12
+    },
+    "totalScore": 63.71,
+    "averageScore": 7.96,
+    "improvementRate": 440,
+    "scoredAt": "2026-07-13T08:49:59.833Z"
+  },
+  "createdAt": "2026-07-13T08:44:55.673Z",
+  "updatedAt": "2026-07-13T08:49:59.833Z"
+}
