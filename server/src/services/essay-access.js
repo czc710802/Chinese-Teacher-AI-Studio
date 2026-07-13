@@ -2,6 +2,14 @@ export function getStudentForUser(database, user) {
   return database.prepare('SELECT id FROM students WHERE user_id = ?').get(user.id);
 }
 
+export function countEssayWords(text = '') {
+  const value = String(text || '').trim();
+  if (!value) return 0;
+  const cjk = (value.match(/[\u3400-\u9fff]/g) || []).length;
+  const words = (value.replace(/[\u3400-\u9fff]/g, ' ').match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*/g) || []).length;
+  return cjk + words;
+}
+
 export function isStudentInClass(database, studentId, classId) {
   return !!database.prepare('SELECT 1 FROM class_students WHERE student_id = ? AND class_id = ?').get(studentId, classId);
 }
@@ -37,11 +45,16 @@ export function resolveEssaySubmitStudentId(database, user, body = {}) {
 }
 
 export function resolveEssayAssignmentTarget(database, user, body = {}) {
-  const assignmentId = Number(body.assignment_id);
-  if (!Number.isFinite(assignmentId) || assignmentId <= 0) return { status: 404, message: '作文任务不存在' };
+  const assignmentKey = body.assignment_id ?? body.assignmentId;
+  const numericAssignmentId = Number(assignmentKey);
+  if ((!Number.isFinite(numericAssignmentId) || numericAssignmentId <= 0) && !String(assignmentKey || '').trim()) {
+    return { status: 404, message: '作文任务不存在' };
+  }
 
-  const assignment = database.prepare('SELECT * FROM assignments WHERE id = ?').get(assignmentId);
+  const assignment = database.prepare('SELECT * FROM assignments WHERE id = ? OR public_id = ?')
+    .get(Number.isFinite(numericAssignmentId) ? numericAssignmentId : -1, String(assignmentKey || '').trim());
   if (!assignment) return { status: 404, message: '作文任务不存在' };
+  if (assignment.status && assignment.status !== 'published') return { status: 404, message: '作文任务尚未发布' };
 
   const resolved = resolveEssaySubmitStudentId(database, user, body);
   if (resolved.status !== 200) return resolved;
@@ -61,7 +74,62 @@ export function resolveEssaySubmitTarget(database, user, body = {}) {
   const resolved = resolveEssayAssignmentTarget(database, user, body);
   if (resolved.status !== 200) return resolved;
 
-  return { ...resolved, essayText };
+  const wordCount = countEssayWords(essayText);
+  const minWords = Number(resolved.assignment.min_words || 0);
+  const maxWords = Number(resolved.assignment.max_words || 0);
+  if (minWords && wordCount < minWords) return { status: 400, message: `作文字数不足，最低要求 ${minWords} 字` };
+  if (maxWords && wordCount > maxWords) return { status: 400, message: `作文字数超出，最高限制 ${maxWords} 字` };
+
+  const existing = database.prepare(`
+    SELECT MAX(submit_round) AS max_round, COUNT(*) AS count
+    FROM essays
+    WHERE assignment_id = ? AND student_id = ?
+  `).get(resolved.assignment.id, resolved.studentId);
+  if (Number(existing.count || 0) > 0 && !Number(resolved.assignment.allow_resubmit || 0)) {
+    return { status: 409, message: '该作业已提交，请勿重复提交' };
+  }
+
+  return {
+    ...resolved,
+    essayText,
+    wordCount,
+    nextSubmitRound: Number(existing.max_round || 0) + 1
+  };
+}
+
+export function saveSubmissionDraft(database, user, body = {}) {
+  const resolved = resolveEssayAssignmentTarget(database, user, body);
+  if (resolved.status !== 200) return resolved;
+  if (user.role !== 'student') return { status: 403, message: '只有学生可以保存作文草稿' };
+
+  const title = String(body.title || '').trim();
+  const content = String(body.content || body.original_text || '').trim();
+  const attachments = JSON.stringify(Array.isArray(body.attachments) ? body.attachments : []);
+  const wordCount = countEssayWords(content);
+  database.prepare(`
+    INSERT INTO submission_drafts (assignment_id, student_id, title, content, attachments, word_count, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(assignment_id, student_id) DO UPDATE SET
+      title = excluded.title,
+      content = excluded.content,
+      attachments = excluded.attachments,
+      word_count = excluded.word_count,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(resolved.assignment.id, resolved.studentId, title, content, attachments, wordCount);
+  return {
+    status: 200,
+    draft: database.prepare('SELECT * FROM submission_drafts WHERE assignment_id = ? AND student_id = ?')
+      .get(resolved.assignment.id, resolved.studentId)
+  };
+}
+
+export function getSubmissionDraft(database, user, assignmentId) {
+  if (user.role !== 'student') return { status: 403, message: '只有学生可以读取自己的作文草稿' };
+  const resolved = resolveEssayAssignmentTarget(database, user, { assignment_id: assignmentId });
+  if (resolved.status !== 200) return resolved;
+  const draft = database.prepare('SELECT * FROM submission_drafts WHERE assignment_id = ? AND student_id = ?')
+    .get(resolved.assignment.id, resolved.studentId);
+  return { status: 200, draft: draft || null };
 }
 
 export function canReadEssay(database, user, essayId) {

@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE,
   password TEXT NOT NULL,
-  role TEXT NOT NULL CHECK(role IN ('student','teacher')),
+  role TEXT NOT NULL CHECK(role IN ('student','teacher','admin')),
   name TEXT NOT NULL,
   phone TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -50,10 +50,22 @@ CREATE TABLE IF NOT EXISTS class_students (
 CREATE TABLE IF NOT EXISTS assignments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   class_id INTEGER NOT NULL,
+  public_id TEXT UNIQUE,
   title TEXT NOT NULL,
   prompt TEXT NOT NULL,
+  requirements TEXT DEFAULT '',
   essay_type TEXT NOT NULL,
   full_score INTEGER NOT NULL DEFAULT 60,
+  grade TEXT,
+  min_words INTEGER DEFAULT 0,
+  max_words INTEGER DEFAULT 0,
+  scoring_standard TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'published',
+  allow_resubmit INTEGER NOT NULL DEFAULT 0,
+  published_at TEXT,
+  share_url TEXT DEFAULT '',
+  qr_svg TEXT DEFAULT '',
+  feishu_chat_id TEXT DEFAULT '',
   deadline TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE
@@ -66,10 +78,29 @@ CREATE TABLE IF NOT EXISTS essays (
   title TEXT,
   original_text TEXT NOT NULL,
   revised_text TEXT,
+  attachments TEXT DEFAULT '[]',
+  word_count INTEGER DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'submitted',
+  grading_status TEXT NOT NULL DEFAULT 'pending',
+  report_id INTEGER,
+  submitted_at TEXT DEFAULT CURRENT_TIMESTAMP,
   submit_round INTEGER NOT NULL DEFAULT 1,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
+  FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS submission_drafts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  assignment_id INTEGER NOT NULL,
+  student_id INTEGER NOT NULL,
+  title TEXT,
+  content TEXT NOT NULL DEFAULT '',
+  attachments TEXT DEFAULT '[]',
+  word_count INTEGER DEFAULT 0,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(assignment_id, student_id),
   FOREIGN KEY(assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
   FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
 );

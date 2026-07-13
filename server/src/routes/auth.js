@@ -19,7 +19,7 @@ authRouter.post('/login', (req, res) => {
   const { username, password } = req.body;
   const user = db.prepare('SELECT id, username, role, name FROM users WHERE username = ? AND password = ?').get(username, password);
   if (!user) return res.status(401).json({ message: '账号或密码错误' });
-  if (!['student', 'teacher'].includes(user.role)) return res.status(403).json({ message: '该账号角色已停用' });
+  if (!['student', 'teacher', 'admin'].includes(user.role)) return res.status(403).json({ message: '该账号角色已停用' });
   const student = user.role === 'student' ? db.prepare('SELECT id FROM students WHERE user_id = ?').get(user.id) : null;
   const teacher = user.role === 'teacher' ? db.prepare('SELECT id FROM teachers WHERE user_id = ?').get(user.id) : null;
   res.json({ user: { ...user, studentId: student?.id, teacherId: teacher?.id } });

@@ -92,6 +92,37 @@ test('teacher publishing the same assignment twice reuses the existing task', ()
   assert.equal(count, 1);
 });
 
+test('teacher assignment publishing creates a public submit link and submission counters', () => {
+  const fixture = createFixtureDb();
+  const result = createManagedAssignment(fixture.database, fixture.teacherUser, {
+    class_id: fixture.classId,
+    title: '青年责任写作训练',
+    prompt: '围绕青年选择与时代责任写一篇议论文。',
+    requirements: '观点明确，论据充分，结构完整。',
+    essay_type: '材料作文',
+    full_score: 60,
+    grade: '高二',
+    min_words: 800,
+    max_words: 1000,
+    scoring_standard: '按内容、表达、发展等级评分。',
+    deadline: '2026-07-20T20:00:00'
+  }, { publicOrigin: 'https://pi.zhenwanyue.icu' });
+
+  const listed = listAssignmentsForUser(fixture.database, fixture.teacherUser, {});
+  const assignment = listed.rows.find((row) => row.id === result.assignment.id);
+
+  assert.equal(result.status, 200);
+  assert.match(result.assignment.public_id, /^G[A-Z0-9-]+-\d{8}-\d{3}$/);
+  assert.equal(result.assignment.requirements, '观点明确，论据充分，结构完整。');
+  assert.equal(result.assignment.min_words, 800);
+  assert.equal(result.assignment.max_words, 1000);
+  assert.equal(result.assignment.status, 'published');
+  assert.equal(assignment.submitted_count, 0);
+  assert.equal(assignment.missing_count, 1);
+  assert.equal(assignment.submission_url, `https://pi.zhenwanyue.icu/submit/${result.assignment.public_id}`);
+  assert.match(assignment.qr_svg, /<svg/);
+});
+
 test('student assignment list is scoped to joined class and hides deleted assignments', () => {
   const fixture = createFixtureDb();
 

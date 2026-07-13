@@ -36,9 +36,91 @@ export function relaxInviteCodeConstraint(database = db) {
   }
 }
 
+function addColumnIfMissing(database, tableName, columnName, ddl) {
+  const exists = database.prepare(`PRAGMA table_info('${tableName}')`).all()
+    .some((column) => column.name === columnName);
+  if (exists) return;
+  database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${ddl}`);
+}
+
+export function relaxUserRoleConstraint(database = db) {
+  const row = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get();
+  const sql = String(row?.sql || '');
+  if (!sql || sql.includes("'admin'")) return;
+
+  database.exec('PRAGMA foreign_keys = OFF');
+  database.exec('PRAGMA legacy_alter_table = ON');
+  try {
+    database.exec(`
+      BEGIN;
+      ALTER TABLE users RENAME TO users_role_legacy;
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        password TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('student','teacher','admin')),
+        name TEXT NOT NULL,
+        phone TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO users (id, username, password, role, name, phone, created_at)
+      SELECT id, username, password, role, name, phone, created_at
+      FROM users_role_legacy;
+      DROP TABLE users_role_legacy;
+      COMMIT;
+    `);
+  } catch (error) {
+    try { database.exec('ROLLBACK'); } catch {}
+    throw error;
+  } finally {
+    database.exec('PRAGMA legacy_alter_table = OFF');
+    database.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+export function migrateAssignmentWorkflow(database = db) {
+  addColumnIfMissing(database, 'assignments', 'public_id', 'TEXT');
+  addColumnIfMissing(database, 'assignments', 'requirements', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'assignments', 'grade', 'TEXT');
+  addColumnIfMissing(database, 'assignments', 'min_words', 'INTEGER DEFAULT 0');
+  addColumnIfMissing(database, 'assignments', 'max_words', 'INTEGER DEFAULT 0');
+  addColumnIfMissing(database, 'assignments', 'scoring_standard', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'assignments', 'status', "TEXT NOT NULL DEFAULT 'published'");
+  addColumnIfMissing(database, 'assignments', 'allow_resubmit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(database, 'assignments', 'published_at', 'TEXT');
+  addColumnIfMissing(database, 'assignments', 'share_url', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'assignments', 'qr_svg', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'assignments', 'feishu_chat_id', "TEXT DEFAULT ''");
+
+  addColumnIfMissing(database, 'essays', 'attachments', "TEXT DEFAULT '[]'");
+  addColumnIfMissing(database, 'essays', 'word_count', 'INTEGER DEFAULT 0');
+  addColumnIfMissing(database, 'essays', 'grading_status', "TEXT NOT NULL DEFAULT 'pending'");
+  addColumnIfMissing(database, 'essays', 'report_id', 'INTEGER');
+  addColumnIfMissing(database, 'essays', 'submitted_at', 'TEXT');
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_assignments_public_id ON assignments(public_id) WHERE public_id IS NOT NULL');
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS submission_drafts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      assignment_id INTEGER NOT NULL,
+      student_id INTEGER NOT NULL,
+      title TEXT,
+      content TEXT NOT NULL DEFAULT '',
+      attachments TEXT DEFAULT '[]',
+      word_count INTEGER DEFAULT 0,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(assignment_id, student_id),
+      FOREIGN KEY(assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
+      FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
+    );
+  `);
+}
+
 export function initDatabase() {
   db.exec(schemaSql);
+  relaxUserRoleConstraint(db);
   relaxInviteCodeConstraint(db);
+  migrateAssignmentWorkflow(db);
   try { db.exec("ALTER TABLE ai_reviews ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP"); } catch(e) {}
   const count = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
   if (count > 0) return;

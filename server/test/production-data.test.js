@@ -25,10 +25,10 @@ test('510 class roster only contains the official 60 imported students', () => {
   assert.deepEqual(rows.map((row) => Number(row.student_no)), Array.from({ length: 60 }, (_, index) => index + 1));
 });
 
-test('administrator seed and login role are removed from production code', () => {
+test('administrator is supported without seeding a default admin account', () => {
   const initSource = readFileSync(path.join(rootDir, 'server/src/db/init.js'), 'utf8');
   const authSource = readFileSync(path.join(rootDir, 'server/src/routes/auth.js'), 'utf8');
 
-  assert.doesNotMatch(initSource, /admin|管理员/);
-  assert.match(authSource, /student', 'teacher/);
+  assert.doesNotMatch(initSource, /insertUser\.run\([^)]*admin/i);
+  assert.match(authSource, /student', 'teacher', 'admin/);
 });

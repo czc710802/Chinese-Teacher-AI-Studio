@@ -185,6 +185,51 @@ test('student text submission validates assignment and class membership before i
   assert.equal(emptyText.message, '请先粘贴或输入作文正文');
 });
 
+test('student cannot submit the same assignment twice unless resubmission is allowed', () => {
+  const fixture = createFixtureDb();
+  const assignmentId = fixture.database.prepare('SELECT id FROM assignments WHERE class_id = ? LIMIT 1').get(fixture.classId).id;
+
+  const blocked = resolveEssaySubmitTarget(fixture.database, fixture.studentUser, {
+    assignment_id: assignmentId,
+    original_text: '这是一篇第二次提交的作文，默认不允许重复提交。'
+  });
+
+  fixture.database.prepare('UPDATE assignments SET allow_resubmit = 1 WHERE id = ?').run(assignmentId);
+  const allowed = resolveEssaySubmitTarget(fixture.database, fixture.studentUser, {
+    assignment_id: assignmentId,
+    original_text: '这是一篇允许重新提交的作文。'
+  });
+
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.message, '该作业已提交，请勿重复提交');
+  assert.equal(allowed.status, 200);
+  assert.equal(allowed.nextSubmitRound, 2);
+});
+
+test('student draft is saved and loaded per assignment without exposing other students', async () => {
+  const fixture = createFixtureDb();
+  const module = await import('../src/services/essay-access.js');
+  assert.equal(typeof module.saveSubmissionDraft, 'function');
+  assert.equal(typeof module.getSubmissionDraft, 'function');
+
+  const assignmentId = fixture.database.prepare('SELECT id FROM assignments WHERE class_id = ? LIMIT 1').get(fixture.classId).id;
+  const saved = module.saveSubmissionDraft(fixture.database, fixture.studentUser, {
+    assignment_id: assignmentId,
+    title: '我的草稿',
+    content: '草稿正文',
+    attachments: [{ name: 'draft.docx', type: 'docx' }]
+  });
+  const loaded = module.getSubmissionDraft(fixture.database, fixture.studentUser, assignmentId);
+  const teacherLoaded = module.getSubmissionDraft(fixture.database, fixture.teacherUser, assignmentId);
+
+  assert.equal(saved.status, 200);
+  assert.equal(loaded.status, 200);
+  assert.equal(loaded.draft.title, '我的草稿');
+  assert.equal(loaded.draft.word_count, 4);
+  assert.deepEqual(JSON.parse(loaded.draft.attachments), [{ name: 'draft.docx', type: 'docx' }]);
+  assert.equal(teacherLoaded.status, 403);
+});
+
 test('admin role is not granted class or essay access after administrator removal', () => {
   const fixture = createFixtureDb();
 

@@ -7,8 +7,8 @@ import { ArrowLeft, BookOpen, Camera, ChartNoAxesCombined, Check, ChevronUp, Cop
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Sparkles, MessageCircle, Trophy, Newspaper, Bookmark, RotateCcw, TrendingUp, BrainCircuit, Scale, FileSpreadsheet } from 'lucide-react';
 
-const homeByRole = { student: '/student', teacher: '/teacher' };
-const roleLabel = { student: '学生端', teacher: '教师端' };
+const homeByRole = { student: '/student', teacher: '/teacher', admin: '/admin' };
+const roleLabel = { student: '学生端', teacher: '教师端', admin: '管理员端' };
 
 function pickDefaultClassId(rows = []) {
   const namedClass = rows.find((item) => String(item?.name || '').trim());
@@ -724,11 +724,62 @@ function UploadPage() {
 function SubmitPage() {
   const { assignmentId } = useParams();
   const session = getSession();
+  const [assignment, setAssignment] = useState(null);
   const [text, setText] = useState(new URLSearchParams(location.search).get('text') || '');
   const [title, setTitle] = useState('');
+  const [studentInfo, setStudentInfo] = useState({ className: '', name: session?.name || '', studentNo: '' });
+  const [files, setFiles] = useState([]);
+  const [draftMessage, setDraftMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const nav = useNavigate();
+  useEffect(() => {
+    api(`/assignments/public/${assignmentId}`).then((row) => {
+      setAssignment(row);
+      setStudentInfo((info) => ({ ...info, className: row.class_name || '' }));
+      setTitle((current) => current || row.title || '');
+    }).catch((err) => setError(err.message));
+    api(`/essays/drafts/${assignmentId}`).then((draft) => {
+      if (draft?.content) setText(draft.content);
+      if (draft?.title) setTitle(draft.title);
+      if (draft?.attachments) {
+        try { setFiles(JSON.parse(draft.attachments)); } catch {}
+      }
+    }).catch(() => {});
+  }, [assignmentId]);
+  const wordCount = text.replace(/\s+/g, '').length;
+  const tooShort = assignment?.min_words && wordCount < Number(assignment.min_words);
+  const tooLong = assignment?.max_words && wordCount > Number(assignment.max_words);
+  async function saveDraft() {
+    setDraftMessage('');
+    setError('');
+    try {
+      await api('/essays/drafts', { method: 'POST', body: { assignment_id: assignmentId, title, content: text, attachments: files.map((file) => ({ name: file.name || file.originalname || String(file.name || '') })) } });
+      setDraftMessage('草稿已保存');
+    } catch (err) {
+      setError(`保存草稿失败：${err.message}`);
+    }
+  }
+  async function submitFiles() {
+    if (!files.length) {
+      setError('请先选择 Word 文档');
+      return;
+    }
+    const fd = new FormData();
+    fd.append('assignment_id', assignmentId);
+    fd.append('title', title || assignment?.title || 'Word 文档作文');
+    files.forEach((file) => file instanceof File && fd.append('files', file));
+    setBusy(true);
+    setError('');
+    try {
+      const data = await api('/essays/files', { method: 'POST', formData: fd });
+      nav(`/review/${data.essayId}`);
+    } catch (err) {
+      setError(`文件提交失败：${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function submit() {
     if (!text.trim()) {
       setError('请先粘贴或输入作文正文');
@@ -737,7 +788,7 @@ function SubmitPage() {
     setBusy(true);
     setError('');
     try {
-      const data = await api('/essays', { method: 'POST', body: { assignment_id: Number(assignmentId), student_id: session.studentId, title, original_text: text.trim() } });
+      const data = await api('/essays', { method: 'POST', body: { assignment_id: assignmentId, student_id: session.studentId, title, original_text: text.trim() } });
       nav(`/review/${data.essayId}`);
     } catch (err) {
       setError(`提交失败：${err.message}`);
@@ -746,10 +797,32 @@ function SubmitPage() {
     }
   }
   return <Layout><Card title="作文提交" icon={<PenLine size={20} />}>
+    {assignment && <div className="assignment-submit-summary">
+      <h3>{assignment.title}</h3>
+      <p>{assignment.class_name || '未指定班级'} · {assignment.grade || '未指定年级'} · 截止 {formatDateTime(assignment.deadline)}</p>
+      <p>{assignment.prompt}</p>
+      {assignment.requirements && <p><b>写作要求：</b>{assignment.requirements}</p>}
+      <p>字数要求：{assignment.min_words || '不限'} - {assignment.max_words || '不限'} 字 · 当前约 {wordCount} 字</p>
+    </div>}
+    <div className="row">
+      <input placeholder="班级" value={studentInfo.className} onChange={(e) => setStudentInfo({ ...studentInfo, className: e.target.value })} />
+      <input placeholder="姓名" value={studentInfo.name} onChange={(e) => setStudentInfo({ ...studentInfo, name: e.target.value })} />
+      <input placeholder="学号" value={studentInfo.studentNo} onChange={(e) => setStudentInfo({ ...studentInfo, studentNo: e.target.value })} />
+    </div>
     <input placeholder="作文标题" value={title} onChange={(e) => setTitle(e.target.value)} />
     <textarea placeholder="请输入或粘贴/黏贴作文正文" value={text} onChange={(e) => setText(e.target.value)} rows="18" />
+    <label className="upload-choice"><FileText size={18} />上传 Word 文档<input type="file" accept=".docx,.txt,.md" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))} /></label>
+    {files.length > 0 && <div className="upload-file-list">{files.map((file, index) => <p key={`${file.name}-${index}`}>{index + 1}. {file.name}</p>)}</div>}
+    {tooShort && <p className="error">当前字数低于最低要求。</p>}
+    {tooLong && <p className="error">当前字数超过最高限制。</p>}
+    {draftMessage && <p className="hint">{draftMessage}</p>}
     {error && <p className="error">{error}</p>}
-    <div className="actions"><a className="ghost" href={`/upload?assignmentId=${assignmentId}`}>拍照上传</a><button onClick={submit} disabled={busy || !text.trim()}><Send size={18} />{busy ? '提交批改中...' : '提交并批改'}</button></div>
+    <div className="actions">
+      <a className="ghost" href={`/upload?assignmentId=${assignmentId}`}>拍照上传</a>
+      <button type="button" onClick={saveDraft} disabled={busy}>保存草稿</button>
+      <button type="button" onClick={submitFiles} disabled={busy || !files.length}><FileText size={18} />上传文件并批改</button>
+      <button onClick={submit} disabled={busy || !text.trim() || tooShort || tooLong}><Send size={18} />{busy ? '提交批改中...' : '正式提交并批改'}</button>
+    </div>
   </Card></Layout>;
 }
 
@@ -1977,14 +2050,24 @@ function ClassRosterPanel({ klass, onChanged }) {
 
 function AssignmentPublish() {
   const [classes, setClasses] = useState([]);
-  const [form, setForm] = useState({ class_id: 1, title: '', prompt: '', essay_type: '材料作文', full_score: 60, deadline: '' });
+  const [form, setForm] = useState({ class_id: 1, title: '', prompt: '', requirements: '', essay_type: '材料作文', full_score: 60, grade: '', min_words: 800, max_words: 1000, scoring_standard: '内容、表达、发展等级综合评分', deadline: '', allow_resubmit: false });
+  const [published, setPublished] = useState(null);
   const [publishing, setPublishing] = useState(false);
   useEffect(() => { api('/classes').then((rows) => { setClasses(rows); setForm((f) => ({ ...f, class_id: rows[0]?.id || 1 })); }); }, []);
+  async function copyLink(value) {
+    try {
+      await navigator.clipboard.writeText(value);
+      alert('提交链接已复制');
+    } catch {
+      window.prompt('复制学生提交链接', value);
+    }
+  }
   async function save() {
     if (publishing) return;
     setPublishing(true);
     try {
-      await api('/assignments', { method: 'POST', body: form });
+      const assignment = await api('/assignments', { method: 'POST', body: form });
+      setPublished(assignment);
       window.dispatchEvent(new Event('assignments-changed'));
       alert('已发布');
     } finally {
@@ -1994,10 +2077,21 @@ function AssignmentPublish() {
   return <Card title="作文任务发布" icon={<Plus size={20} />}>
     <select value={form.class_id} onChange={(e) => setForm({ ...form, class_id: Number(e.target.value) })}>{classes.map((c) => <option value={c.id} key={c.id}>{c.name}</option>)}</select>
     <input placeholder="题目" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-    <textarea placeholder="作文材料与写作要求" value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} rows="6" />
-    <div className="row"><input value={form.essay_type} onChange={(e) => setForm({ ...form, essay_type: e.target.value })} /><input type="number" value={form.full_score} onChange={(e) => setForm({ ...form, full_score: Number(e.target.value) })} /></div>
-    <input type="date" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} />
+    <textarea placeholder="作文材料" value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} rows="5" />
+    <textarea placeholder="写作要求" value={form.requirements} onChange={(e) => setForm({ ...form, requirements: e.target.value })} rows="4" />
+    <div className="row"><input placeholder="年级" value={form.grade} onChange={(e) => setForm({ ...form, grade: e.target.value })} /><input value={form.essay_type} onChange={(e) => setForm({ ...form, essay_type: e.target.value })} /><input type="number" value={form.full_score} onChange={(e) => setForm({ ...form, full_score: Number(e.target.value) })} /></div>
+    <div className="row"><input type="number" placeholder="最低字数" value={form.min_words} onChange={(e) => setForm({ ...form, min_words: Number(e.target.value) })} /><input type="number" placeholder="最高字数" value={form.max_words} onChange={(e) => setForm({ ...form, max_words: Number(e.target.value) })} /><input type="datetime-local" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} /></div>
+    <textarea placeholder="评分标准" value={form.scoring_standard} onChange={(e) => setForm({ ...form, scoring_standard: e.target.value })} rows="3" />
+    <label className="checkbox-row"><input type="checkbox" checked={form.allow_resubmit} onChange={(e) => setForm({ ...form, allow_resubmit: e.target.checked })} />允许学生重新提交</label>
     <button onClick={save} disabled={publishing}>{publishing ? '发布中...' : '发布'}</button>
+    {published && <div className="assignment-share-panel">
+      <p><b>学生提交链接：</b>{published.submission_url || published.share_url}</p>
+      <div className="actions">
+        <button type="button" onClick={() => copyLink(published.submission_url || published.share_url)}>复制链接</button>
+        <button type="button" onClick={() => api(`/assignments/${published.public_id || published.id}/share/feishu`, { method: 'POST', body: {} }).then((data) => alert(data.sent ? '已发送到飞书' : data.message || '已生成飞书分享卡片'))}>飞书分享卡片</button>
+      </div>
+      {published.qr_svg && <div className="qr-preview" dangerouslySetInnerHTML={{ __html: published.qr_svg }} />}
+    </div>}
   </Card>;
 }
 
@@ -2025,6 +2119,16 @@ function AssignmentManagement() {
       setError(err.message);
     }
   }
+  async function showStatus(assignment) {
+    setError('');
+    try {
+      const data = await api(`/assignments/${assignment.public_id || assignment.id}/status`);
+      const names = data.missing.map((item) => `${item.student_no || '无学号'} ${item.student_name}`).join('\n') || '无';
+      window.alert(`已交 ${data.assignment.submitted_count} 人，未交 ${data.assignment.missing_count} 人\n\n未交名单：\n${names}`);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
   return <Card title="发布任务管理" icon={<BookOpen size={20} />}>
     {error && <p className="error">{error}</p>}
     {message && <p className="hint">{message}</p>}
@@ -2034,8 +2138,14 @@ function AssignmentManagement() {
           <b>{assignment.title}</b>
           <p>{assignment.class_name || '未指定班级'} · {assignment.essay_type} · 满分 {assignment.full_score} · 发布时间 {formatDateTime(assignment.created_at)}</p>
           {assignment.deadline && <p>截止时间 {formatDateTime(assignment.deadline)}</p>}
+          <p>提交进度：已交 {assignment.submitted_count || 0} 人 · 未交 {assignment.missing_count || 0} 人</p>
+          {assignment.submission_url && <p className="assignment-link">{assignment.submission_url}</p>}
         </div>
-        <button type="button" className="danger-button" onClick={() => deleteAssignment(assignment)}>删除任务</button>
+        <div className="roster-actions">
+          <button type="button" onClick={() => showStatus(assignment)}>查看提交状态</button>
+          <button type="button" onClick={() => window.open(`/class/${assignment.class_id}/essays`, '_self')}>查看报告</button>
+          <button type="button" className="danger-button" onClick={() => deleteAssignment(assignment)}>删除任务</button>
+        </div>
       </article>)}
       {!publishedAssignments.length && <p className="hint">暂无已发布任务。</p>}
     </div>
@@ -2061,6 +2171,51 @@ function AnalyticsPage() {
   </div></Layout>;
 }
 
+function AdminHome() {
+  const [system, setSystem] = useState(null);
+  const [ai, setAi] = useState(null);
+  const [storage, setStorage] = useState(null);
+  const [feishu, setFeishu] = useState(null);
+  const [publicAccess, setPublicAccess] = useState(null);
+  useEffect(() => {
+    api('/system/status').then(setSystem).catch(() => {});
+    api('/admin/ai/status').then(setAi).catch(() => {});
+    api('/admin/storage/zspace/status').then(setStorage).catch(() => {});
+    api('/feishu/health').then(setFeishu).catch(() => {});
+    api('/public-access').then(setPublicAccess).catch(() => {});
+  }, []);
+  return <Layout><div className="grid">
+    <Card title="系统配置" icon={<PackageOpen size={20} />}>
+      <p>公网入口：{publicAccess?.publicOrigin || 'https://pi.zhenwanyue.icu'}</p>
+      <p>本地服务：{system?.localUrl || 'http://127.0.0.1:4000'}</p>
+      <p>生产状态：{system?.status || (system?.ok ? 'healthy' : 'checking')}</p>
+    </Card>
+    <Card title="模型配置" icon={<BrainCircuit size={20} />}>
+      <p>Provider：{ai?.primaryProvider || 'deepseek'}</p>
+      <p>Ready：{String(ai?.ready ?? false)}</p>
+      <p>Degraded：{String(ai?.degraded ?? false)}</p>
+    </Card>
+    <Card title="WebDAV 状态" icon={<PackageOpen size={20} />}>
+      <p>Enabled：{String(storage?.enabled ?? false)}</p>
+      <p>Connected：{String(storage?.connected ?? false)}</p>
+      <p>Writable：{String(storage?.writable ?? false)}</p>
+    </Card>
+    <Card title="飞书配置" icon={<MessageCircle size={20} />}>
+      <p>App configured：{String(feishu?.appConfigured ?? false)}</p>
+      <p>Webhook：{String(feishu?.webhookConfigured ?? false)}</p>
+      <p>Connected：{String(feishu?.connected ?? false)}</p>
+    </Card>
+    <Card title="Cloudflare 状态" icon={<Share2 size={20} />}>
+      <p>公网域名：{publicAccess?.publicUrl || publicAccess?.publicOrigin || 'https://pi.zhenwanyue.icu'}</p>
+      <p>隧道状态：{publicAccess?.tunnelStatus || '由 prod:status 检查'}</p>
+    </Card>
+    <Card title="日志与健康检查" icon={<FileText size={20} />}>
+      <p>管理员端只负责系统级配置、账号权限、模型、存储、飞书、Cloudflare、WebDAV 与日志健康检查。</p>
+      <a href="/api/system/logs" target="_blank" rel="noreferrer">查看系统日志摘要</a>
+    </Card>
+  </div></Layout>;
+}
+
 function App() {
   return <BrowserRouter><Routes>
     <Route path="/login" element={<LoginPage />} />
@@ -2077,6 +2232,7 @@ function App() {
     <Route path="/teacher/essays" element={<RoleRoute roles={['teacher']}><TeacherEssaysPage /></RoleRoute>} />
     <Route path="/teacher/tasks" element={<RoleRoute roles={['teacher']}><TeacherTasksPage /></RoleRoute>} />
     <Route path="/teacher/benchmark" element={<RoleRoute roles={['teacher']}><BenchmarkCenterPage /></RoleRoute>} />
+    <Route path="/admin" element={<RoleRoute roles={['admin']}><AdminHome /></RoleRoute>} />
     <Route path="/teacher/reviews" element={<RoleRoute roles={['teacher']}><Layout><TeacherReviewCenter /></Layout></RoleRoute>} />
     <Route path="/archive" element={<RoleRoute roles={['teacher']}><ArchivePage /></RoleRoute>} />
     <Route path="/student-profiles" element={<RoleRoute roles={['student', 'teacher']}><StudentProfilesPage /></RoleRoute>} />
@@ -2087,7 +2243,7 @@ function App() {
     <Route path="/essay/:essayId" element={<RoleRoute roles={['teacher']}><ReviewPage /></RoleRoute>} />
     <Route path="/class/:classId/analytics" element={<RoleRoute roles={['teacher']}><AnalyticsPage /></RoleRoute>} />
     <Route path="/student/:studentId/profile" element={<RoleRoute roles={['teacher']}><StudentProfile /></RoleRoute>} />
-    <Route path="*" element={<RoleRoute roles={['student', 'teacher']}><Navigate to={homeByRole[getSession()?.role] || '/login'} replace /></RoleRoute>} />
+    <Route path="*" element={<RoleRoute roles={['student', 'teacher', 'admin']}><Navigate to={homeByRole[getSession()?.role] || '/login'} replace /></RoleRoute>} />
   </Routes></BrowserRouter>;
 }
 

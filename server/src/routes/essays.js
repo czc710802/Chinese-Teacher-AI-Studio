@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import multer from 'multer';
+import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { db } from '../db/connection.js';
 import { requireUser } from '../middleware/auth.js';
 import { reviewEssay, recognizeImages } from '../services/openai.js';
-import { canReadEssay, resolveEssayAssignmentTarget, resolveEssayListScope, resolveEssaySubmitTarget } from '../services/essay-access.js';
+import { canReadEssay, countEssayWords, getSubmissionDraft, resolveEssayAssignmentTarget, resolveEssayListScope, resolveEssaySubmitTarget, saveSubmissionDraft } from '../services/essay-access.js';
 import { refreshStudentProfile } from '../services/profile.js';
 import { recordOcrArtifact, recordOriginalArtifact, recordReviewArtifact } from '../services/storage-artifacts.js';
 import { archiveEssayToZSpaceAsync } from '../services/zspace-storage.js';
@@ -17,11 +19,39 @@ const upload = multer({ dest: path.resolve(__dirname, '../../uploads') });
 export const essayRouter = Router();
 essayRouter.use(requireUser);
 
-async function createReviewedEssay({ assignment, studentId, title, essayText, imagePaths = [], imageOcrText = '', sourceFiles = [], storageService, zspaceClient, logger = console }) {
+function stripXmlText(xml) {
+  return String(xml || '')
+    .replace(/<w:tab\/>/g, '\t')
+    .replace(/<\/w:p>/g, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function extractTextFromUploadedFile(file) {
+  const ext = path.extname(file.originalname || file.path).toLowerCase();
+  if (['.txt', '.md'].includes(ext)) return fs.readFileSync(file.path, 'utf8');
+  if (ext === '.docx') {
+    const xml = execFileSync('unzip', ['-p', file.path, 'word/document.xml'], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    return stripXmlText(xml);
+  }
+  const error = new Error('暂仅支持 TXT、Markdown 和 Word .docx 文档提交');
+  error.statusCode = 415;
+  throw error;
+}
+
+async function createReviewedEssay({ assignment, studentId, title, essayText, imagePaths = [], imageOcrText = '', sourceFiles = [], attachments = [], submitRound = 1, wordCount, storageService, zspaceClient, logger = console }) {
+  const resolvedWordCount = Number(wordCount || countEssayWords(essayText));
   const result = db.prepare(`
-    INSERT INTO essays (assignment_id, student_id, title, original_text, revised_text, submit_round)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(assignment.id, studentId, title, essayText, '', 1);
+    INSERT INTO essays
+      (assignment_id, student_id, title, original_text, revised_text, attachments, word_count, status, grading_status, submitted_at, submit_round)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', 'grading', CURRENT_TIMESTAMP, ?)
+  `).run(assignment.id, studentId, title, essayText, '', safeJson(attachments), resolvedWordCount, submitRound);
   const essayId = result.lastInsertRowid;
 
   const insertImage = db.prepare('INSERT INTO essay_images (essay_id, file_path, ocr_text, sort_order) VALUES (?, ?, ?, ?)');
@@ -30,7 +60,7 @@ async function createReviewedEssay({ assignment, studentId, title, essayText, im
   if (imageOcrText) await recordOcrArtifact({ storageService, database: db, essayId, text: imageOcrText, files: sourceFiles, logger });
 
   const review = await reviewEssay({ assignment, essayText });
-  db.prepare(`
+  const insertedReview = db.prepare(`
     INSERT INTO ai_reviews
     (essay_id, total_score, level, dimension_scores, strengths, problems, paragraph_comments, editable_sentences, suggestions, upgraded_paragraph, good_sentences, next_training, raw_json)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -49,6 +79,8 @@ async function createReviewedEssay({ assignment, studentId, title, essayText, im
     safeJson(review.next_training),
     JSON.stringify(review)
   );
+  db.prepare('UPDATE essays SET grading_status = ?, report_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run('graded', insertedReview.lastInsertRowid, essayId);
   await recordReviewArtifact({ storageService, database: db, essayId, review, logger });
   archiveEssayToZSpaceAsync({
     appDir: storageService?.rawConfig?.appDir || path.resolve(__dirname, '../../..'),
@@ -84,6 +116,18 @@ essayRouter.get('/', (req, res) => {
   res.json(rows);
 });
 
+essayRouter.get('/drafts/:assignmentId', (req, res) => {
+  const result = getSubmissionDraft(db, req.user, req.params.assignmentId);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.draft || {});
+});
+
+essayRouter.post('/drafts', (req, res) => {
+  const result = saveSubmissionDraft(db, req.user, req.body);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.draft);
+});
+
 essayRouter.get('/:id', (req, res) => {
   if (!canReadEssay(db, req.user, req.params.id)) return res.status(403).json({ message: '没有查看该作文的权限' });
   const essay = db.prepare(`
@@ -105,12 +149,14 @@ essayRouter.post('/', async (req, res, next) => {
   try {
     const resolved = resolveEssaySubmitTarget(db, req.user, req.body);
     if (resolved.status !== 200) return res.status(resolved.status).json({ message: resolved.message });
-    const { studentId, assignment, essayText } = resolved;
+    const { studentId, assignment, essayText, wordCount, nextSubmitRound } = resolved;
     res.json(await createReviewedEssay({
       assignment,
       studentId,
       title: req.body.title,
       essayText,
+      wordCount,
+      submitRound: nextSubmitRound,
       storageService: req.app.locals.storageService,
       zspaceClient: req.app.locals.zspaceClient,
       logger: req.app.locals.logger || console
@@ -125,11 +171,13 @@ essayRouter.post('/images', upload.array('images', 8), async (req, res, next) =>
     const files = req.files || [];
     if (!files.length) return res.status(400).json({ message: '请先选择照片或图片' });
 
-    const resolved = resolveEssayAssignmentTarget(db, req.user, req.body);
-    if (resolved.status !== 200) return res.status(resolved.status).json({ message: resolved.message });
+    const assignmentAccess = resolveEssayAssignmentTarget(db, req.user, req.body);
+    if (assignmentAccess.status !== 200) return res.status(assignmentAccess.status).json({ message: assignmentAccess.message });
 
     const essayText = String(await recognizeImages(req.files || []) || '').trim();
     if (!essayText) return res.status(422).json({ message: 'AI 未能识别出作文文字，请重新拍照或上传更清晰的图片' });
+    const resolved = resolveEssaySubmitTarget(db, req.user, { ...req.body, original_text: essayText });
+    if (resolved.status !== 200) return res.status(resolved.status).json({ message: resolved.message });
 
     const imagePaths = files.map((file) => `/uploads/${path.basename(file.path)}`);
     const result = await createReviewedEssay({
@@ -140,12 +188,44 @@ essayRouter.post('/images', upload.array('images', 8), async (req, res, next) =>
       imagePaths,
       imageOcrText: essayText,
       sourceFiles: files,
+      attachments: files.map((file) => ({ name: file.originalname, mimeType: file.mimetype, size: file.size })),
+      wordCount: resolved.wordCount,
+      submitRound: resolved.nextSubmitRound,
       storageService: req.app.locals.storageService,
       zspaceClient: req.app.locals.zspaceClient,
       logger: req.app.locals.logger || console
     });
     res.json({ ...result, recognizedTextLength: essayText.length });
   } catch (error) {
+    next(error);
+  }
+});
+
+essayRouter.post('/files', upload.array('files', 4), async (req, res, next) => {
+  try {
+    const files = req.files || [];
+    if (!files.length) return res.status(400).json({ message: '请先选择 Word 或文本文件' });
+    const chunks = files.map((file) => extractTextFromUploadedFile(file)).filter(Boolean);
+    const essayText = chunks.join('\n\n').trim();
+    if (!essayText) return res.status(422).json({ message: '未能从文件中读取作文正文' });
+    const resolved = resolveEssaySubmitTarget(db, req.user, { ...req.body, original_text: essayText });
+    if (resolved.status !== 200) return res.status(resolved.status).json({ message: resolved.message });
+    const result = await createReviewedEssay({
+      assignment: resolved.assignment,
+      studentId: resolved.studentId,
+      title: req.body.title || path.basename(files[0].originalname, path.extname(files[0].originalname)) || 'Word 文档作文',
+      essayText,
+      sourceFiles: files,
+      attachments: files.map((file) => ({ name: file.originalname, mimeType: file.mimetype, size: file.size })),
+      wordCount: resolved.wordCount,
+      submitRound: resolved.nextSubmitRound,
+      storageService: req.app.locals.storageService,
+      zspaceClient: req.app.locals.zspaceClient,
+      logger: req.app.locals.logger || console
+    });
+    res.json({ ...result, extractedTextLength: essayText.length });
+  } catch (error) {
+    if (error.statusCode) return res.status(error.statusCode).json({ message: error.message });
     next(error);
   }
 });

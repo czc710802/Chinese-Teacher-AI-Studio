@@ -170,6 +170,34 @@ test('ensureBaseDirectories creates the required ZSpace folders idempotently', a
   assert.equal(result.created + result.existed, requiredZSpaceDirectories().length);
 });
 
+test('ensureDirectory treats WebDAV 409 as idempotent when the directory is visible afterwards', async () => {
+  const propfindCounts = new Map();
+  const client = createZSpaceClient({
+    env: {
+      ZSPACE_ENABLED: 'true',
+      ZSPACE_WEBDAV_URL: 'http://192.168.100.164:5005',
+      ZSPACE_WEBDAV_USERNAME: 'teacher',
+      ZSPACE_WEBDAV_PASSWORD: 'dummy-password'
+    },
+    fetchImpl: async (url, options = {}) => {
+      if (options.method === 'PROPFIND') {
+        const key = String(url);
+        const count = propfindCounts.get(key) || 0;
+        propfindCounts.set(key, count + 1);
+        if (count === 0 && key.includes('/Archive')) return response(404);
+        return response(207, '<d:multistatus />');
+      }
+      if (options.method === 'MKCOL') return response(409);
+      return response(200);
+    }
+  });
+
+  const result = await client.ensureDirectory('Archive/ArchiveSmoke');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.path, 'Archive/ArchiveSmoke');
+});
+
 test('archiveEssayToZSpace queues uploads when WebDAV is unreachable and does not throw', async () => {
   const appDir = tempAppDir();
   const database = new (await import('node:sqlite')).DatabaseSync(':memory:');

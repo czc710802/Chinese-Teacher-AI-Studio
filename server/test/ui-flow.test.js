@@ -152,7 +152,9 @@ test('student submit page shows upload and review errors instead of failing sile
   assert.match(submitPage, /catch \(err\)/);
   assert.match(submitPage, /提交失败/);
   assert.match(submitPage, /请先粘贴或输入作文正文/);
-  assert.match(submitPage, /disabled=\{busy \|\| !text\.trim\(\)\}/);
+  assert.match(submitPage, /tooShort/);
+  assert.match(submitPage, /tooLong/);
+  assert.match(submitPage, /disabled=\{busy \|\| !text\.trim\(\) \|\| tooShort \|\| tooLong\}/);
 });
 
 test('student profile shows score changes with chart and summary metrics', () => {
@@ -464,6 +466,15 @@ test('student home and workspace prefer named classes and safely label blank one
   assert.match(workspace, /getClassDisplayName\(selectedClass\)/);
 });
 
-test('frontend removes administrator role content and routes', () => {
-  assert.doesNotMatch(mainSource, /管理员端|演示账号：teacher \/ student \/ admin|function AdminHome|\/admin|roles=\{\['admin'\]\}|role === 'admin'|teacher', 'admin'|student', 'teacher', 'admin'/);
+test('frontend exposes separated teacher, student and administrator entrances', () => {
+  const adminHome = functionBody('AdminHome');
+  assert.match(mainSource, /path="\/teacher"/);
+  assert.match(mainSource, /path="\/student"/);
+  assert.match(mainSource, /path="\/submit\/:assignmentId"/);
+  assert.match(mainSource, /path="\/admin"/);
+  assert.match(mainSource, /roles=\{\['admin'\]\}/);
+  assert.match(adminHome, /系统配置/);
+  assert.match(adminHome, /模型配置/);
+  assert.match(adminHome, /WebDAV 状态/);
+  assert.doesNotMatch(adminHome, /发布作业|创建作文作业|批量启动 AI 批改/);
 });

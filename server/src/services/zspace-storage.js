@@ -555,13 +555,17 @@ export function createZSpaceClient({ env = process.env, fetchImpl, logger = cons
     let current = '';
     if (!await fileExists('')) {
       const rootResponse = await davRequest('', { method: 'MKCOL' });
-      if (![201, 405].includes(rootResponse.status)) throw new Error(`WebDAV 创建根目录失败：HTTP ${rootResponse.status}`);
+      if (![201, 405].includes(rootResponse.status) && !(rootResponse.status === 409 && await fileExists(''))) {
+        throw new Error(`WebDAV 创建根目录失败：HTTP ${rootResponse.status}`);
+      }
     }
     for (const segment of segments) {
       current = current ? `${current}/${segment}` : segment;
       if (await fileExists(current)) continue;
       const response = await davRequest(current, { method: 'MKCOL' });
-      if (![201, 405].includes(response.status)) throw new Error(`WebDAV 创建目录失败：HTTP ${response.status}`);
+      if (![201, 405].includes(response.status) && !(response.status === 409 && await fileExists(current))) {
+        throw new Error(`WebDAV 创建目录失败：HTTP ${response.status}`);
+      }
     }
     return { ok: true, path: safePath };
   }
