@@ -5,6 +5,8 @@ server/node_modules
 
 # Environment and secrets
 .env
+.env.production
+.env.local
 .env.*
 !.env.example
 !.env.*.example
@@ -36,6 +38,7 @@ server/uploads
 exports
 server/exports
 logs
+logs/
 *.log
 
 # Benchmark runtime artifacts
@@ -51,6 +54,8 @@ reports
 .cloudflared
 .playwright-mcp
 node_modules.pnpm-backup-*
+tools/cloudflared
+tools/cloudflared.tgz
 
 # macOS
 .DS_Store

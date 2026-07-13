@@ -51,3 +51,12 @@
 - 当前目标：确认项目没有 `.git` 后恢复 Git 基础设施。
 - 初始化仓库，补齐 `.gitignore`、README 和阶段版本记录。
 - 首次提交信息：`chore: initialize Chinese Teacher AI Studio repository`。
+
+### P1.5.3 GitHub 云仓库与持续集成
+
+- 检查本地 Git 状态、分支、提交和 GitHub Remote；当前无 Remote 时输出创建仓库和首次 push 指引。
+- 完善 README，使其覆盖项目介绍、系统架构、功能模块、目录结构、安装、启动、生产部署、Benchmark、飞书、Cloudflare Tunnel、WebDAV、教师后台、学生端和路线图。
+- 完善 `.gitignore`，确保真实 `.env`、密钥、日志、构建产物、运行数据和 Benchmark 产物不会进入 GitHub。
+- 新增 `CONTRIBUTING.md`，记录开发规范、Commit 规范、目录规范、命名规范和 Branch 规范。
+- 更新 GitHub Actions CI，包含依赖安装、CI 配置检查、Type Check、Lint、单元测试、Benchmark Test 和 Build。
+- 新增 `npm run ci:check`，检查 Git、GitHub Remote、README、`.gitignore`、GitHub Actions、Benchmark、飞书、Cloudflare Tunnel 和 WebDAV 工程配置。
