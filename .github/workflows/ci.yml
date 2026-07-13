@@ -49,7 +49,8 @@ jobs:
 
       - name: Unit tests
         run: |
-          find server/test -name '*.test.js' ! -name 'production-data.test.js' -print0 | xargs -0 node --test
+          node --test server/test/benchmark-center.test.js
+          find server/test -name '*.test.js' ! -name 'benchmark-center.test.js' ! -name 'production-data.test.js' -print0 | xargs -0 node --test
 
       - name: Benchmark Test
         run: npm run benchmark:test
