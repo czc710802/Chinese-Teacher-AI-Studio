@@ -1,5 +1,6 @@
 import { db } from './connection.js';
 import { schemaSql } from './schema.js';
+import { applyP2FeishuWorkbenchMigration } from './migrations/20260713_p2_feishu_workbench.js';
 
 export function relaxInviteCodeConstraint(database = db) {
   const inviteColumn = database.prepare("PRAGMA table_info('classes')").all()
@@ -174,6 +175,7 @@ export function initDatabase() {
   relaxUserRoleConstraint(db);
   relaxInviteCodeConstraint(db);
   migrateAssignmentWorkflow(db);
+  applyP2FeishuWorkbenchMigration(db);
   try { db.exec("ALTER TABLE ai_reviews ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP"); } catch(e) {}
   const count = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
   if (count > 0) return;

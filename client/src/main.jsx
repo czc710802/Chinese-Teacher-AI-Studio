@@ -1505,7 +1505,7 @@ function TeacherHome() {
         <h2>班级管理、任务发布与批改汇总</h2>
       </div>
     </section>
-    <div className="grid"><TeacherDashboardCard /><PublicAccessPanel title="公网演示入口" intro="用于手机端访问、课堂展示和线上演示。复制后可直接发给听众。" /><Card title="Archive" icon={<PackageOpen size={20} />}><p className="hint">查看作文自动归档、NAS 路径和待同步状态。</p><div className="actions"><a className="button-link" href="/archive">进入 Archive</a></div></Card><Card title="学生成长档案" icon={<TrendingUp size={20} />}><p className="hint">查看学生分数趋势、能力变化、高频问题和训练计划。</p><div className="actions"><a className="button-link" href="/student-profiles">进入档案中心</a></div></Card><PasswordCard /><AssignmentPublish /><AssignmentManagement /><ClassManagement /><TeacherReviewCenter /><TeacherInsightPanel /></div>
+    <div className="grid"><TeacherDashboardCard /><PublicAccessPanel title="公网演示入口" intro="用于手机端访问、课堂展示和线上演示。复制后可直接发给听众。" /><Card title="飞书班级群" icon={<MessageCircle size={20} />}><p className="hint">绑定班级主群、备用群，并发送系统测试消息。</p><div className="actions"><a className="button-link" href="/teacher/feishu/classes">进入群绑定</a></div></Card><Card title="Archive" icon={<PackageOpen size={20} />}><p className="hint">查看作文自动归档、NAS 路径和待同步状态。</p><div className="actions"><a className="button-link" href="/archive">进入 Archive</a></div></Card><Card title="学生成长档案" icon={<TrendingUp size={20} />}><p className="hint">查看学生分数趋势、能力变化、高频问题和训练计划。</p><div className="actions"><a className="button-link" href="/student-profiles">进入档案中心</a></div></Card><PasswordCard /><AssignmentPublish /><AssignmentManagement /><ClassManagement /><TeacherReviewCenter /><TeacherInsightPanel /></div>
   </Layout>;
 }
 
@@ -2235,6 +2235,144 @@ function AnalyticsPage() {
   </div></Layout>;
 }
 
+function AdminFeishuTeachersPage() {
+  const [data, setData] = useState({ teachers: [], logs: [] });
+  const [keyword, setKeyword] = useState('');
+  const [message, setMessage] = useState('');
+  const [createdCode, setCreatedCode] = useState(null);
+
+  async function load() {
+    const query = keyword ? `?keyword=${encodeURIComponent(keyword)}` : '';
+    setData(await api(`/admin/feishu/teachers${query}`));
+  }
+
+  useEffect(() => { load().catch((err) => setMessage(err.message)); }, []);
+
+  async function createCode(teacher) {
+    if (!window.confirm(`为 ${teacher.teacher_name} 创建一次性飞书教师绑定码？绑定码只显示一次。`)) return;
+    const result = await api(`/admin/feishu/teachers/${teacher.teacher_id}/binding-code`, { method: 'POST', body: {} });
+    setCreatedCode({ teacherName: teacher.teacher_name, ...result });
+    await load();
+  }
+
+  async function updateBinding(bindingId, action) {
+    const label = { disable: '停用', restore: '恢复', unbind: '解绑' }[action] || action;
+    if (!window.confirm(`确认${label}该飞书教师绑定？`)) return;
+    await api(`/admin/feishu/teacher-bindings/${bindingId}/${action}`, { method: 'POST', body: {} });
+    setMessage(`已${label}教师绑定。`);
+    await load();
+  }
+
+  return <Layout><Card title="飞书教师绑定管理" icon={<MessageCircle size={20} />}>
+    <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
+      <label><Search size={18} /><input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索教师姓名或账号" /></label>
+      <button><Filter size={18} />查询</button>
+    </form>
+    {message && <p className="hint">{message}</p>}
+    {createdCode && <div className="success">
+      <p><b>{createdCode.teacherName}</b> 的一次性绑定码：</p>
+      <p className="assignment-link">{createdCode.code}</p>
+      <p>有效期至：{formatDateTime(createdCode.expiresAt)}。该明文只显示一次，后续无法查看，只能重新生成。</p>
+      <button type="button" onClick={() => navigator.clipboard?.writeText(createdCode.code)}>复制绑定码</button>
+    </div>}
+    <div className="management-table">
+      {data.teachers.map((teacher) => <article className="management-row" key={`${teacher.teacher_id}-${teacher.binding_id || 'none'}`}>
+        <b>{teacher.teacher_name}<span>{teacher.username} · {teacher.title || '教师'}</span></b>
+        <span>负责班级 {teacher.class_count || 0} 个</span>
+        <span>绑定状态：{teacher.status || '未绑定'}</span>
+        <span>绑定时间：{teacher.verified_at ? formatDateTime(teacher.verified_at) : '未绑定'}</span>
+        <span className="record-actions">
+          <button type="button" onClick={() => createCode(teacher)}>创建绑定码</button>
+          {teacher.binding_id && teacher.status !== 'disabled' && <button type="button" onClick={() => updateBinding(teacher.binding_id, 'disable')}>停用</button>}
+          {teacher.binding_id && teacher.status === 'disabled' && <button type="button" onClick={() => updateBinding(teacher.binding_id, 'restore')}>恢复</button>}
+          {teacher.binding_id && <button type="button" className="danger-button" onClick={() => updateBinding(teacher.binding_id, 'unbind')}>解绑</button>}
+        </span>
+      </article>)}
+    </div>
+    <h3 style={{ marginTop: 16 }}>最近操作日志</h3>
+    <div className="management-table">
+      {data.logs.map((log) => <article className="management-row" key={log.id}><b>{log.action}<span>{log.resource_type}:{log.resource_id}</span></b><span>{log.status}</span><span>{log.error_code || '无错误'}</span><span>{formatDateTime(log.created_at)}</span></article>)}
+    </div>
+  </Card></Layout>;
+}
+
+function TeacherFeishuClassesPage() {
+  const [data, setData] = useState({ rows: [], permissions: {} });
+  const [inputs, setInputs] = useState({});
+  const [message, setMessage] = useState('');
+
+  async function load() {
+    setData(await api('/teacher/feishu/classes'));
+  }
+  useEffect(() => { load().catch((err) => setMessage(err.message)); }, []);
+
+  function updateInput(classId, patch) {
+    setInputs((current) => ({ ...current, [classId]: { ...(current[classId] || {}), ...patch } }));
+  }
+
+  async function bindGroup(row, isPrimary = true) {
+    const input = inputs[row.id] || {};
+    if (!input.chatId?.trim()) return setMessage('请填写飞书群 chatId，或在飞书开放平台补齐群列表权限后选择群聊。');
+    await api(`/teacher/feishu/classes/${row.id}/bind`, {
+      method: 'POST',
+      body: {
+        feishuChatId: input.chatId.trim(),
+        feishuChatName: input.chatName || row.name,
+        tenantKey: input.tenantKey || '',
+        isPrimary
+      }
+    });
+    setMessage('班级飞书群绑定已保存。');
+    await load();
+  }
+
+  async function unbind(row) {
+    if (!row.binding_id) return;
+    if (!window.confirm(`解除 ${row.name} 的飞书群绑定？`)) return;
+    await api(`/teacher/feishu/classes/${row.id}/unbind`, { method: 'POST', body: { bindingId: row.binding_id } });
+    setMessage('已解除班级飞书群绑定。');
+    await load();
+  }
+
+  async function testMessage(row) {
+    if (!row.binding_id) return setMessage('请先绑定飞书群。');
+    const result = await api(`/teacher/feishu/classes/${row.id}/test-message`, { method: 'POST', body: { bindingId: row.binding_id } });
+    setMessage(result.ok ? '系统测试消息已发送。' : `测试消息未发送：${result.reason || '飞书权限或配置不足'}`);
+    await load();
+  }
+
+  return <Layout><Card title="班级飞书群绑定" icon={<MessageCircle size={20} />}>
+    {message && <p className="hint">{message}</p>}
+    {!data.permissions?.canListChats && <div className="warning">
+      <p>当前飞书应用暂未确认具备群列表读取权限，页面提供手动 chatId 绑定备用方式。</p>
+      <p>需要权限：{(data.permissions?.missingPermissions || []).join('、') || 'im:chat:readonly / im:message:send_as_bot'}</p>
+      <p>如新增权限，通常需要在飞书开放平台重新发布应用版本。</p>
+    </div>}
+    <div className="management-table">
+      {data.rows.map((row) => <article className="management-row" key={`${row.id}-${row.binding_id || 'none'}`}>
+        <b>{row.name}<span>{row.grade || '未填写年级'} · {row.binding_status || '未绑定'}</span></b>
+        <span>主群：{row.is_primary ? '是' : '否'}</span>
+        <span>群名：{row.feishu_chat_name || '未绑定'}</span>
+        <span>chatId：{row.feishu_chat_id_masked || '未绑定'}</span>
+        <span>最近测试：{row.last_tested_at ? `${formatDateTime(row.last_tested_at)} ${row.last_test_status || ''}` : '未测试'}</span>
+        <div className="assignment-share-panel">
+          <div className="row">
+            <input placeholder="飞书群 chatId" value={inputs[row.id]?.chatId || ''} onChange={(e) => updateInput(row.id, { chatId: e.target.value })} />
+            <input placeholder="飞书群名称" value={inputs[row.id]?.chatName || ''} onChange={(e) => updateInput(row.id, { chatName: e.target.value })} />
+          </div>
+          <div className="actions">
+            <button type="button" onClick={() => bindGroup(row, true)}>绑定主群</button>
+            <button type="button" onClick={() => bindGroup(row, false)}>设置备用群</button>
+            <button type="button" onClick={() => testMessage(row)}>测试发送</button>
+            {row.binding_id && <button type="button" className="danger-button" onClick={() => unbind(row)}>解除绑定</button>}
+          </div>
+        </div>
+      </article>)}
+      {!data.rows.length && <p className="hint">暂无可管理班级。</p>}
+    </div>
+  </Card></Layout>;
+}
+
 function AdminHome() {
   const [system, setSystem] = useState(null);
   const [ai, setAi] = useState(null);
@@ -2268,6 +2406,7 @@ function AdminHome() {
       <p>App configured：{String(feishu?.appConfigured ?? false)}</p>
       <p>Webhook：{String(feishu?.webhookConfigured ?? false)}</p>
       <p>Connected：{String(feishu?.connected ?? false)}</p>
+      <div className="actions"><a className="button-link" href="/admin/feishu/teachers">教师绑定管理</a></div>
     </Card>
     <Card title="Cloudflare 状态" icon={<Share2 size={20} />}>
       <p>公网域名：{publicAccess?.publicUrl || publicAccess?.publicOrigin || 'https://pi.zhenwanyue.icu'}</p>
@@ -2297,6 +2436,8 @@ function App() {
     <Route path="/teacher/tasks" element={<RoleRoute roles={['teacher']}><TeacherTasksPage /></RoleRoute>} />
     <Route path="/teacher/benchmark" element={<RoleRoute roles={['teacher']}><BenchmarkCenterPage /></RoleRoute>} />
     <Route path="/admin" element={<RoleRoute roles={['admin']}><AdminHome /></RoleRoute>} />
+    <Route path="/admin/feishu/teachers" element={<RoleRoute roles={['admin']}><AdminFeishuTeachersPage /></RoleRoute>} />
+    <Route path="/teacher/feishu/classes" element={<RoleRoute roles={['teacher']}><TeacherFeishuClassesPage /></RoleRoute>} />
     <Route path="/teacher/reviews" element={<RoleRoute roles={['teacher']}><Layout><TeacherReviewCenter /></Layout></RoleRoute>} />
     <Route path="/archive" element={<RoleRoute roles={['teacher']}><ArchivePage /></RoleRoute>} />
     <Route path="/student-profiles" element={<RoleRoute roles={['student', 'teacher']}><StudentProfilesPage /></RoleRoute>} />

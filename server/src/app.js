@@ -19,6 +19,7 @@ import { fileAccessRouter, publicReportRouter } from './routes/files.js';
 import { studentProfileRouter } from './routes/student-profiles.js';
 import { studentManagementRouter, teacherManagementRouter } from './routes/teacher-management.js';
 import { benchmarkRouter } from './routes/benchmark.js';
+import { adminFeishuRouter, teacherFeishuRouter } from './routes/feishu-workbench.js';
 import { getAiStatus } from './services/openai.js';
 import { classifyAIError } from './services/ai/client-factory.js';
 import { createAIRouter } from './services/ai/ai-router.js';
@@ -97,7 +98,12 @@ export function createApp({
       return callback(new Error(`CORS 不允许该来源：${origin}`));
     }
   }));
-  app.use(express.json({ limit: '20mb' }));
+  app.use(express.json({
+    limit: '20mb',
+    verify(req, _res, buf) {
+      req.rawBody = buf?.length ? buf.toString('utf8') : '';
+    }
+  }));
   app.use('/uploads', express.static(path.resolve(__dirname, '../uploads')));
   app.use('/exports', express.static(path.resolve(__dirname, '../exports')));
 
@@ -167,7 +173,7 @@ export function createApp({
 
   async function handleFeishuHttpEvent(req, res, next) {
     try {
-      const verification = verifyFeishuEvent({ body: req.body, env });
+      const verification = verifyFeishuEvent({ body: req.body, env, headers: req.headers, rawBody: req.rawBody || '' });
       if (verification) {
         res.status(verification.statusCode).json(verification.body);
         return;
@@ -197,7 +203,9 @@ export function createApp({
   app.use('/api/student-profiles', studentProfileRouter);
   app.use('/api/benchmark', benchmarkRouter);
   app.use('/api/teacher', teacherManagementRouter);
+  app.use('/api/teacher/feishu', teacherFeishuRouter);
   app.use('/api/students', studentManagementRouter);
+  app.use('/api/admin/feishu', adminFeishuRouter);
   app.use('/api/admin/storage/zspace', zspaceStorageRouter);
   app.use('/report', publicReportRouter);
 

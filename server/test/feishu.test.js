@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -179,6 +180,54 @@ test('feishu verification echoes the challenge token', () => {
 
   assert.equal(result.statusCode, 200);
   assert.deepEqual(result.body, { challenge: 'abc123' });
+});
+
+test('feishu verification rejects stale timestamp invalid signature and replayed nonce when enforced', () => {
+  const rawBody = JSON.stringify({ event: { message: { message_id: 'om_test' } } });
+  const timestamp = '1783958400';
+  const nonce = 'nonce-1';
+  const encryptKey = 'encrypt-key';
+  const signature = crypto
+    .createHash('sha256')
+    .update(`${timestamp}${nonce}${encryptKey}${rawBody}`)
+    .digest('hex');
+  const nonceStore = new Set();
+
+  const ok = verifyFeishuEvent({
+    body: JSON.parse(rawBody),
+    rawBody,
+    headers: {
+      'x-lark-request-timestamp': timestamp,
+      'x-lark-request-nonce': nonce,
+      'x-lark-signature': signature
+    },
+    config: { encryptKey, enforceSignature: true, nowSeconds: 1783958400, nonceStore }
+  });
+  assert.equal(ok, null);
+
+  const replay = verifyFeishuEvent({
+    body: JSON.parse(rawBody),
+    rawBody,
+    headers: {
+      'x-lark-request-timestamp': timestamp,
+      'x-lark-request-nonce': nonce,
+      'x-lark-signature': signature
+    },
+    config: { encryptKey, enforceSignature: true, nowSeconds: 1783958400, nonceStore }
+  });
+  assert.equal(replay.statusCode, 409);
+
+  const stale = verifyFeishuEvent({
+    body: JSON.parse(rawBody),
+    rawBody,
+    headers: {
+      'x-lark-request-timestamp': '1783950000',
+      'x-lark-request-nonce': 'nonce-2',
+      'x-lark-signature': signature
+    },
+    config: { encryptKey, enforceSignature: true, nowSeconds: 1783958400, nonceStore: new Set() }
+  });
+  assert.equal(stale.statusCode, 401);
 });
 
 test('feishu api exposes health and system status endpoints', async () => {

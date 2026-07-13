@@ -1,6 +1,8 @@
 const DEFAULT_FEISHU_REPLY = '我已收到消息。请发送“批改作文+作文正文”，也可以直接发送完整作文。';
 
 const COMMAND_GROUPS = [
+  { key: 'workbench', prefixes: ['workbench', '教师工作台', '打开教师工作台', '我的工作台', '查看我的班级'] },
+  { key: 'bind_teacher', prefixes: ['绑定教师', '教师绑定', 'bind teacher'] },
   { key: 'essay', prefixes: ['批改作文', '作文批改', '帮我批改', '点评作文', '批改', '作文', 'essay'] },
   { key: 'help', prefixes: ['帮助', 'help'] },
   { key: 'status', prefixes: ['状态', 'status'] },

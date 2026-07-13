@@ -2,7 +2,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { parseFeishuCommand } from './commands.js';
-import { buildBackupCard, buildDailyReportCard, buildHelpCard, buildLogsCard, buildReservedCard, buildRestartCard, buildStatusCard } from './cards.js';
+import { db } from '../../db/connection.js';
+import {
+  buildBackupCard,
+  buildDailyReportCard,
+  buildHelpCard,
+  buildLogsCard,
+  buildReservedCard,
+  buildRestartCard,
+  buildStatusCard,
+  buildTeacherBindingRequiredCard,
+  buildTeacherBindSuccessCard,
+  buildTeacherWorkbenchCard
+} from './cards.js';
 import { canExecuteFeishuCommand } from './auth.js';
 import { loadFeishuConfig } from './config.js';
 import { sendCardMessage, sendTextMessage } from './client.js';
@@ -15,12 +27,25 @@ import {
   classifyFeishuIncomingMessage,
   getFeishuDefaultReply
 } from './messageParser.js';
+import { bindTeacherWithCode, getTeacherWorkbenchSummary, recordFeishuAction } from '../../services/feishu-workbench.js';
 
 function extractReceiveTarget(body) {
   const event = body?.event || {};
   return {
     receiveId: event.chat_id || event.sender?.sender_id?.open_id || event.sender?.sender_id?.union_id || '',
     receiveIdType: event.chat_id ? 'chat_id' : event.sender?.sender_id?.open_id ? 'open_id' : 'union_id'
+  };
+}
+
+function extractSenderIds(body) {
+  const event = body?.event || {};
+  const sender = event.sender || {};
+  const senderId = sender.sender_id || sender.senderId || {};
+  return {
+    openId: senderId.open_id || sender.open_id || '',
+    unionId: senderId.union_id || sender.union_id || '',
+    userId: senderId.user_id || sender.user_id || '',
+    tenantKey: body?.tenant_key || body?.tenantKey || event?.tenant_key || ''
   };
 }
 
@@ -54,9 +79,30 @@ export async function routeFeishuEvent({
   logger = console
 } = {}) {
   const incoming = classifyFeishuIncomingMessage(body, { botName: loadFeishuConfig(env).botName });
+  const eventId = body?.header?.event_id || body?.event_id || body?.event?.message?.message_id || '';
+  if (eventId) {
+    const existingEvent = db.prepare("SELECT id FROM feishu_action_logs WHERE request_id = ? AND action = 'feishu_event_received'").get(eventId);
+    if (existingEvent) {
+      return {
+        statusCode: 200,
+        body: { ok: true, duplicate: true, eventId }
+      };
+    }
+    recordFeishuAction(db, {
+      actorType: 'feishu',
+      actorId: '',
+      feishuOpenId: body?.event?.sender?.sender_id?.open_id || '',
+      action: 'feishu_event_received',
+      resourceType: 'feishu_event',
+      resourceId: eventId,
+      requestId: eventId,
+      status: 'success'
+    });
+  }
   const command = incoming.command || parseFeishuCommand(incoming.text);
   const messageType = incoming.messageType || body?.event?.message?.message_type || 'text';
   const { receiveId, receiveIdType } = extractReceiveTarget(body);
+  const senderIds = extractSenderIds(body);
   const status = getSystemStatus({ appDir, env });
   const adminAllowed = canExecuteFeishuCommand({
     commandKey: command.key,
@@ -72,6 +118,37 @@ export async function routeFeishuEvent({
   if (incoming.text === '你好') {
     responseContent = '你好，我是 Chinese Teacher AI Studio。';
     responseMessage = responseContent;
+  } else if (command.key === 'workbench') {
+    const summary = getTeacherWorkbenchSummary(db, {
+      feishuOpenId: senderIds.openId,
+      tenantKey: senderIds.tenantKey,
+      publicOrigin: env.PUBLIC_APP_ORIGIN || 'https://pi.zhenwanyue.icu'
+    });
+    responseType = 'card';
+    responseContent = summary.status === 200
+      ? buildTeacherWorkbenchCard(summary, { publicOrigin: env.PUBLIC_APP_ORIGIN || 'https://pi.zhenwanyue.icu' })
+      : buildTeacherBindingRequiredCard({ publicOrigin: env.PUBLIC_APP_ORIGIN || 'https://pi.zhenwanyue.icu' });
+    responseMessage = summary.status === 200 ? 'teacher workbench sent' : 'teacher binding required';
+  } else if (command.key === 'bind_teacher') {
+    const result = bindTeacherWithCode(db, {
+      code: command.text,
+      feishuOpenId: senderIds.openId,
+      feishuUnionId: senderIds.unionId,
+      tenantKey: senderIds.tenantKey
+    });
+    responseType = 'card';
+    if (result.status === 200) {
+      const summary = getTeacherWorkbenchSummary(db, {
+        feishuOpenId: senderIds.openId,
+        tenantKey: senderIds.tenantKey,
+        publicOrigin: env.PUBLIC_APP_ORIGIN || 'https://pi.zhenwanyue.icu'
+      });
+      responseContent = buildTeacherBindSuccessCard(summary, { publicOrigin: env.PUBLIC_APP_ORIGIN || 'https://pi.zhenwanyue.icu' });
+      responseMessage = 'teacher binding success';
+    } else {
+      responseContent = buildTeacherBindingRequiredCard({ publicOrigin: env.PUBLIC_APP_ORIGIN || 'https://pi.zhenwanyue.icu' });
+      responseMessage = result.message || 'teacher binding failed';
+    }
   } else if (incoming.mode === 'essay' || ['image', 'file'].includes(messageType)) {
     const essayResult = await handleFeishuEssayMessage({ body, command: { ...command, text: incoming.essayText }, env, appDir, status, zspaceClient, logger });
     responseType = essayResult.responseType || 'text';

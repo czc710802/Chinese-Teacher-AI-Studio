@@ -139,6 +139,65 @@ export function buildStatusCard(status = {}) {
   ]);
 }
 
+export function buildTeacherBindingRequiredCard({ publicOrigin = 'https://pi.zhenwanyue.icu' } = {}) {
+  return baseCard('绑定教师身份', 'Chinese Teacher AI Studio', [
+    textElement('你还没有绑定教师身份。请向管理员获取一次性教师绑定码。'),
+    textElement('收到绑定码后，在本聊天中发送：`绑定教师 TCH-XXXX-XXXX`。'),
+    textElement('绑定码短期有效、只能使用一次；系统不会通过姓名或 URL 参数绑定身份。'),
+    {
+      tag: 'action',
+      actions: [
+        buttonElement('打开教师端', { url: `${publicOrigin.replace(/\/+$/, '')}/teacher` }),
+        buttonElement('系统状态', 'status', 'default')
+      ]
+    }
+  ]);
+}
+
+export function buildTeacherBindSuccessCard(summary = {}, { publicOrigin = 'https://pi.zhenwanyue.icu' } = {}) {
+  return baseCard('教师身份绑定成功', 'Chinese Teacher AI Studio', [
+    textElement(`**教师**：${summary.teacherName || '已绑定教师'}`),
+    textElement('现在可以发送 `/workbench` 打开飞书教师工作台。'),
+    {
+      tag: 'action',
+      actions: [
+        buttonElement('打开工作台', 'workbench'),
+        buttonElement('进入教师端', { url: `${publicOrigin.replace(/\/+$/, '')}/teacher` }, 'default')
+      ]
+    }
+  ]);
+}
+
+export function buildTeacherWorkbenchCard(summary = {}, { publicOrigin = 'https://pi.zhenwanyue.icu' } = {}) {
+  const origin = String(publicOrigin || 'https://pi.zhenwanyue.icu').replace(/\/+$/, '');
+  return baseCard('教师工作台', 'Chinese Teacher AI Studio', [
+    textElement(`**教师**：${summary.teacherName || '未识别'}`),
+    textElement(`**飞书绑定状态**：${summary.bound ? '已绑定' : '未绑定'}`),
+    textElement(`**负责班级**：${summary.classCount ?? 0} 个；**已绑定飞书群**：${summary.boundGroupCount ?? 0} 个`),
+    textElement(`**今日截止作业**：${summary.todayDueAssignments ?? 0} 个`),
+    textElement(`**待批改**：${summary.pendingGradingCount ?? 0} 篇；**待审核报告**：${summary.pendingReviewCount ?? 0} 篇`),
+    textElement(`**未交学生**：${summary.missingStudentCount ?? 0} 人次`),
+    textElement(`**系统状态摘要**：${summary.systemStatus || '正常'}`),
+    {
+      tag: 'action',
+      actions: [
+        buttonElement('新建作文任务', { url: `${origin}/assignments/new` }),
+        buttonElement('我的班级', { url: `${origin}/teacher/classes` }),
+        buttonElement('提交进度', { url: `${origin}/teacher/essays` }),
+        buttonElement('待审核报告', { url: `${origin}/teacher/reviews` })
+      ]
+    },
+    textElement(`**学生成长档案**：${origin}/student-profiles  \n**班级统计**：${origin}/teacher/classes  \n**AI 备课：建设中**  \n**AI 命题：建设中**  \n**AI PPT：建设中**  \n**教学知识库：建设中**`),
+    {
+      tag: 'action',
+      actions: [
+        buttonElement('班级群绑定', { url: `${origin}/teacher/feishu/classes` }, 'default'),
+        buttonElement('系统状态', 'status', 'default')
+      ]
+    }
+  ]);
+}
+
 export function buildDailyReportCard({ reportPath = '', summary = '' } = {}) {
   return baseCard(TITLE, '最近日报', [
     textElement(`**路径**：${reportPath || '未找到日报'}`),
