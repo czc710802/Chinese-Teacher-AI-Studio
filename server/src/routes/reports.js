@@ -14,6 +14,15 @@ reportRouter.post('/essay/:essayId/:format', async (req, res, next) => {
   }
 });
 
+reportRouter.get('/essay/:essayId/:format/download', async (req, res, next) => {
+  try {
+    const result = await exportEssayReport({ essayId: req.params.essayId, format: req.params.format, userId: req.user.id, storageService: req.app.locals.storageService });
+    res.redirect(result.url);
+  } catch (error) {
+    next(error);
+  }
+});
+
 reportRouter.post('/assignment/:assignmentId/:format', async (req, res, next) => {
   try {
     res.json(await exportAssignmentEssays({ assignmentId: req.params.assignmentId, format: req.params.format, userId: req.user.id, storageService: req.app.locals.storageService }));

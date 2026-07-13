@@ -7,6 +7,7 @@ import path from 'node:path';
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const mainSource = readFileSync(path.join(rootDir, 'client/src/main.jsx'), 'utf8');
 const essayRoutesSource = readFileSync(path.join(rootDir, 'server/src/routes/essays.js'), 'utf8');
+const assignmentRoutesSource = readFileSync(path.join(rootDir, 'server/src/routes/assignments.js'), 'utf8');
 const reviewPromptSource = readFileSync(path.join(rootDir, 'server/src/services/prompt.js'), 'utf8');
 const aiTutorSource = readFileSync(path.join(rootDir, 'server/src/services/ai-tutor.js'), 'utf8');
 const exporterSource = readFileSync(path.join(rootDir, 'server/src/services/exporter.js'), 'utf8');
@@ -122,6 +123,23 @@ test('student submit page keeps the selected assignment when switching to photo 
   const submitPage = functionBody('SubmitPage');
   assert.match(submitPage, /href=\{`\/upload\?assignmentId=\$\{assignmentId\}`\}/);
   assert.match(submitPage, /请输入或粘贴\/黏贴作文正文/);
+  assert.match(submitPage, /当前提交状态/);
+  assert.match(submitPage, /accept="\.doc,\.docx,\.pdf,\.txt,\.md"/);
+  assert.match(submitPage, /OCR 后人工确认/);
+});
+
+test('teacher assignment management exposes Feishu group publish preview revoke and missing reminders', () => {
+  const assignmentManagement = functionBody('AssignmentManagement');
+  assert.match(assignmentManagement, /飞书作业发布/);
+  assert.match(assignmentManagement, /选择飞书班级群 chatId/);
+  assert.match(assignmentManagement, /绑定班级群/);
+  assert.match(assignmentManagement, /预览消息卡片/);
+  assert.match(assignmentManagement, /发送到飞书/);
+  assert.match(assignmentManagement, /撤回或重新发布/);
+  assert.match(assignmentManagement, /提醒未提交学生/);
+  assert.match(assignmentRoutesSource, /share\/feishu\/preview/);
+  assert.match(assignmentRoutesSource, /share\/feishu\/revoke/);
+  assert.match(assignmentRoutesSource, /remind-missing/);
 });
 
 test('student photo upload sends images directly for AI recognition and review', () => {
@@ -132,8 +150,9 @@ test('student photo upload sends images directly for AI recognition and review',
   assert.match(uploadPage, /fd\.append\('images', file\)/);
   assert.match(uploadPage, /nav\(`\/review\/\$\{data\.essayId\}`\)/);
   assert.match(uploadPage, /capture="environment"/);
-  assert.match(uploadPage, /accept="image\/\*"/);
-  assert.doesNotMatch(uploadPage, /\/essays\/ocr|\/confirm|pendingEssayImages|确认文字/);
+  assert.match(uploadPage, /accept="image\/\*,\.heic"/);
+  assert.match(uploadPage, /确认文字/);
+  assert.doesNotMatch(uploadPage, /pendingEssayImages/);
   assert.doesNotMatch(mainSource, /function ConfirmPage|Route path="\/confirm"/);
 });
 

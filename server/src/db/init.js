@@ -87,6 +87,9 @@ export function migrateAssignmentWorkflow(database = db) {
   addColumnIfMissing(database, 'assignments', 'scoring_standard', "TEXT DEFAULT ''");
   addColumnIfMissing(database, 'assignments', 'status', "TEXT NOT NULL DEFAULT 'published'");
   addColumnIfMissing(database, 'assignments', 'allow_resubmit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(database, 'assignments', 'allow_late_submit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(database, 'assignments', 'second_draft_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(database, 'assignments', 'reminder_enabled', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing(database, 'assignments', 'published_at', 'TEXT');
   addColumnIfMissing(database, 'assignments', 'share_url', "TEXT DEFAULT ''");
   addColumnIfMissing(database, 'assignments', 'qr_svg', "TEXT DEFAULT ''");
@@ -112,6 +115,56 @@ export function migrateAssignmentWorkflow(database = db) {
       UNIQUE(assignment_id, student_id),
       FOREIGN KEY(assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
       FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
+    );
+  `);
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS feishu_class_bindings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      teacher_id INTEGER NOT NULL,
+      class_id INTEGER NOT NULL,
+      feishu_chat_id TEXT NOT NULL,
+      feishu_chat_name TEXT DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      is_primary INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(class_id, feishu_chat_id),
+      FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE CASCADE,
+      FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS feishu_student_bindings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      student_id INTEGER NOT NULL,
+      class_id INTEGER NOT NULL,
+      feishu_open_id TEXT NOT NULL,
+      feishu_union_id TEXT DEFAULT '',
+      verified_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(student_id, class_id),
+      UNIQUE(class_id, feishu_open_id),
+      FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,
+      FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS feishu_assignment_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      assignment_id INTEGER NOT NULL,
+      class_id INTEGER NOT NULL,
+      feishu_chat_id TEXT NOT NULL,
+      message_id TEXT DEFAULT '',
+      message_type TEXT NOT NULL DEFAULT 'assignment_publish',
+      status TEXT NOT NULL DEFAULT 'sent',
+      idempotency_key TEXT NOT NULL UNIQUE,
+      sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      revoked_at TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
+      FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE
     );
   `);
 }

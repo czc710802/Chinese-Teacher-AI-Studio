@@ -1,3 +1,9 @@
+import {
+  getPrimaryFeishuClassBinding,
+  markAssignmentMessageRevoked,
+  recordFeishuAssignmentMessage
+} from './feishu-assignment-bindings.js';
+
 function getTeacher(database, user) {
   return database.prepare('SELECT id FROM teachers WHERE user_id = ?').get(user.id);
 }
@@ -199,6 +205,9 @@ export function createManagedAssignment(database, user, body, options = {}) {
     deadline: String(body.deadline || '').trim(),
     status: String(body.status || 'published').trim() || 'published',
     allow_resubmit: body.allow_resubmit || body.allowResubmit ? 1 : 0,
+    allow_late_submit: body.allow_late_submit || body.allowLateSubmit ? 1 : 0,
+    second_draft_enabled: body.second_draft_enabled || body.secondDraftEnabled ? 1 : 0,
+    reminder_enabled: body.reminder_enabled === false || body.reminderEnabled === false ? 0 : 1,
     feishu_chat_id: String(body.feishu_chat_id || body.feishuChatId || '').trim()
   };
   if (!next.title) return { status: 400, message: '请填写作文题目' };
@@ -233,12 +242,14 @@ export function createManagedAssignment(database, user, body, options = {}) {
   const result = database.prepare(`
     INSERT INTO assignments
       (class_id, public_id, title, prompt, requirements, essay_type, full_score, grade,
-       min_words, max_words, scoring_standard, status, allow_resubmit, published_at,
+       min_words, max_words, scoring_standard, status, allow_resubmit, allow_late_submit,
+       second_draft_enabled, reminder_enabled, published_at,
        share_url, qr_svg, feishu_chat_id, deadline)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
   `).run(
     next.class_id, publicId, next.title, next.prompt, next.requirements, next.essay_type, next.full_score, next.grade,
     next.min_words, next.max_words, next.scoring_standard, next.status, next.allow_resubmit,
+    next.allow_late_submit, next.second_draft_enabled, next.reminder_enabled,
     submissionUrl, qrSvg, next.feishu_chat_id, next.deadline || null
   );
   return {
@@ -299,6 +310,10 @@ export function getAssignmentSubmissionStatus(database, user, assignmentId, opti
 
 export function buildAssignmentFeishuCard(assignment) {
   const deadline = assignment.deadline ? new Date(assignment.deadline).toLocaleString('zh-CN') : '未设置';
+  const submitUrl = assignment.submission_url || assignment.share_url;
+  const statusUrl = `${submitUrl}${String(submitUrl || '').includes('?') ? '&' : '?'}tab=status`;
+  const detailUrl = `${submitUrl}${String(submitUrl || '').includes('?') ? '&' : '?'}view=assignment`;
+  const promptSummary = String(assignment.prompt || '').replace(/\s+/g, ' ').slice(0, 180);
   return {
     config: { wide_screen_mode: true },
     header: {
@@ -307,17 +322,59 @@ export function buildAssignmentFeishuCard(assignment) {
     },
     elements: [
       { tag: 'div', text: { tag: 'lark_md', content: `**作文标题**：${assignment.title}` } },
+      { tag: 'div', text: { tag: 'lark_md', content: `**写作材料摘要**：${promptSummary || '见作业详情'}` } },
       { tag: 'div', text: { tag: 'lark_md', content: `**写作要求**：${assignment.requirements || assignment.prompt}` } },
+      { tag: 'div', text: { tag: 'lark_md', content: `**最低/最高字数**：${assignment.min_words || 0} / ${assignment.max_words || '不限'}` } },
       { tag: 'div', text: { tag: 'lark_md', content: `**截止时间**：${deadline}` } },
-      { tag: 'div', text: { tag: 'lark_md', content: `**提交进度**：${assignment.submitted_count || 0}/${assignment.total_students || 0}` } },
+      { tag: 'div', text: { tag: 'lark_md', content: `**班级**：${assignment.class_name || assignment.grade || '未填写'}` } },
+      { tag: 'div', text: { tag: 'lark_md', content: `**当前已交/未交**：${assignment.submitted_count || 0}/${assignment.missing_count || 0}` } },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            type: 'default',
+            text: { tag: 'plain_text', content: '查看作业' },
+            url: detailUrl
+          },
+          {
+            tag: 'button',
+            type: 'primary',
+            text: { tag: 'plain_text', content: '立即提交' },
+            url: submitUrl
+          },
+          {
+            tag: 'button',
+            type: 'default',
+            text: { tag: 'plain_text', content: '查看提交状态' },
+            url: statusUrl
+          }
+        ]
+      }
+    ]
+  };
+}
+
+export function buildAssignmentReminderCard(assignment) {
+  const deadline = assignment.deadline ? new Date(assignment.deadline).toLocaleString('zh-CN') : '未设置';
+  const submitUrl = assignment.submission_url || assignment.share_url;
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: '作文作业提醒' },
+      subtitle: { tag: 'plain_text', content: 'Chinese Teacher AI Studio' }
+    },
+    elements: [
+      { tag: 'div', text: { tag: 'lark_md', content: `**请尽快提交作文**：${assignment.title}` } },
+      { tag: 'div', text: { tag: 'lark_md', content: `**截止时间**：${deadline}` } },
       {
         tag: 'action',
         actions: [
           {
             tag: 'button',
             type: 'primary',
-            text: { tag: 'plain_text', content: '打开提交链接' },
-            url: assignment.submission_url || assignment.share_url
+            text: { tag: 'plain_text', content: '立即提交' },
+            url: submitUrl
           }
         ]
       }
@@ -328,12 +385,26 @@ export function buildAssignmentFeishuCard(assignment) {
 export async function shareAssignmentToFeishu({ database, user, assignmentId, feishuService, chatId, options = {} }) {
   const status = getAssignmentSubmissionStatus(database, user, assignmentId, options);
   if (status.status !== 200) return status;
-  const targetChatId = String(chatId || status.assignment.feishu_chat_id || '').trim();
+  const binding = getPrimaryFeishuClassBinding(database, status.assignment.class_id);
+  const targetChatId = String(chatId || status.assignment.feishu_chat_id || binding?.feishu_chat_id || '').trim();
   const card = buildAssignmentFeishuCard(status.assignment);
   if (!targetChatId) return { status: 200, sent: false, message: '未配置飞书群 chatId，已生成分享卡片', card, assignment: status.assignment };
   if (!feishuService?.sendCard) return { status: 200, sent: false, message: '飞书发送服务不可用，已生成分享卡片', card, assignment: status.assignment };
   const result = await feishuService.sendCard(targetChatId, card);
-  return { status: 200, sent: true, result, card, assignment: status.assignment };
+  const messageRecord = recordFeishuAssignmentMessage(database, {
+    assignmentId: status.assignment.id,
+    classId: status.assignment.class_id,
+    feishuChatId: targetChatId,
+    messageId: result?.message_id || result?.data?.message_id || '',
+    messageType: 'assignment_publish',
+    status: 'sent',
+    idempotencyKey: `assignment:${status.assignment.id}:publish:${targetChatId}`
+  });
+  return { status: 200, sent: true, result, card, assignment: status.assignment, messageRecord };
+}
+
+export function revokeAssignmentFeishuPublish(database, user, assignmentId) {
+  return markAssignmentMessageRevoked(database, user, assignmentId);
 }
 
 export function deleteManagedAssignment(database, user, assignmentId) {

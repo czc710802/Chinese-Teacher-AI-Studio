@@ -682,6 +682,7 @@ function PasswordCard() {
 
 function UploadPage() {
   const assignmentId = new URLSearchParams(location.search).get('assignmentId') || '';
+  const needsConfirm = new URLSearchParams(location.search).get('confirm') === 'ocr';
   const [title, setTitle] = useState('');
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -711,9 +712,10 @@ function UploadPage() {
   }
   return <Layout><Card title="作文拍照上传" icon={<Camera size={20} />}>
     <input placeholder="作文标题（可选）" value={title} onChange={(e) => setTitle(e.target.value)} />
+    {needsConfirm && <p className="hint">OCR 识别后请在批改前确认文字。当前会先完成识别与批改；如识别不准，请返回文本提交页粘贴修正后的文字。</p>}
     <div className="image-upload-options">
-      <label className="upload-choice"><Camera size={18} />拍照上传<input type="file" accept="image/*" multiple capture="environment" onChange={chooseFiles} /></label>
-      <label className="upload-choice"><FileText size={18} />选择图片<input type="file" accept="image/*" multiple onChange={chooseFiles} /></label>
+      <label className="upload-choice"><Camera size={18} />拍照上传<input type="file" accept="image/*,.heic" multiple capture="environment" onChange={chooseFiles} /></label>
+      <label className="upload-choice"><FileText size={18} />选择图片<input type="file" accept="image/*,.heic" multiple onChange={chooseFiles} /></label>
     </div>
     {files.length > 0 && <div className="upload-file-list">{files.map((file, index) => <p key={`${file.name}-${index}`}>{index + 1}. {file.name}</p>)}</div>}
     {error && <p className="error">{error}</p>}
@@ -724,11 +726,13 @@ function UploadPage() {
 function SubmitPage() {
   const { assignmentId } = useParams();
   const session = getSession();
+  const params = new URLSearchParams(location.search);
   const [assignment, setAssignment] = useState(null);
-  const [text, setText] = useState(new URLSearchParams(location.search).get('text') || '');
+  const [text, setText] = useState(params.get('text') || '');
   const [title, setTitle] = useState('');
   const [studentInfo, setStudentInfo] = useState({ className: '', name: session?.name || '', studentNo: '' });
   const [files, setFiles] = useState([]);
+  const [submissionStatus, setSubmissionStatus] = useState(null);
   const [draftMessage, setDraftMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -746,6 +750,9 @@ function SubmitPage() {
         try { setFiles(JSON.parse(draft.attachments)); } catch {}
       }
     }).catch(() => {});
+    if (session?.role === 'student') {
+      api(`/assignments/${assignmentId}/my-status`).then(setSubmissionStatus).catch(() => {});
+    }
   }, [assignmentId]);
   const wordCount = text.replace(/\s+/g, '').length;
   const tooShort = assignment?.min_words && wordCount < Number(assignment.min_words);
@@ -762,7 +769,7 @@ function SubmitPage() {
   }
   async function submitFiles() {
     if (!files.length) {
-      setError('请先选择 Word 文档');
+      setError('请先选择 Word、PDF 或文本文件');
       return;
     }
     const fd = new FormData();
@@ -803,6 +810,11 @@ function SubmitPage() {
       <p>{assignment.prompt}</p>
       {assignment.requirements && <p><b>写作要求：</b>{assignment.requirements}</p>}
       <p>字数要求：{assignment.min_words || '不限'} - {assignment.max_words || '不限'} 字 · 当前约 {wordCount} 字</p>
+      <p>提交设置：{assignment.allow_resubmit ? '允许重新提交/二稿提交' : '正式提交后不可重复提交'} · {assignment.allow_late_submit ? '允许迟交并标记' : '截止后禁止提交'}</p>
+    </div>}
+    {submissionStatus && <div className="status-strip">
+      <b>当前提交状态：{submissionStatus.state}</b>
+      <span>{submissionStatus.state === '待教师审核' ? 'AI 已批改，等待教师发布报告。' : submissionStatus.state === '已发布报告' ? '报告已发布，可从学生端结果入口查看。' : '请按要求完成作文并正式提交。'}</span>
     </div>}
     <div className="row">
       <input placeholder="班级" value={studentInfo.className} onChange={(e) => setStudentInfo({ ...studentInfo, className: e.target.value })} />
@@ -811,7 +823,8 @@ function SubmitPage() {
     </div>
     <input placeholder="作文标题" value={title} onChange={(e) => setTitle(e.target.value)} />
     <textarea placeholder="请输入或粘贴/黏贴作文正文" value={text} onChange={(e) => setText(e.target.value)} rows="18" />
-    <label className="upload-choice"><FileText size={18} />上传 Word 文档<input type="file" accept=".docx,.txt,.md" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))} /></label>
+    <label className="upload-choice"><FileText size={18} />上传 Word / PDF / 文本<input type="file" accept=".doc,.docx,.pdf,.txt,.md" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))} /></label>
+    <p className="hint">图片、拍照、多图和 HEIC 请使用“拍照上传”，OCR 识别后可人工确认再提交。</p>
     {files.length > 0 && <div className="upload-file-list">{files.map((file, index) => <p key={`${file.name}-${index}`}>{index + 1}. {file.name}</p>)}</div>}
     {tooShort && <p className="error">当前字数低于最低要求。</p>}
     {tooLong && <p className="error">当前字数超过最高限制。</p>}
@@ -819,6 +832,7 @@ function SubmitPage() {
     {error && <p className="error">{error}</p>}
     <div className="actions">
       <a className="ghost" href={`/upload?assignmentId=${assignmentId}`}>拍照上传</a>
+      <a className="ghost" href={`/upload?assignmentId=${assignmentId}&confirm=ocr`}>OCR 后人工确认</a>
       <button type="button" onClick={saveDraft} disabled={busy}>保存草稿</button>
       <button type="button" onClick={submitFiles} disabled={busy || !files.length}><FileText size={18} />上传文件并批改</button>
       <button onClick={submit} disabled={busy || !text.trim() || tooShort || tooLong}><Send size={18} />{busy ? '提交批改中...' : '正式提交并批改'}</button>
@@ -2088,7 +2102,7 @@ function AssignmentPublish() {
       <p><b>学生提交链接：</b>{published.submission_url || published.share_url}</p>
       <div className="actions">
         <button type="button" onClick={() => copyLink(published.submission_url || published.share_url)}>复制链接</button>
-        <button type="button" onClick={() => api(`/assignments/${published.public_id || published.id}/share/feishu`, { method: 'POST', body: {} }).then((data) => alert(data.sent ? '已发送到飞书' : data.message || '已生成飞书分享卡片'))}>飞书分享卡片</button>
+        <button type="button" onClick={() => api(`/assignments/${published.public_id || published.id}/share/feishu`, { method: 'POST', body: {} }).then((data) => alert(data.sent ? '已发送到飞书' : data.message || '已生成飞书分享卡片'))}>发送到飞书</button>
       </div>
       {published.qr_svg && <div className="qr-preview" dangerouslySetInnerHTML={{ __html: published.qr_svg }} />}
     </div>}
@@ -2097,6 +2111,8 @@ function AssignmentPublish() {
 
 function AssignmentManagement() {
   const [publishedAssignments, setPublishedAssignments] = useState([]);
+  const [feishuInputs, setFeishuInputs] = useState({});
+  const [previews, setPreviews] = useState({});
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   async function loadAssignments() {
@@ -2129,6 +2145,39 @@ function AssignmentManagement() {
       setError(err.message);
     }
   }
+  function updateFeishuInput(assignmentId, patch) {
+    setFeishuInputs((current) => ({ ...current, [assignmentId]: { ...(current[assignmentId] || {}), ...patch } }));
+  }
+  async function bindClassGroup(assignment) {
+    const input = feishuInputs[assignment.id] || {};
+    if (!input.chatId?.trim()) return setError('请先填写飞书班级群 chatId');
+    const row = await api(`/classes/${assignment.class_id}/feishu-binding`, {
+      method: 'POST',
+      body: { feishuChatId: input.chatId.trim(), feishuChatName: input.chatName || `${assignment.class_name || '班级'}作文群` }
+    });
+    setMessage(`已绑定飞书班级群：${row.feishu_chat_name || row.feishu_chat_id}`);
+  }
+  async function previewFeishuCard(assignment) {
+    const data = await api(`/assignments/${assignment.public_id || assignment.id}/share/feishu/preview`);
+    setPreviews((current) => ({ ...current, [assignment.id]: data.card }));
+    setMessage('已生成飞书消息卡片预览');
+  }
+  async function sendFeishuCard(assignment) {
+    const input = feishuInputs[assignment.id] || {};
+    const data = await api(`/assignments/${assignment.public_id || assignment.id}/share/feishu`, {
+      method: 'POST',
+      body: input.chatId ? { chatId: input.chatId.trim() } : {}
+    });
+    setMessage(data.sent ? '已发送到飞书群' : data.message || '已生成飞书分享卡片');
+  }
+  async function revokeFeishuCard(assignment) {
+    const data = await api(`/assignments/${assignment.public_id || assignment.id}/share/feishu/revoke`, { method: 'POST', body: {} });
+    setMessage(data.message || '已处理撤回请求');
+  }
+  async function remindMissing(assignment) {
+    const data = await api(`/assignments/${assignment.public_id || assignment.id}/remind-missing`, { method: 'POST', body: {} });
+    setMessage(`未交提醒完成：已发送 ${data.sent || 0} 人，跳过 ${data.skipped || 0} 人`);
+  }
   return <Card title="发布任务管理" icon={<BookOpen size={20} />}>
     {error && <p className="error">{error}</p>}
     {message && <p className="hint">{message}</p>}
@@ -2145,6 +2194,21 @@ function AssignmentManagement() {
           <button type="button" onClick={() => showStatus(assignment)}>查看提交状态</button>
           <button type="button" onClick={() => window.open(`/class/${assignment.class_id}/essays`, '_self')}>查看报告</button>
           <button type="button" className="danger-button" onClick={() => deleteAssignment(assignment)}>删除任务</button>
+        </div>
+        <div className="assignment-share-panel">
+          <h4>飞书作业发布</h4>
+          <div className="row">
+            <input placeholder="选择飞书班级群 chatId" value={feishuInputs[assignment.id]?.chatId || assignment.feishu_chat_id || ''} onChange={(e) => updateFeishuInput(assignment.id, { chatId: e.target.value })} />
+            <input placeholder="飞书班级群名称" value={feishuInputs[assignment.id]?.chatName || ''} onChange={(e) => updateFeishuInput(assignment.id, { chatName: e.target.value })} />
+          </div>
+          <div className="actions">
+            <button type="button" onClick={() => bindClassGroup(assignment)}>绑定班级群</button>
+            <button type="button" onClick={() => previewFeishuCard(assignment)}>预览消息卡片</button>
+            <button type="button" onClick={() => sendFeishuCard(assignment)}>发送到飞书</button>
+            <button type="button" onClick={() => revokeFeishuCard(assignment)}>撤回或重新发布</button>
+            <button type="button" onClick={() => remindMissing(assignment)}>提醒未提交学生</button>
+          </div>
+          {previews[assignment.id] && <pre className="card-preview">{JSON.stringify(previews[assignment.id], null, 2)}</pre>}
         </div>
       </article>)}
       {!publishedAssignments.length && <p className="hint">暂无已发布任务。</p>}

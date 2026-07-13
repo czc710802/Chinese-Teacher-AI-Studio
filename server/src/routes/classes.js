@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db } from '../db/connection.js';
 import { requireUser, roleGuard } from '../middleware/auth.js';
 import { deleteManagedEmptyClass, getClassRosterForUser, renameStudentForManagedClass } from '../services/class-access.js';
+import { bindFeishuClass, bindFeishuStudent, listFeishuClassBindings } from '../services/feishu-assignment-bindings.js';
 import {
   archiveClass,
   getClass,
@@ -56,6 +57,31 @@ classRouter.post('/', roleGuard('teacher'), (req, res) => {
 
 classRouter.get('/import-template', (_req, res) => {
   res.type('text/csv').send('studentId,studentName,gender,className,grade,schoolYear\n20260301,学生姓名,男,3班,高二,2026\n');
+});
+
+classRouter.get('/:id/feishu-binding', roleGuard('teacher'), (req, res) => {
+  const result = listFeishuClassBindings(db, req.user, { classId: req.params.id });
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.rows);
+});
+
+classRouter.post('/:id/feishu-binding', roleGuard('teacher'), (req, res) => {
+  const result = bindFeishuClass(db, req.user, {
+    ...req.body,
+    classId: req.params.id
+  });
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.binding);
+});
+
+classRouter.post('/:id/students/:studentId/feishu-binding', roleGuard('teacher'), (req, res) => {
+  const result = bindFeishuStudent(db, req.user, {
+    ...req.body,
+    classId: req.params.id,
+    studentId: req.params.studentId
+  });
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.binding);
 });
 
 classRouter.get('/:classKey/statistics', roleGuard('teacher'), (req, res) => {

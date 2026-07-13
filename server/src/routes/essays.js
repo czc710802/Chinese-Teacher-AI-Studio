@@ -8,6 +8,8 @@ import { db } from '../db/connection.js';
 import { requireUser } from '../middleware/auth.js';
 import { reviewEssay, recognizeImages } from '../services/openai.js';
 import { canReadEssay, countEssayWords, getSubmissionDraft, resolveEssayAssignmentTarget, resolveEssayListScope, resolveEssaySubmitTarget, saveSubmissionDraft } from '../services/essay-access.js';
+import { buildEssayResultCard } from '../integrations/feishu/cards.js';
+import { getActiveStudentBinding } from '../services/feishu-assignment-bindings.js';
 import { refreshStudentProfile } from '../services/profile.js';
 import { recordOcrArtifact, recordOriginalArtifact, recordReviewArtifact } from '../services/storage-artifacts.js';
 import { archiveEssayToZSpaceAsync } from '../services/zspace-storage.js';
@@ -40,18 +42,32 @@ function extractTextFromUploadedFile(file) {
     const xml = execFileSync('unzip', ['-p', file.path, 'word/document.xml'], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
     return stripXmlText(xml);
   }
-  const error = new Error('暂仅支持 TXT、Markdown 和 Word .docx 文档提交');
+  if (ext === '.pdf') {
+    try {
+      return execFileSync('pdftotext', ['-layout', file.path, '-'], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }).trim();
+    } catch {
+      const error = new Error('PDF 文本提取工具不可用，请导出为 Word .docx 或使用拍照 OCR 提交');
+      error.statusCode = 415;
+      throw error;
+    }
+  }
+  if (ext === '.doc') {
+    const error = new Error('旧版 .doc 文件请先另存为 .docx 后提交');
+    error.statusCode = 415;
+    throw error;
+  }
+  const error = new Error('暂仅支持 TXT、Markdown、Word .docx 和可提取文本的 PDF 文档提交');
   error.statusCode = 415;
   throw error;
 }
 
-async function createReviewedEssay({ assignment, studentId, title, essayText, imagePaths = [], imageOcrText = '', sourceFiles = [], attachments = [], submitRound = 1, wordCount, storageService, zspaceClient, logger = console }) {
+async function createReviewedEssay({ assignment, studentId, title, essayText, imagePaths = [], imageOcrText = '', sourceFiles = [], attachments = [], submitRound = 1, wordCount, submissionStatus = 'submitted', storageService, zspaceClient, logger = console }) {
   const resolvedWordCount = Number(wordCount || countEssayWords(essayText));
   const result = db.prepare(`
     INSERT INTO essays
       (assignment_id, student_id, title, original_text, revised_text, attachments, word_count, status, grading_status, submitted_at, submit_round)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', 'grading', CURRENT_TIMESTAMP, ?)
-  `).run(assignment.id, studentId, title, essayText, '', safeJson(attachments), resolvedWordCount, submitRound);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'grading', CURRENT_TIMESTAMP, ?)
+  `).run(assignment.id, studentId, title, essayText, '', safeJson(attachments), resolvedWordCount, submissionStatus, submitRound);
   const essayId = result.lastInsertRowid;
 
   const insertImage = db.prepare('INSERT INTO essay_images (essay_id, file_path, ocr_text, sort_order) VALUES (?, ?, ?, ?)');
@@ -149,7 +165,7 @@ essayRouter.post('/', async (req, res, next) => {
   try {
     const resolved = resolveEssaySubmitTarget(db, req.user, req.body);
     if (resolved.status !== 200) return res.status(resolved.status).json({ message: resolved.message });
-    const { studentId, assignment, essayText, wordCount, nextSubmitRound } = resolved;
+    const { studentId, assignment, essayText, wordCount, nextSubmitRound, submissionStatus } = resolved;
     res.json(await createReviewedEssay({
       assignment,
       studentId,
@@ -157,6 +173,7 @@ essayRouter.post('/', async (req, res, next) => {
       essayText,
       wordCount,
       submitRound: nextSubmitRound,
+      submissionStatus,
       storageService: req.app.locals.storageService,
       zspaceClient: req.app.locals.zspaceClient,
       logger: req.app.locals.logger || console
@@ -191,6 +208,7 @@ essayRouter.post('/images', upload.array('images', 8), async (req, res, next) =>
       attachments: files.map((file) => ({ name: file.originalname, mimeType: file.mimetype, size: file.size })),
       wordCount: resolved.wordCount,
       submitRound: resolved.nextSubmitRound,
+      submissionStatus: resolved.submissionStatus,
       storageService: req.app.locals.storageService,
       zspaceClient: req.app.locals.zspaceClient,
       logger: req.app.locals.logger || console
@@ -219,6 +237,7 @@ essayRouter.post('/files', upload.array('files', 4), async (req, res, next) => {
       attachments: files.map((file) => ({ name: file.originalname, mimeType: file.mimetype, size: file.size })),
       wordCount: resolved.wordCount,
       submitRound: resolved.nextSubmitRound,
+      submissionStatus: resolved.submissionStatus,
       storageService: req.app.locals.storageService,
       zspaceClient: req.app.locals.zspaceClient,
       logger: req.app.locals.logger || console
@@ -265,6 +284,50 @@ essayRouter.post('/:id/comments', (req, res) => {
     logger: req.app.locals.logger || console
   });
   res.json(db.prepare('SELECT * FROM teacher_comments WHERE id = ?').get(result.lastInsertRowid));
+});
+
+essayRouter.post('/:id/publish-report', async (req, res, next) => {
+  try {
+    if (!canReadEssay(db, req.user, req.params.id)) return res.status(403).json({ message: '没有发布该作文报告的权限' });
+    const essay = db.prepare(`
+      SELECT e.*, a.class_id, a.title AS assignment_title, a.full_score, u.name AS student_name
+      FROM essays e
+      JOIN assignments a ON a.id = e.assignment_id
+      JOIN students s ON s.id = e.student_id
+      JOIN users u ON u.id = s.user_id
+      WHERE e.id = ?
+    `).get(req.params.id);
+    if (!essay) return res.status(404).json({ message: '作文不存在' });
+    const reviewRow = db.prepare('SELECT * FROM ai_reviews WHERE essay_id = ? ORDER BY id DESC LIMIT 1').get(essay.id);
+    if (!reviewRow) return res.status(409).json({ message: 'AI 批改尚未完成，不能发布报告' });
+
+    db.prepare('UPDATE essays SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('report_published', essay.id);
+    const raw = JSON.parse(reviewRow.raw_json || '{}');
+    const publicOrigin = String(req.app.locals.env?.PUBLIC_APP_ORIGIN || 'https://pi.zhenwanyue.icu').replace(/\/+$/, '');
+    const binding = getActiveStudentBinding(db, essay.student_id, essay.class_id);
+    let sent = false;
+    if (binding?.feishu_open_id && req.app.locals.feishuService?.sendCard) {
+      const card = buildEssayResultCard({
+        totalScore: raw.total_score ?? reviewRow.total_score,
+        fullScore: essay.full_score || 60,
+        level: raw.level || reviewRow.level,
+        coreAdvantages: raw.strengths || raw.coreAdvantages || [],
+        mainProblems: raw.problems || raw.mainProblems || [],
+        nextTraining: raw.next_training || raw.nextTraining || []
+      }, {
+        links: {
+          reportUrl: `${publicOrigin}/review/${essay.id}`,
+          pdfUrl: `${publicOrigin}/api/reports/essay/${essay.id}/pdf/download`,
+          profileUrl: `${publicOrigin}/student`
+        }
+      });
+      await req.app.locals.feishuService.sendCard(binding.feishu_open_id, card);
+      sent = true;
+    }
+    res.json({ ok: true, status: 'report_published', feishuSent: sent, essayId: essay.id });
+  } catch (error) {
+    next(error);
+  }
 });
 
 essayRouter.post('/:id/review', async (req, res, next) => {

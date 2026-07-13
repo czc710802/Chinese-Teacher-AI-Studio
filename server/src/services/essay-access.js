@@ -74,6 +74,13 @@ export function resolveEssaySubmitTarget(database, user, body = {}) {
   const resolved = resolveEssayAssignmentTarget(database, user, body);
   if (resolved.status !== 200) return resolved;
 
+  const now = body.now ? new Date(body.now) : new Date();
+  const deadline = resolved.assignment.deadline ? new Date(resolved.assignment.deadline) : null;
+  const isPastDeadline = deadline && !Number.isNaN(deadline.getTime()) && now.getTime() > deadline.getTime();
+  if (isPastDeadline && !Number(resolved.assignment.allow_late_submit || 0)) {
+    return { status: 409, message: '作业已截止，不能提交' };
+  }
+
   const wordCount = countEssayWords(essayText);
   const minWords = Number(resolved.assignment.min_words || 0);
   const maxWords = Number(resolved.assignment.max_words || 0);
@@ -93,7 +100,8 @@ export function resolveEssaySubmitTarget(database, user, body = {}) {
     ...resolved,
     essayText,
     wordCount,
-    nextSubmitRound: Number(existing.max_round || 0) + 1
+    nextSubmitRound: Number(existing.max_round || 0) + 1,
+    submissionStatus: isPastDeadline ? 'late_submitted' : 'submitted'
   };
 }
 
@@ -130,6 +138,40 @@ export function getSubmissionDraft(database, user, assignmentId) {
   const draft = database.prepare('SELECT * FROM submission_drafts WHERE assignment_id = ? AND student_id = ?')
     .get(resolved.assignment.id, resolved.studentId);
   return { status: 200, draft: draft || null };
+}
+
+export function resolveStudentSubmissionStatus(database, user, assignmentId) {
+  if (user.role !== 'student') return { status: 403, state: '无权限', message: '只有学生可以查看自己的提交状态' };
+  const resolved = resolveEssayAssignmentTarget(database, user, { assignment_id: assignmentId });
+  if (resolved.status !== 200) return { ...resolved, state: '不可用' };
+
+  const essay = database.prepare(`
+    SELECT *
+    FROM essays
+    WHERE assignment_id = ? AND student_id = ?
+    ORDER BY submit_round DESC, submitted_at DESC, id DESC
+    LIMIT 1
+  `).get(resolved.assignment.id, resolved.studentId);
+  if (essay) {
+    if (essay.status === 'returned') return { status: 200, state: '已退回', essay };
+    if (essay.status === 'waiting_revision') return { status: 200, state: '等待二稿', essay };
+    if (essay.status === 'revision_submitted' || Number(essay.submit_round || 1) > 1) return { status: 200, state: '二稿已提交', essay };
+    if (essay.status === 'report_published') return { status: 200, state: '已发布报告', essay };
+    if (essay.status === 'late_submitted') return { status: 200, state: '迟交', essay };
+    if (essay.grading_status === 'grading') return { status: 200, state: '批改中', essay };
+    if (essay.grading_status === 'graded') return { status: 200, state: '待教师审核', essay };
+    return { status: 200, state: '已提交', essay };
+  }
+
+  const draft = database.prepare(`
+    SELECT *
+    FROM submission_drafts
+    WHERE assignment_id = ? AND student_id = ?
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).get(resolved.assignment.id, resolved.studentId);
+  if (draft) return { status: 200, state: '草稿', draft };
+  return { status: 200, state: '未提交' };
 }
 
 export function canReadEssay(database, user, essayId) {

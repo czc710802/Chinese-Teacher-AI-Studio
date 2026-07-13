@@ -83,6 +83,53 @@ P1.4 复用 P1.3 预留字段：
 
 未绑定用户提交作文时，系统仍可完成批改与文件归档，但成长档案和班级统计只能按现有可识别信息增量关联。正式班级权限绑定在 P1.4 后续迭代继续完善。
 
+## 作文作业发布闭环
+
+教师网页端仍从 `/teacher` 创建作文作业，不需要在飞书里重复录入题目。作业详情/发布任务管理中可完成：
+
+- 绑定平台班级到飞书班级群。
+- 预览飞书作业卡片。
+- 一键发送作业到飞书群。
+- 标记撤回或重新发布。
+- 提醒未提交学生。
+
+作业卡片按钮统一使用公网域名：
+
+```text
+https://pi.zhenwanyue.icu/submit/:assignmentId
+```
+
+卡片包含作文题目、材料摘要、写作要求、最低/最高字数、截止时间、班级、当前已交和未交人数。按钮包括：
+
+- 查看作业
+- 立即提交
+- 查看提交状态
+
+新增或完善的服务端接口：
+
+```text
+GET  /api/classes/:id/feishu-binding
+POST /api/classes/:id/feishu-binding
+POST /api/classes/:id/students/:studentId/feishu-binding
+GET  /api/assignments/:assignmentId/share/feishu/preview
+POST /api/assignments/:assignmentId/share/feishu
+POST /api/assignments/:assignmentId/share/feishu/revoke
+POST /api/assignments/:assignmentId/remind-missing
+GET  /api/assignments/:assignmentId/my-status
+POST /api/essays/:id/publish-report
+GET  /api/reports/essay/:essayId/:format/download
+```
+
+新增数据表：
+
+- `feishu_class_bindings`：班级到飞书群的绑定。
+- `feishu_student_bindings`：学生到飞书 openId/unionId 的绑定。
+- `feishu_assignment_messages`：作业发布、未交提醒等飞书消息幂等记录。
+
+学生提交页 `/submit/:assignmentId` 支持文本、草稿、图片/HEIC 拍照入口、Word/PDF/文本文件入口和提交状态展示。PDF 文本提取依赖服务器存在 `pdftotext`；如果不可用，页面会提示改用 `.docx` 或拍照 OCR。
+
+教师审核后可通过 `POST /api/essays/:id/publish-report` 将报告状态标记为已发布。若学生已绑定飞书身份，系统会发送摘要卡片；完整报告和 PDF 下载使用公网链接，不把长报告正文直接塞进飞书消息。
+
 ## Cloudflare 检查
 
 `tools/cloudflared-production.yml` 应把：
