@@ -605,8 +605,11 @@ export function createZSpaceClient({ env = process.env, fetchImpl, logger = cons
       headers: { 'Content-Type': contentType },
       body: Buffer.from(buffer)
     });
+    if (response.status === 409 && await fileExists(safePath)) {
+      return { ok: true, remotePath: safePath, status: response.status, idempotent: true };
+    }
     if (![200, 201, 204].includes(response.status)) throw new Error(`WebDAV 上传失败：HTTP ${response.status}`);
-    return { ok: true, remotePath: safePath };
+    return { ok: true, remotePath: safePath, status: response.status };
   }
 
   async function uploadText(remotePath, text) {

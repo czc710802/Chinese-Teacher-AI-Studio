@@ -13,10 +13,12 @@ const appDir = path.resolve(scriptDir, '../..');
 loadServerEnv({ appDir, nodeEnv: 'production' });
 
 const client = createZSpaceClient({ env: process.env });
+const smokeId = `feishu-smoke-${Date.now()}`;
+const smokeTitle = `飞书Smoke作文-${smokeId}`;
 const analysis = {
-  id: `feishu-smoke-${Date.now()}`,
+  id: smokeId,
   status: 'completed',
-  title: '飞书Smoke作文',
+  title: smokeTitle,
   result: {
     totalScore: 48,
     fullScore: 60,
@@ -35,7 +37,7 @@ const archived = await archiveFeishuEssayResult({
   env: process.env,
   client,
   analysis,
-  title: '飞书Smoke作文',
+  title: smokeTitle,
   text: '青年应当如何处理个人选择与时代责任之间的关系？请简要分析。',
   feishuUserId: 'feishu-smoke-user',
   logger: { warn() {} }

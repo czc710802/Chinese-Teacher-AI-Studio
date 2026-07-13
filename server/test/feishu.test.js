@@ -145,6 +145,12 @@ test('feishu send test script sends text markdown and card with response fields'
   assert.match(script, /request_id/);
 });
 
+test('feishu smoke script uses a unique essay title to avoid WebDAV duplicate path conflicts', () => {
+  const script = fs.readFileSync(path.join(rootDir, 'ops/scripts/feishu-smoke.mjs'), 'utf8');
+  assert.match(script, /smokeTitle/);
+  assert.doesNotMatch(script, /title:\s*'飞书Smoke作文'/);
+});
+
 test('feishu commands normalize help, status, report, backup, logs and prelaunch entries', () => {
   assert.equal(parseFeishuCommand('帮助').key, 'help');
   assert.equal(parseFeishuCommand('/status').key, 'status');

@@ -198,6 +198,38 @@ test('ensureDirectory treats WebDAV 409 as idempotent when the directory is visi
   assert.equal(result.path, 'Archive/ArchiveSmoke');
 });
 
+test('uploadBuffer treats WebDAV 409 as idempotent when the uploaded file is visible afterwards', async () => {
+  let putAttempted = false;
+  const client = createZSpaceClient({
+    env: {
+      ZSPACE_ENABLED: 'true',
+      ZSPACE_WEBDAV_URL: 'http://192.168.100.164:5005',
+      ZSPACE_WEBDAV_USERNAME: 'teacher',
+      ZSPACE_WEBDAV_PASSWORD: 'dummy-password'
+    },
+    fetchImpl: async (url, options = {}) => {
+      const target = String(url);
+      if (options.method === 'PROPFIND') {
+        if (target.includes('/Archive/report.md')) {
+          return response(putAttempted ? 207 : 404, '<d:multistatus />');
+        }
+        return response(207, '<d:multistatus />');
+      }
+      if (options.method === 'PUT') {
+        putAttempted = true;
+        return response(409);
+      }
+      return response(405);
+    }
+  });
+
+  const result = await client.uploadBuffer('Archive/report.md', Buffer.from('report'), 'text/markdown');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.remotePath, 'Archive/report.md');
+  assert.equal(result.status, 409);
+});
+
 test('archiveEssayToZSpace queues uploads when WebDAV is unreachable and does not throw', async () => {
   const appDir = tempAppDir();
   const database = new (await import('node:sqlite')).DatabaseSync(':memory:');
