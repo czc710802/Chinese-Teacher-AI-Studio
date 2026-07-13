@@ -47,6 +47,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Initialize CI database
+        run: node server/src/db/init.js
+
       - name: Unit tests
         run: |
           node --test server/test/benchmark-center.test.js
