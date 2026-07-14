@@ -266,6 +266,8 @@ export function buildEssayResultCard(result = {}, { links = {} } = {}) {
   actions.push(buttonElement('查看逐段点评', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 6 }, 'default'));
   actions.push(buttonElement('查看逻辑分析', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 4 }, 'default'));
   actions.push(buttonElement('查看修改示例', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 10 }, 'default'));
+  if (links.teacherReviewUrl) actions.push(buttonElement('教师审核', { url: links.teacherReviewUrl }, 'default'));
+  if (links.archiveId) actions.push(buttonElement('重新批改', { command: 'essay-rerun', archiveId: links.archiveId }, 'default'));
   if (links.docxUrl) actions.push(buttonElement('下载 Word', { url: links.docxUrl }, 'default'));
   if (links.pdfUrl) actions.push(buttonElement('下载 PDF', { url: links.pdfUrl }, 'default'));
   if (links.profileUrl) actions.push(buttonElement('查看成长档案', { url: links.profileUrl }, 'default'));

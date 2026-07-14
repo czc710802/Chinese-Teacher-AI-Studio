@@ -976,6 +976,13 @@ export class FeishuService {
   async handleCardAction(event = {}) {
     const action = parseEssayCardActionValue(event?.action?.value);
     const command = String(action.command || event?.action?.tag || '').trim();
+    if (command === 'essay-rerun') {
+      await this.sendMessage(event.chatId || event?.chat_id || '', '已收到重新批改请求，请在网页端或教师工作台发起再次批改。', {
+        receiveIdType: 'chat_id',
+        messageId: event.messageId || ''
+      });
+      return { ok: true, command };
+    }
     if (!command || !command.startsWith('essay-report-')) return { ok: false, skipped: true, reason: 'unsupported action' };
 
     const archiveId = String(action.archiveId || '').trim();
@@ -1488,7 +1495,8 @@ export class FeishuService {
           files: archiveLinks.archive?.record?.files || []
         });
 
-        await sendCardReply(buildEssayResultCard(analysis.result || {}, { links: { ...(archiveLinks.links || {}), archiveId: archiveLinks.archiveId || '' } }));
+        const publicOrigin = (this.env.PUBLIC_APP_ORIGIN || this.env.FEISHU_REPORT_PUBLIC_BASE_URL || 'https://pi.zhenwanyue.icu').replace(/\/+$/, '');
+        await sendCardReply(buildEssayResultCard(analysis.result || {}, { links: { ...(archiveLinks.links || {}), archiveId: archiveLinks.archiveId || '', teacherReviewUrl: `${publicOrigin}/teacher/reviews?archiveId=${encodeURIComponent(archiveLinks.archiveId || analysis.id || '')}` } }));
         const summaryLines = [
           `作文 AI 批改完成：${analysis.result?.totalScore ?? '暂无'} / ${analysis.result?.fullScore ?? 60}`,
           `等级：${analysis.result?.level || '暂无'}`,
