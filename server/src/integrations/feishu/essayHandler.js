@@ -46,8 +46,8 @@ export async function handleFeishuEssayMessage({ body, command = {}, appDir, env
   });
   return {
     responseType: 'card',
-    responseContent: buildEssayResultCard(result, { links: archiveLinks.links || {} }),
-    message: `作文 AI 批改结果：${result.totalScore ?? '暂无'} / ${result.fullScore ?? 60}，${result.level || '暂无'}`,
+    responseContent: buildEssayResultCard(result, { links: { ...(archiveLinks.links || {}), archiveId: archiveLinks.archiveId || '' } }),
+    message: `作文 AI 批改结果：${result.totalScore ?? '暂无'} / ${result.fullScore ?? 60}，${result.level || '暂无'}；${String(result.overallEvaluation || result.teacherComment || result.teacher_overall || '').trim().slice(0, 120) || '暂无'}`,
     analysisId: analysis.id,
     archiveId: archiveLinks.archiveId || '',
     status: analysis.status,

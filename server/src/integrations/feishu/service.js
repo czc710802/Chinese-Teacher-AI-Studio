@@ -18,8 +18,10 @@ import {
   buildDailyReportCard,
   buildEssayMenuCard,
   buildEssayResultCard,
+  buildEssayReportPageCard,
   buildHelpCard,
   buildLogsCard,
+  parseEssayCardActionValue,
   buildRestartCard,
   buildStatusCard
 } from './cards.js';
@@ -33,7 +35,7 @@ import {
   cleanFeishuText,
   parseFeishuIncomingMessage
 } from './messageParser.js';
-import { archiveFeishuEssayResult } from './archiveLinks.js';
+import { archiveFeishuEssayResult, loadFeishuEssayReport } from './archiveLinks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SDK_PACKAGE_JSON = path.resolve(__dirname, '../../../../node_modules/@larksuiteoapi/node-sdk/package.json');
@@ -643,6 +645,14 @@ class FeishuLongConnectionClient {
     }
   }
 
+  async sendFile(to, file, opts = {}) {
+    const upload = await this.uploadFile(file);
+    if (!upload?.ok || !upload.fileKey) {
+      throw new Error('Feishu file upload failed');
+    }
+    return this.sendRaw(String(to || ''), 'file', { file_key: upload.fileKey }, opts);
+  }
+
   async downloadResource(fileKey, type) {
     if (type === 'image') {
       return this.rawClient.im.v1.image.get({ path: { image_key: fileKey } });
@@ -828,6 +838,7 @@ export class FeishuService {
           logEvent(event);
           const evt = event;
           this.log('info', 'Feishu card action received', evt?.action?.value || evt?.operator?.open_id || '');
+          await this.handleCardAction(evt);
         }
       });
 
@@ -904,6 +915,120 @@ export class FeishuService {
       throw new Error('Feishu channel not connected');
     }
     return this.channel.send(String(to || ''), { card }, opts);
+  }
+
+  async sendFile(to, file, opts = {}) {
+    if (!this.channel) {
+      throw new Error('Feishu channel not connected');
+    }
+    if (typeof this.channel.sendFile === 'function') {
+      return this.channel.sendFile(String(to || ''), file, opts);
+    }
+    const upload = await this.channel.uploadFile?.(file);
+    if (!upload?.ok || !upload.fileKey) {
+      throw new Error('Feishu file upload failed');
+    }
+    return this.channel.send(String(to || ''), { file: { file_key: upload.fileKey } }, opts);
+  }
+
+  async deliverReportFiles({
+    target = '',
+    archiveId = '',
+    messageId = '',
+    userId = '',
+    files = []
+  } = {}) {
+    if (!this.config.fileUploadEnabled) {
+      return { ok: false, skipped: true, reason: 'file upload disabled' };
+    }
+    if (!this.zspaceClient?.downloadFile || !archiveId) {
+      return { ok: false, skipped: true, reason: 'file source unavailable' };
+    }
+
+    const results = [];
+    for (const file of files) {
+      const fileName = String(file?.name || '').toLowerCase();
+      if (!['report.pdf', 'report.docx'].includes(fileName)) continue;
+      try {
+        const buffer = await this.zspaceClient.downloadFile(file.remotePath);
+        const response = await this.sendFile(target, {
+          fileName: file.name,
+          fileType: fileName.endsWith('.pdf') ? 'pdf' : 'docx',
+          source: buffer
+        }, {
+          messageId,
+          receiveIdType: 'chat_id',
+          replyTo: messageId
+        });
+        results.push({ ok: true, fileName: file.name, messageId: response?.messageId || '' });
+      } catch (error) {
+        this.log('warn', 'Feishu report file delivery failed', {
+          archive_id: archiveId,
+          file_name: file?.name || '',
+          message: error?.message || String(error || '')
+        });
+        results.push({ ok: false, fileName: file?.name || '', error: String(error?.message || error || '') });
+      }
+    }
+    return { ok: results.some((item) => item.ok), skipped: false, results };
+  }
+
+  async handleCardAction(event = {}) {
+    const action = parseEssayCardActionValue(event?.action?.value);
+    const command = String(action.command || event?.action?.tag || '').trim();
+    if (!command || !command.startsWith('essay-report-')) return { ok: false, skipped: true, reason: 'unsupported action' };
+
+    const archiveId = String(action.archiveId || '').trim();
+    if (!archiveId) {
+      await this.sendMessage(event.chatId || event?.chat_id || '', '缺少报告标识，无法打开分页报告', {
+        receiveIdType: 'chat_id',
+        messageId: event.messageId || ''
+      });
+      return { ok: false, reason: 'archive id missing' };
+    }
+
+    const report = await loadFeishuEssayReport({
+      appDir: this.appDir,
+      archiveId,
+      client: this.zspaceClient,
+      env: this.env,
+      userId: event?.operator?.openId || 'feishu',
+      logger: this.logger
+    });
+    if (!report.ok) {
+      await this.sendMessage(event.chatId || event?.chat_id || '', '未找到对应批改报告，请先重新批改一次', {
+        receiveIdType: 'chat_id',
+        messageId: event.messageId || ''
+      });
+      return { ok: false, reason: report.reason || 'report missing' };
+    }
+
+    const links = { ...(report.links || {}), archiveId };
+    const page = Number(action.page || 1);
+    const replyCard = command === 'essay-report-overview'
+      ? buildEssayResultCard(report.reportJson || {}, { links })
+      : buildEssayReportPageCard(report.reportJson || {}, { links, archiveId, page });
+    const result = await this.replyMessage({
+      target: event.chatId || '',
+      chatId: event.chatId || '',
+      messageId: event.messageId || '',
+      replyType: 'card',
+      card: replyCard,
+      forceMode: this.config.replyMode,
+      receiveIdType: 'chat_id'
+    });
+    this.logSendHttpResponse(result, {
+      replyType: 'card',
+      requestedMode: this.config.replyMode,
+      actualMode: result?.mode || '',
+      targetChatId: event.chatId || '',
+      receiveId: event.chatId || '',
+      targetMessageId: event.messageId || '',
+      incomingChatId: event.chatId || '',
+      incomingMessageId: event.messageId || '',
+      receiveIdType: 'chat_id'
+    });
+    return { ok: true, command, archiveId, page };
   }
 
   isSendOk(result = {}) {
@@ -1355,10 +1480,19 @@ export class FeishuService {
           has_pdf: Boolean(archiveLinks.links?.pdfUrl)
         });
 
-        await sendCardReply(buildEssayResultCard(analysis.result || {}, { links: archiveLinks.links || {} }));
+        await this.deliverReportFiles({
+          target,
+          archiveId: archiveLinks.archiveId || '',
+          messageId: incomingMessageId,
+          userId: senderId,
+          files: archiveLinks.archive?.record?.files || []
+        });
+
+        await sendCardReply(buildEssayResultCard(analysis.result || {}, { links: { ...(archiveLinks.links || {}), archiveId: archiveLinks.archiveId || '' } }));
         const summaryLines = [
           `作文 AI 批改完成：${analysis.result?.totalScore ?? '暂无'} / ${analysis.result?.fullScore ?? 60}`,
           `等级：${analysis.result?.level || '暂无'}`,
+          `一句话总评：${String(analysis.result?.overallEvaluation || analysis.result?.teacherComment || analysis.result?.teacher_overall || '').trim().slice(0, 120) || '暂无'}`,
           `教师评语：${analysis.result?.teacherComment || '暂无'}`
         ];
         const markdownResult = await this.replyMessage({

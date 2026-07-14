@@ -42,8 +42,173 @@ function buttonElement(text, value, type = 'primary') {
     button.url = value.url;
     return button;
   }
-  button.value = { command: value };
+  button.value = typeof value === 'object' ? value : { command: value };
   return button;
+}
+
+function stringifyPreview(item) {
+  if (item == null || item === '') return '';
+  if (typeof item === 'string') return item;
+  if (typeof item === 'number' || typeof item === 'boolean') return String(item);
+  if (Array.isArray(item)) return item.map(stringifyPreview).filter(Boolean).join('；');
+  return item.focus || item.title || item.diagnosis || item.task || item.revision || item.reason || item.comment || JSON.stringify(item);
+}
+
+function previewList(items = [], limit = 3) {
+  return (Array.isArray(items) ? items : [items])
+    .slice(0, limit)
+    .map(stringifyPreview)
+    .filter(Boolean)
+    .join('；') || '暂无';
+}
+
+function previewText(value = '', fallback = '暂无') {
+  const text = String(value || '').trim();
+  if (!text) return fallback;
+  const sentence = text.match(/^(.{1,80}?[。！？!?；;，,])(?=\s|$)/)?.[1];
+  return (sentence || text.slice(0, 80)).trim();
+}
+
+function normalizePageList(value, fallback = '暂无') {
+  const items = Array.isArray(value) ? value : [value].filter((item) => item !== undefined && item !== null && item !== '');
+  if (!items.length) return fallback;
+  return items.map((item) => `- ${stringifyPreview(item)}`).join('\n');
+}
+
+function normalizeParagraphs(value, fallback = '暂无') {
+  const text = normalizePageList(value, fallback);
+  return text === fallback ? fallback : text;
+}
+
+function collectParagraphItems(result = {}) {
+  if (Array.isArray(result.paragraphAnalysis)) return result.paragraphAnalysis;
+  if (Array.isArray(result.paragraphRefinements)) return result.paragraphRefinements;
+  if (Array.isArray(result.paragraph_comments)) return result.paragraph_comments;
+  return [];
+}
+
+export function parseEssayCardActionValue(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return { command: String(value) };
+  }
+}
+
+function buildEssayReportPages(result = {}) {
+  return [
+    {
+      title: '总评与评分',
+      body: [
+        `**总分**：${result.totalScore ?? result.score?.total ?? '暂无'} / ${result.fullScore ?? result.score?.max ?? 60}`,
+        `**等级**：${result.level || result.score?.level || '暂无'}`,
+        `**一句话总评**：${previewText(result.overallEvaluation || result.teacherComment || result.teacher_overall || result.summary?.overallComment || '')}`,
+        `**主要优点**：${previewList(result.coreAdvantages || result.strengths || result.summary?.mainStrengths || [], 3)}`,
+        `**核心问题**：${previewList(result.mainProblems || result.problems || result.summary?.mainProblems || [], 3)}`,
+        `**优先修改方向**：${previewList(result.nextTraining || result.suggestions || result.summary?.priorityImprovements || [], 3)}`
+      ]
+    },
+    {
+      title: '审题与立意',
+      body: [
+        `**审题立意**：${previewText(result.topicIntentAnalysis || result.intentAnalysis || result.dimensions?.theme || result.dimensions?.content || '')}`,
+        `**内容质量**：${previewText(result.materialAnalysis || result.contentAnalysis || result.dimensions?.content || '')}`,
+        `**素材使用**：${previewText(result.materialAnalysis || result.recommendedMaterials || '')}`
+      ]
+    },
+    {
+      title: '内容与结构',
+      body: [
+        `**结构层次**：${previewText(result.structureAnalysis || result.dimensions?.structure || '')}`,
+        `**段落分析**：${normalizeParagraphs(result.paragraphAnalysis || result.paragraphRefinements || result.paragraph_comments || [], '暂无段落点评')}`,
+        `**开头与结尾**：${previewText(result.openingRevision || result.endingRevision || result.polishedFullText || result.excellentVersion || '')}`
+      ]
+    },
+    {
+      title: '逻辑与论证',
+      body: [
+        `**逻辑分析**：${previewText(result.logicAnalysisText || result.logicAnalysis?.centralClaim || result.logicAnalysis || '')}`,
+        `**论证有效性**：${previewText(result.logicAnalysis?.reasoningChain || result.logicAnalysis?.depthSuggestions || result.logicAnalysis || '')}`,
+        `**逻辑问题**：${normalizePageList(result.logicAnalysis?.logicalBreaks || result.mainProblems || [], '暂无逻辑问题')}`
+      ]
+    },
+    {
+      title: '语言与表达',
+      body: [
+        `**语言分析**：${previewText(result.languageAnalysis || result.dimensions?.language || '')}`,
+        `**错别字与病句**：${normalizePageList(result.typos || result.languageIssues || [], '暂无错别字或病句')}`,
+        `**亮点句子**：${normalizePageList(result.goodSentences || [], '暂无亮点句子')}`
+      ]
+    },
+    {
+      title: '逐段点评 1',
+      body: normalizeParagraphs(collectParagraphItems(result).slice(0, 3), '暂无逐段点评')
+    },
+    {
+      title: '逐段点评 2',
+      body: normalizeParagraphs(collectParagraphItems(result).slice(3), '暂无更多逐段点评')
+    },
+    {
+      title: '错别字与病句',
+      body: [
+        `**错别字**：${normalizePageList(result.typos || [], '暂无错别字')}`,
+        `**病句**：${normalizePageList(result.languageIssues || [], '暂无病句')}`,
+        `**标点**：${previewText(result.writingStandard || result.dimensions?.writingStandard || '')}`
+      ]
+    },
+    {
+      title: '修改方案',
+      body: [
+        `**修改计划**：${normalizePageList(result.revisionPlan || result.nextTraining || result.suggestions || [], '暂无修改方案')}`,
+        `**教师审核**：${previewText(result.teacherReview?.comment || result.teacherComment || result.teacher_overall || '')}`,
+        `**最终评分**：${result.teacherReview?.finalScore ?? '暂无'}`
+      ]
+    },
+    {
+      title: '示范修改',
+      body: [
+        `**关键段落示例**：${normalizePageList(result.exampleRevisions || result.rewrittenParagraphs || result.paragraphRefinements || [], '暂无示范修改')}`,
+        `**升格文章**：${previewText(result.polishedFullText || result.excellentVersion || '', '暂无')}`
+      ]
+    }
+  ];
+}
+
+export function buildEssayReportPageCard(result = {}, { links = {}, archiveId = '', page = 1, totalPages, title = '作文 AI 分页批改报告' } = {}) {
+  const pages = buildEssayReportPages(result);
+  const maxPages = totalPages && Number.isFinite(Number(totalPages)) ? Math.max(1, Number(totalPages)) : pages.length;
+  const currentPage = Math.min(Math.max(1, Number(page) || 1), maxPages);
+  const current = pages[currentPage - 1] || pages[0];
+  const actions = [];
+  if (currentPage > 1) {
+    actions.push(buttonElement('上一页', { command: 'essay-report-page', archiveId, page: currentPage - 1 }, 'default'));
+  }
+  if (currentPage < maxPages) {
+    actions.push(buttonElement('下一页', { command: 'essay-report-page', archiveId, page: currentPage + 1 }, 'default'));
+  }
+  actions.push(buttonElement('返回总览', { command: 'essay-report-overview', archiveId }, 'default'));
+  if (links.reportUrl) {
+    actions.push(buttonElement('打开完整网页报告', { url: links.reportUrl }, 'default'));
+  }
+  if (links.pdfUrl) {
+    actions.push(buttonElement('下载 PDF', { url: links.pdfUrl }, 'default'));
+  }
+  if (links.docxUrl) {
+    actions.push(buttonElement('下载 Word', { url: links.docxUrl }, 'default'));
+  }
+
+  return baseCard(title, `第 ${currentPage} 页 / 共 ${maxPages} 页`, [
+    textElement(`**页面**：${current.title}`),
+    ...(Array.isArray(current.body) ? current.body.map((item) => textElement(item)) : [textElement(String(current.body || '暂无'))]),
+    {
+      tag: 'action',
+      actions
+    }
+  ]);
 }
 
 export function buildHelpCard() {
@@ -90,19 +255,27 @@ export function buildEssayMenuCard() {
 }
 
 export function buildEssayResultCard(result = {}, { links = {} } = {}) {
-  const advantages = Array.isArray(result.coreAdvantages) && result.coreAdvantages.length ? result.coreAdvantages.slice(0, 2).join('；') : '暂无';
-  const problems = Array.isArray(result.mainProblems) && result.mainProblems.length ? result.mainProblems.slice(0, 2).join('；') : '暂无';
-  const suggestions = Array.isArray(result.nextTraining) && result.nextTraining.length ? result.nextTraining.slice(0, 2).join('；') : '暂无';
+  const advantages = previewList(result.coreAdvantages || result.strengths || [], 3);
+  const problems = previewList(result.mainProblems || result.problems || result.weaknesses || [], 3);
+  const suggestions = previewList(result.nextTraining || result.suggestions || [], 3);
+  const overallComment = previewText(result.overallEvaluation || result.teacherComment || result.teacher_overall || '');
   const actions = [];
   if (links.reportUrl) actions.push(buttonElement('查看完整报告', { url: links.reportUrl }));
+  else if (links.archiveId) actions.push(buttonElement('查看完整报告', { command: 'essay-report-page', archiveId: links.archiveId, page: 1 }));
+  actions.push(buttonElement('查看分项评分', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 2 }, 'default'));
+  actions.push(buttonElement('查看逐段点评', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 6 }, 'default'));
+  actions.push(buttonElement('查看逻辑分析', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 4 }, 'default'));
+  actions.push(buttonElement('查看修改示例', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 10 }, 'default'));
   if (links.docxUrl) actions.push(buttonElement('下载 Word', { url: links.docxUrl }, 'default'));
   if (links.pdfUrl) actions.push(buttonElement('下载 PDF', { url: links.pdfUrl }, 'default'));
   if (links.profileUrl) actions.push(buttonElement('查看成长档案', { url: links.profileUrl }, 'default'));
   if (!actions.length) {
     actions.push(
       buttonElement('查看完整报告', 'essay-result'),
-      buttonElement('下载 Word', 'essay-download-word', 'default'),
-      buttonElement('下载 PDF', 'essay-download-pdf', 'default'),
+      buttonElement('查看分项评分', 'essay-report-page', 'default'),
+      buttonElement('查看逐段点评', 'essay-report-page', 'default'),
+      buttonElement('查看逻辑分析', 'essay-report-page', 'default'),
+      buttonElement('查看修改示例', 'essay-report-page', 'default'),
       buttonElement('加入学生档案', 'essay-profile', 'default')
     );
   }
@@ -110,6 +283,7 @@ export function buildEssayResultCard(result = {}, { links = {} } = {}) {
   return baseCard('作文 AI 批改结果', 'Chinese Teacher AI Studio', [
     textElement(`**总分**：${result.totalScore ?? '暂无'} / ${result.fullScore ?? 60}`),
     textElement(`**等级**：${result.level || '暂无'}`),
+    textElement(`**一句话总评**：${overallComment}`),
     textElement(`**核心优点**：${advantages}`),
     textElement(`**主要问题**：${problems}`),
     textElement(`**修改建议**：${suggestions}`),
@@ -231,3 +405,5 @@ export function buildReservedCard(name) {
     textElement('功能入口已预留，将在 V11.1 接入')
   ]);
 }
+
+export { buildEssayReportPages };
