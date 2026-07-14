@@ -27,6 +27,10 @@ function appIndexPath(appDir) {
   return path.join(appDir, ARCHIVE_INDEX);
 }
 
+function profileRootPath(appDir) {
+  return path.join(appDir, 'data', 'student-profiles');
+}
+
 export function readArchiveRecords(appDir = process.cwd()) {
   const file = appIndexPath(appDir);
   if (!fs.existsSync(file)) return { version: 1, records: [] };
@@ -36,6 +40,91 @@ export function readArchiveRecords(appDir = process.cwd()) {
   } catch {
     return { version: 1, records: [] };
   }
+}
+
+function archiveFilesFromNasPath(nasPath = '') {
+  const basePath = String(nasPath || '').trim().replace(/\/+$/, '');
+  if (!basePath) return [];
+  return [
+    ['report.json', 'application/json; charset=utf-8'],
+    ['report.md', 'text/markdown; charset=utf-8'],
+    ['report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    ['report.pdf', 'application/pdf'],
+    ['original.md', 'text/markdown; charset=utf-8'],
+    ['ocr.txt', 'text/plain; charset=utf-8'],
+    ['metadata.json', 'application/json; charset=utf-8']
+  ].map(([name, contentType]) => ({
+    name,
+    remotePath: `${basePath}/${name}`,
+    contentType
+  }));
+}
+
+function normalizeArchiveRecord(record = {}, source = 'archive-records') {
+  if (!record || !record.id) return null;
+  return {
+    ...record,
+    archiveStatus: record.archiveStatus || 'archived',
+    files: Array.isArray(record.files) && record.files.length > 0 ? record.files : archiveFilesFromNasPath(record.nasPath),
+    source
+  };
+}
+
+function readArchiveRecordFromProfiles(appDir, id) {
+  const root = profileRootPath(appDir);
+  if (!fs.existsSync(root)) return null;
+  const targetId = String(id || '').trim();
+  const essayId = targetId.replace(/^essay-/, '');
+  for (const className of fs.readdirSync(root)) {
+    const classDir = path.join(root, className);
+    if (!fs.existsSync(classDir) || !fs.statSync(classDir).isDirectory()) continue;
+    for (const studentKey of fs.readdirSync(classDir)) {
+      const localDir = path.join(classDir, studentKey);
+      const archiveIndexFile = path.join(localDir, 'archive-index.json');
+      if (!fs.existsSync(archiveIndexFile)) continue;
+      try {
+        const parsed = JSON.parse(fs.readFileSync(archiveIndexFile, 'utf8'));
+        const items = Array.isArray(parsed.items) ? parsed.items : [];
+        const match = items.find((item) => String(item.archiveId || '').trim() === targetId || String(item.essayId || '').trim() === essayId);
+        if (!match) continue;
+        const reportJson = match.reportJson || match.report || {};
+        return normalizeArchiveRecord({
+          id: String(match.archiveId || targetId),
+          essayId: String(match.essayId || essayId || ''),
+          essayTitle: match.essayTitle || '',
+          className: match.className || '',
+          studentId: match.studentId || '',
+          studentName: match.studentName || '',
+          grade: match.grade || '',
+          schoolName: match.schoolName || '',
+          createdAt: match.createdAt || '',
+          nasPath: match.nasPath || '',
+          provider: match.provider || '',
+          model: match.model || '',
+          score: reportJson.score ?? match.score ?? null,
+          maxScore: reportJson.maxScore ?? match.maxScore ?? 60,
+          level: reportJson.level || reportJson.grade || match.level || match.gradeText || '',
+          wordCount: match.wordCount || 0,
+          reportJson,
+          archiveStatus: match.archiveStatus || 'archived',
+          files: Array.isArray(match.files) && match.files.length > 0 ? match.files : archiveFilesFromNasPath(match.nasPath)
+        }, 'student-profile-index');
+      } catch {
+        continue;
+      }
+    }
+  }
+  return null;
+}
+
+function getArchiveRecordFromStore(appDir, id) {
+  return normalizeArchiveRecord(readArchiveRecords(appDir).records.find((record) => String(record.id) === String(id)) || null);
+}
+
+export function resolveArchiveRecord(appDir, id) {
+  const normalizedId = String(id || '').trim();
+  if (!normalizedId) return null;
+  return getArchiveRecordFromStore(appDir, normalizedId) || readArchiveRecordFromProfiles(appDir, normalizedId);
 }
 
 function writeArchiveRecords(appDir, data) {
@@ -54,7 +143,7 @@ function upsertArchiveRecord(appDir, record) {
 }
 
 export function getArchiveRecord(appDir, id) {
-  return readArchiveRecords(appDir).records.find((record) => String(record.id) === String(id)) || null;
+  return resolveArchiveRecord(appDir, id);
 }
 
 export function listArchiveRecords(appDir, filters = {}) {

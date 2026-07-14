@@ -50,6 +50,33 @@ function seedArchive(appDir) {
   });
 }
 
+function seedProfileArchive(appDir) {
+  writeJson(path.join(appDir, 'data/student-profiles/510/2_林毅超/archive-index.json'), {
+    items: [{
+      archiveId: 'essay-56',
+      essayId: '56',
+      essayTitle: '飞书真实验证作文-0714',
+      className: '510',
+      studentId: '2',
+      studentName: '林毅超',
+      grade: '三类文',
+      createdAt: '2026-07-14 05:47:30',
+      nasPath: 'Archive/510/2_林毅超/2026/2026-07/飞书真实验证作文-0714',
+      score: 42,
+      level: '三类文',
+      report: {
+        score: 42,
+        grade: '三类文',
+        level: '三类文',
+        overallEvaluation: '本文属于三类文。',
+        strengths: ['观点明确'],
+        problems: ['结构缺失'],
+        suggestions: ['补充事例']
+      }
+    }]
+  });
+}
+
 function createMockZspaceClient() {
   const files = new Map([
     ['report.md', Buffer.from('# 青年责任 教师可读批改报告\n\n## 核心优点\n- 观点明确\n\n## 主要问题\n- 论证展开不足\n\n## 下一步训练\n- 因果分析训练', 'utf8')],
@@ -263,4 +290,21 @@ test('Feishu result card uses signed public URLs and omits unavailable files', a
   assert.doesNotMatch(serialized, /localhost|127\.0\.0\.1|192\.168|webdav|file:\/\//i);
   assert.doesNotMatch(serialized, /essay-download-word/);
   assert.doesNotMatch(serialized, /essay-result/);
+});
+
+test('file routes resolve report links from student profile archive index when archive-records is missing', async () => {
+  const appDir = tempAppDir();
+  seedProfileArchive(appDir);
+  const app = createApp({ env, appDir, zspaceClient: createMockZspaceClient(), logger: { error() {}, warn() {}, info() {} } });
+  const pdfUrl = new URL(createSignedDownloadUrl({ archiveId: 'essay-56', fileType: 'pdf', userId: 'ou_test', env }));
+  const reportUrl = new URL(createSignedReportUrl({ archiveId: 'essay-56', userId: 'ou_test', env }));
+
+  const pdf = await invoke(app, { url: `${pdfUrl.pathname}${pdfUrl.search}` });
+  assert.equal(pdf.statusCode, 200);
+  assert.equal(pdf.headers['content-type'], 'application/pdf');
+
+  const report = await invoke(app, { url: `${reportUrl.pathname}${reportUrl.search}` });
+  assert.equal(report.statusCode, 200);
+  assert.match(report.body.toString('utf8'), /飞书真实验证作文-0714/);
+  assert.match(report.body.toString('utf8'), /42/);
 });

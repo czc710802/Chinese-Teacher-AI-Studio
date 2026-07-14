@@ -186,6 +186,19 @@ export function getArchiveFileDescriptor({ appDir, archiveId, fileType } = {}) {
     throw error;
   }
   const safeFileType = normalizeFileType(fileType);
+  if (safeFileType === 'json' && record.reportJson) {
+    return {
+      record,
+      file: {
+        name: FILE_TYPES.json.fileName,
+        remotePath: record.nasPath ? `${record.nasPath}/${FILE_TYPES.json.fileName}` : '',
+        contentType: FILE_TYPES.json.contentType,
+        inlineBuffer: Buffer.from(JSON.stringify(record.reportJson, null, 2), 'utf8')
+      },
+      fileType: safeFileType,
+      contentType: FILE_TYPES[safeFileType].contentType
+    };
+  }
   const file = findArchiveFile(record, safeFileType);
   if (!file) {
     const error = new Error('归档文件尚未生成');
@@ -226,7 +239,8 @@ export async function buildArchiveDownloadLinks({
       files[type] = createSignedDownloadUrl({ archiveId: record.id, fileType: type, userId, expiresInSeconds, env });
     }
   }
-  const reportUrl = files.report || files.markdown
+  const reportJsonAvailable = Boolean(record.reportJson && Object.keys(record.reportJson || {}).length > 0);
+  const reportUrl = files.report || files.markdown || reportJsonAvailable
     ? createSignedReportUrl({ archiveId: record.id, userId, expiresInSeconds, env })
     : '';
   return {

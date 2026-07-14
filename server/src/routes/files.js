@@ -51,11 +51,11 @@ async function downloadArchiveFile(req, res) {
   try {
     const descriptor = getArchiveFileDescriptor({ appDir, archiveId: req.params.archiveId, fileType });
     const client = req.app.locals.zspaceClient;
-    if (!client?.config?.enabled || typeof client.downloadFile !== 'function') {
+    if (!descriptor.file.inlineBuffer && (!client?.config?.enabled || typeof client.downloadFile !== 'function')) {
       sendError(res, 503, 'NAS 下载服务暂时不可用', 'NAS_UNAVAILABLE');
       return;
     }
-    const buffer = await client.downloadFile(descriptor.file.remotePath);
+    const buffer = descriptor.file.inlineBuffer || await client.downloadFile(descriptor.file.remotePath);
     const range = applyRange(buffer, req.headers.range);
     res.setHeader('accept-ranges', 'bytes');
     res.setHeader('content-type', descriptor.contentType);
@@ -133,11 +133,12 @@ publicReportRouter.get('/:archiveId', async (req, res) => {
   try {
     const descriptor = getArchiveFileDescriptor({ appDir, archiveId: req.params.archiveId, fileType: 'json' });
     const client = req.app.locals.zspaceClient;
-    if (!client?.config?.enabled || typeof client.downloadFile !== 'function') {
+    const reportBuffer = descriptor.file.inlineBuffer;
+    if (!reportBuffer && (!client?.config?.enabled || typeof client.downloadFile !== 'function')) {
       res.status(503).type('text/html; charset=utf-8').send('<!doctype html><meta charset="utf-8"><h1>NAS 下载服务暂时不可用</h1>');
       return;
     }
-    const jsonBuffer = await client.downloadFile(descriptor.file.remotePath);
+    const jsonBuffer = reportBuffer || await client.downloadFile(descriptor.file.remotePath);
     const reportJson = JSON.parse(jsonBuffer.toString('utf8'));
     const links = await buildArchiveDownloadLinks({
       appDir,

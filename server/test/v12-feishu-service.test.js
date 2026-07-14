@@ -191,7 +191,9 @@ test('feishu service handles essay report pagination card actions', async () => 
     env: {
       FEISHU_APP_ID: 'app-id',
       FEISHU_APP_SECRET: 'app-secret',
-      FEISHU_BOT_NAME: 'Chinese Teacher AI Studio'
+      FEISHU_BOT_NAME: 'Chinese Teacher AI Studio',
+      FEISHU_FILE_LINK_SECRET: 'test-link-secret',
+      FEISHU_REPORT_PUBLIC_BASE_URL: 'https://pi.zhenwanyue.icu'
     }
   });
 
