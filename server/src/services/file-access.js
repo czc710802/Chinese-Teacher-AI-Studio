@@ -44,7 +44,7 @@ function safeCompare(a, b) {
 }
 
 function normalizeOrigin(env = process.env) {
-  const raw = String(env.PUBLIC_APP_ORIGIN || env.PUBLIC_APP_URL || DEFAULT_PUBLIC_ORIGIN).trim().replace(/\/+$/, '');
+  const raw = String(env.FEISHU_REPORT_PUBLIC_BASE_URL || env.PUBLIC_APP_ORIGIN || env.PUBLIC_APP_URL || DEFAULT_PUBLIC_ORIGIN).trim().replace(/\/+$/, '');
   const url = new URL(/^https?:\/\//.test(raw) ? raw : `https://${raw}`);
   if (!/^https?:$/.test(url.protocol)) throw new Error('PUBLIC_APP_ORIGIN 协议无效');
   if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(url.hostname)) throw new Error('PUBLIC_APP_ORIGIN 不能是本机地址');
