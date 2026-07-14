@@ -181,6 +181,7 @@ test('backend image upload route recognizes photos and creates a reviewed essay'
   assert.match(essayRoutesSource, /upload\.array\('images', 8\)/);
   assert.match(essayRoutesSource, /recognizeImages\(req\.files \|\| \[\]\)/);
   assert.match(essayRoutesSource, /createReviewedEssay/);
+  assert.match(essayRoutesSource, /gradeEssay\(buildReviewInput\(\), \{ timeoutMs: 120000 \}\)/);
   assert.match(essayRoutesSource, /deferReview: true/);
   assert.match(essayRoutesSource, /setImmediate\(\(\) => \{/);
   assert.match(essayRoutesSource, /请先选择照片或图片/);

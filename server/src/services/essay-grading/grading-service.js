@@ -220,7 +220,11 @@ export async function gradeEssay(input = {}, options = {}) {
     essay_type: context.essayType,
     full_score: context.maxScore
   };
-  const review = await reviewEssay({ assignment, essayText: context.essayText });
+  const review = await reviewEssay({
+    assignment,
+    essayText: context.essayText,
+    timeoutMs: options.timeoutMs
+  });
   return normalizeUnifiedReview(review, context);
 }
 

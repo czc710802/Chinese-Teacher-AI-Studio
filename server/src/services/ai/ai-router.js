@@ -138,7 +138,13 @@ export class AIRouter {
         status: 502
       });
     }
+    const timeoutMs = Number.isFinite(Number(payload?.timeoutMs)) && Number(payload.timeoutMs) > 0
+      ? Number(payload.timeoutMs)
+      : this.config.timeoutMs;
     const service = this.buildProvider(provider);
+    if (service && typeof service === 'object') {
+      service.timeoutMs = timeoutMs;
+    }
     if (taskType === 'essay_grading') {
       return service.gradeEssay({ ...payload, taskType });
     }

@@ -63,7 +63,7 @@ function extractTextFromUploadedFile(file) {
   throw error;
 }
 
-async function createReviewedEssay({ assignment, studentId, title, essayText, imagePaths = [], imageOcrText = '', sourceFiles = [], attachments = [], submitRound = 1, wordCount, submissionStatus = 'submitted', storageService, zspaceClient, logger = console }) {
+async function createReviewedEssay({ assignment, studentId, title, essayText, imagePaths = [], imageOcrText = '', sourceFiles = [], attachments = [], submitRound = 1, wordCount, submissionStatus = 'submitted', storageService, zspaceClient, logger = console, deferReview = false }) {
   const resolvedWordCount = Number(wordCount || countEssayWords(essayText));
   const result = db.prepare(`
     INSERT INTO essays
@@ -77,7 +77,41 @@ async function createReviewedEssay({ assignment, studentId, title, essayText, im
   await recordOriginalArtifact({ storageService, database: db, essayId, files: sourceFiles, text: sourceFiles.length ? '' : essayText, logger });
   if (imageOcrText) await recordOcrArtifact({ storageService, database: db, essayId, text: imageOcrText, files: sourceFiles, logger });
 
-  const review = await gradeEssay({
+  const persistReview = async (review) => {
+    saveEssayReviewVersion(db, {
+      essayId,
+      review,
+      promptText: assignment.prompt || '',
+      promptMode: 'latest',
+      reportVersion: review.reportVersion || review.metadata?.reportVersion || '2.0',
+      model: review.metadata?.model || review.ai_meta?.model || '',
+      sourceType: 'web',
+      createdByUserId: '',
+      createdByRole: ''
+    });
+    await recordReviewArtifact({ storageService, database: db, essayId, review, logger });
+    archiveEssayToZSpaceAsync({
+      appDir: storageService?.rawConfig?.appDir || path.resolve(__dirname, '../../..'),
+      database: db,
+      essayId,
+      client: zspaceClient,
+      logger
+    });
+    archiveEssayToNASAsync({
+      appDir: storageService?.rawConfig?.appDir || path.resolve(__dirname, '../../..'),
+      database: db,
+      essayId,
+      client: zspaceClient,
+      logger
+    });
+    try {
+      refreshStudentProfile(studentId, { storageService, logger });
+    } catch (error) {
+      logger?.warn?.('refreshStudentProfile failed after submit', error?.message || error);
+    }
+  };
+
+  const buildReviewInput = () => ({
     essayId,
     studentId,
     studentName: '',
@@ -92,37 +126,35 @@ async function createReviewedEssay({ assignment, studentId, title, essayText, im
     model: '',
     teacherRequirements: assignment.requirements || ''
   });
-  saveEssayReviewVersion(db, {
-    essayId,
-    review,
-    promptText: assignment.prompt || '',
-    promptMode: 'latest',
-    reportVersion: review.reportVersion || review.metadata?.reportVersion || '2.0',
-    model: review.metadata?.model || review.ai_meta?.model || '',
-    sourceType: 'web',
-    createdByUserId: '',
-    createdByRole: ''
-  });
-  await recordReviewArtifact({ storageService, database: db, essayId, review, logger });
-  archiveEssayToZSpaceAsync({
-    appDir: storageService?.rawConfig?.appDir || path.resolve(__dirname, '../../..'),
-    database: db,
-    essayId,
-    client: zspaceClient,
-    logger
-  });
-  archiveEssayToNASAsync({
-    appDir: storageService?.rawConfig?.appDir || path.resolve(__dirname, '../../..'),
-    database: db,
-    essayId,
-    client: zspaceClient,
-    logger
-  });
-  try {
-    refreshStudentProfile(studentId, { storageService, logger });
-  } catch (error) {
-    logger?.warn?.('refreshStudentProfile failed after submit', error?.message || error);
+
+  if (deferReview) {
+    setImmediate(() => {
+      (async () => {
+        try {
+          const review = await gradeEssay(buildReviewInput(), { timeoutMs: 120000 });
+          await persistReview(review);
+        } catch (error) {
+          logger?.error?.('background essay image review failed', {
+            essayId,
+            message: error?.message || String(error || ''),
+            stack: error?.stack || ''
+          });
+          db.prepare('UPDATE essays SET grading_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('failed', essayId);
+        }
+      })().catch((error) => {
+        logger?.error?.('background essay image review crashed', {
+          essayId,
+          message: error?.message || String(error || ''),
+          stack: error?.stack || ''
+        });
+        db.prepare('UPDATE essays SET grading_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('failed', essayId);
+      });
+    });
+    return { essayId, gradingStatus: 'grading', queuedReview: true };
   }
+
+  const review = await gradeEssay(buildReviewInput());
+  await persistReview(review);
   return { essayId };
 }
 
@@ -221,7 +253,8 @@ essayRouter.post('/images', upload.array('images', 8), async (req, res, next) =>
       submissionStatus: resolved.submissionStatus,
       storageService: req.app.locals.storageService,
       zspaceClient: req.app.locals.zspaceClient,
-      logger: req.app.locals.logger || console
+      logger: req.app.locals.logger || console,
+      deferReview: true
     });
     res.json({ ...result, recognizedTextLength: essayText.length });
   } catch (error) {

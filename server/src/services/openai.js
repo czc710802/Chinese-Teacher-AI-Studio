@@ -378,11 +378,15 @@ export function completeLegacyReviewFields(review = {}) {
   return completed;
 }
 
-export async function reviewEssay({ assignment, essayText }) {
+export async function reviewEssay({ assignment, essayText, timeoutMs } = {}) {
   const prompt = buildReviewPrompt({ assignment, essayText, fullScore: assignment?.full_score || 60 });
   let result;
   try {
-    result = await callTextTask('essay_grading', prompt, { jsonMode: true, maxTokens: 9000 });
+    result = await callTextTask('essay_grading', prompt, {
+      jsonMode: true,
+      maxTokens: 9000,
+      timeoutMs: Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0 ? Number(timeoutMs) : undefined
+    });
   } catch (error) {
     if (process.env.NODE_ENV !== 'production' && process.env.AI_ALLOW_MOCK_FALLBACK !== 'false' && isRecoverableAiError(error)) {
       console.warn('AI 批改服务暂时不可用，测试/开发环境使用本地兜底批改：', safeAiErrorMessage(error));
