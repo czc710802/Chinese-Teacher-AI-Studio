@@ -84,7 +84,7 @@ test('teacher review records list reviewed essays with view and batch export act
   assert.match(teacherReviewCenter, /\/reports\/reviewed\/docx/);
   assert.match(teacherReviewCenter, /reviewMode === 'records'/);
   assert.match(teacherReviewCenter, /essay\.total_score != null/);
-  assert.match(teacherReviewCenter, /href=\{`\/teacher\/essay\/\$\{essay\.id\}`\}/);
+  assert.match(teacherReviewCenter, /href=\{`\/teacher\/essays\/\$\{essay\.id\}`\}/);
   assert.match(teacherReviewCenter, /点击查看/);
   assert.match(mainSource, /已自动批阅/);
   assert.doesNotMatch(teacherReviewCenter, /调阅批阅结果/);
@@ -105,7 +105,7 @@ test('teacher review results mode lets teacher click into each student AI review
   assert.match(teacherReviewCenter, /onlyReviewed/);
   assert.match(teacherReviewCenter, /reviewMode === 'records'/);
   assert.match(teacherReviewCenter, /essay\.total_score != null/);
-  assert.match(teacherReviewCenter, /href=\{`\/teacher\/essay\/\$\{essay\.id\}`\}/);
+  assert.match(teacherReviewCenter, /href=\{`\/teacher\/essays\/\$\{essay\.id\}`\}/);
   assert.match(teacherReviewCenter, /点击查看/);
 });
 
@@ -113,7 +113,7 @@ test('student workspace exposes assignment upload review and upgraded-essay copy
   const workspace = functionBody('StudentWorkspacePage');
   assert.match(workspace, /作文任务/);
   assert.match(workspace, /href=\{`\/upload\?assignmentId=\$\{a\.id\}`\}/);
-  assert.match(workspace, /查看AI批改情况/);
+  assert.match(workspace, /查看我的批改 \/ 复制升格文章|查看批改进度/);
   assert.match(workspace, /复制升格文章/);
   assert.match(mainSource, /FullEssayUpgradePanel/);
   assert.match(mainSource, /复制升格文章/);
@@ -151,7 +151,7 @@ test('teacher essay workspace exposes version rail, report actions, scoring pane
   assert.match(teacherWorkspace, /教师评分/);
   assert.match(teacherWorkspace, /保存草稿/);
   assert.match(teacherWorkspace, /提交评分/);
-  assert.match(teacherWorkspace, /打开网页报告/);
+  assert.match(teacherWorkspace, /查看归档报告/);
   assert.match(teacherWorkspace, /下载 PDF/);
   assert.match(teacherWorkspace, /下载 Word/);
   assert.match(teacherWorkspace, /重新批改/);
@@ -167,7 +167,7 @@ test('student photo upload sends images directly for AI recognition and review',
   assert.match(uploadPage, /FormData/);
   assert.match(uploadPage, /fd\.append\('assignment_id', assignmentId\)/);
   assert.match(uploadPage, /fd\.append\('images', file\)/);
-  assert.match(uploadPage, /nav\(`\/review\/\$\{data\.essayId\}`\)/);
+  assert.match(uploadPage, /nav\(`\/student\/essays\/\$\{data\.essayId\}\/report`\)/);
   assert.match(uploadPage, /capture="environment"/);
   assert.match(uploadPage, /accept="image\/\*,\.heic"/);
   assert.match(uploadPage, /确认文字/);
@@ -180,7 +180,16 @@ test('backend image upload route recognizes photos and creates a reviewed essay'
   assert.match(essayRoutesSource, /upload\.array\('images', 8\)/);
   assert.match(essayRoutesSource, /recognizeImages\(req\.files \|\| \[\]\)/);
   assert.match(essayRoutesSource, /createReviewedEssay/);
+  assert.match(essayRoutesSource, /deferReview: true/);
+  assert.match(essayRoutesSource, /setImmediate\(\(\) => \{/);
   assert.match(essayRoutesSource, /请先选择照片或图片/);
+});
+
+test('student review page polls pending image submissions instead of showing a fake completed report', () => {
+  const reviewPage = functionBody('ReviewPage');
+  assert.match(reviewPage, /图片已收到，AI 正在批改中，请稍候/);
+  assert.match(reviewPage, /gradingStatus/);
+  assert.match(reviewPage, /setInterval\(load, 2000\)/);
 });
 
 test('student submit page shows upload and review errors instead of failing silently', () => {
@@ -280,7 +289,9 @@ test('teacher and student class flows no longer expose invitation code entry or 
   assert.doesNotMatch(studentHome, /invite|邀请码|\/classes\/join/);
   assert.doesNotMatch(classManagement, /invite|邀请码/);
   assert.doesNotMatch(classRosterPanel, /invite|邀请码/);
-  assert.doesNotMatch(classRoutesSource, /\/join|invite_code|邀请码/);
+  assert.match(classRoutesSource, /student-mobile\/join/);
+  assert.match(classRoutesSource, /join-requests/);
+  assert.doesNotMatch(classRoutesSource, /\/classes\/join/);
 });
 
 test('student home shows a dedicated student marker banner above the workspace cards', () => {
@@ -515,4 +526,23 @@ test('frontend exposes separated teacher, student and administrator entrances', 
   assert.match(adminHome, /模型配置/);
   assert.match(adminHome, /WebDAV 状态/);
   assert.doesNotMatch(adminHome, /发布作业|创建作文作业|批量启动 AI 批改/);
+});
+
+test('student mobile entry exposes login join home task detail and profile routes', () => {
+  const mobileHome = functionBody('StudentMobileHomePage');
+  const mobileTasks = functionBody('StudentMobileTasksPage');
+  assert.match(mainSource, /path="\/student-mobile"/);
+  assert.match(mainSource, /path="\/student-mobile\/login"/);
+  assert.match(mainSource, /path="\/student-mobile\/join"/);
+  assert.match(mainSource, /path="\/student-mobile\/join\/status"/);
+  assert.match(mainSource, /path="\/student-mobile\/home"/);
+  assert.match(mainSource, /path="\/student-mobile\/tasks"/);
+  assert.match(mainSource, /path="\/student-mobile\/tasks\/:assignmentId"/);
+  assert.match(mainSource, /path="\/student-mobile\/profile"/);
+  assert.match(mobileHome, /自由作文 AI 批改/);
+  assert.match(mobileHome, /我的任务/);
+  assert.match(mobileHome, /加入班级/);
+  assert.match(mobileTasks, /任务详情/);
+  assert.match(mobileTasks, /提交作文/);
+  assert.match(mobileTasks, /拍照上传/);
 });

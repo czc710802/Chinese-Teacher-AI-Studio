@@ -18,6 +18,7 @@ import { archiveRouter } from './routes/archive.js';
 import { fileAccessRouter, publicReportRouter } from './routes/files.js';
 import { studentProfileRouter } from './routes/student-profiles.js';
 import { studentManagementRouter, teacherManagementRouter } from './routes/teacher-management.js';
+import { studentMobileRouter } from './routes/student-mobile.js';
 import { benchmarkRouter } from './routes/benchmark.js';
 import { adminFeishuRouter, teacherFeishuRouter } from './routes/feishu-workbench.js';
 import { getAiStatus } from './services/openai.js';
@@ -201,6 +202,7 @@ export function createApp({
   app.use('/api/archive', archiveRouter);
   app.use('/api/files', fileAccessRouter);
   app.use('/api/student-profiles', studentProfileRouter);
+  app.use('/api/student-mobile', studentMobileRouter);
   app.use('/api/benchmark', benchmarkRouter);
   app.use('/api/teacher', teacherManagementRouter);
   app.use('/api/teacher/feishu', teacherFeishuRouter);

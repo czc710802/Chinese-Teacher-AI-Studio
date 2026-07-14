@@ -55,10 +55,12 @@ function Card({ title, icon, children, action, className = '' }) {
 }
 
 function LoginPage() {
-  const [form, setForm] = useState({ username: 'teacher', password: '123456' });
+  const location = useLocation();
+  const [form, setForm] = useState(() => (location.state?.role === 'student'
+    ? { username: 'student', password: '123456' }
+    : { username: 'teacher', password: '123456' }));
   const [error, setError] = useState('');
   const nav = useNavigate();
-  const location = useLocation();
   async function submit(e) {
     e.preventDefault();
     try {
@@ -545,7 +547,7 @@ function StudentHome() {
           return <article className="item" key={essay.id}>
             <b>{displayTitle}</b>
             <p>{metaPrefix}{essay.total_score ?? '--'}分 · {essay.level || '待批改'}</p>
-            <a href={`/review/${essay.id}`}>{essay.total_score == null ? '查看批改进度' : '查看AI批改情况 / 复制升格文章'}</a>
+            <a href={`/student/essays/${essay.id}/report`}>{essay.total_score == null ? '查看批改进度' : '查看我的批改 / 复制升格文章'}</a>
           </article>;
         })}
         {!uniqueEssays.length && <p className="hint">还没有提交记录。可从上方作文任务进入上传或提交。</p>}
@@ -642,7 +644,7 @@ function StudentWorkspacePage() {
           return <article className="item essay-result-line" key={essay.id}>
             <b className="essay-result-title">{displayTitle}</b>
             <span className="essay-result-meta">{metaPrefix}{essay.total_score ?? '--'}分 · {essay.level || '待批改'}</span>
-            <a href={`/review/${essay.id}`}>{essay.total_score == null ? '查看批改进度' : '查看AI批改情况 / 复制升格文章'}</a>
+            <a href={`/student/essays/${essay.id}/report`}>{essay.total_score == null ? '查看批改进度' : '查看我的批改 / 复制升格文章'}</a>
           </article>;
         })}
         {!essays.length && <p className="hint">还没有提交记录。可从上方作文任务进入拍照上传或文字提交。</p>}
@@ -704,7 +706,7 @@ function UploadPage() {
     setError('');
     try {
       const data = await api('/essays/images', { method: 'POST', formData: fd });
-      nav(`/review/${data.essayId}`);
+      nav(`/student/essays/${data.essayId}/report`);
     } catch (err) {
       setError(`上传批改失败：${err.message}`);
     } finally {
@@ -781,7 +783,7 @@ function SubmitPage() {
     setError('');
     try {
       const data = await api('/essays/files', { method: 'POST', formData: fd });
-      nav(`/review/${data.essayId}`);
+      nav(`/student/essays/${data.essayId}/report`);
     } catch (err) {
       setError(`文件提交失败：${err.message}`);
     } finally {
@@ -797,7 +799,7 @@ function SubmitPage() {
     setError('');
     try {
       const data = await api('/essays', { method: 'POST', body: { assignment_id: assignmentId, student_id: session.studentId, title, original_text: text.trim() } });
-      nav(`/review/${data.essayId}`);
+      nav(`/student/essays/${data.essayId}/report`);
     } catch (err) {
       setError(`提交失败：${err.message}`);
     } finally {
@@ -859,8 +861,43 @@ function ReviewPage() {
       alert("重新批阅失败：" + err.message);
     }
   }
-  useEffect(() => { api(`/essays/${essayId}`).then(setData); }, [essayId]);
-  if (!data) return <div className="review-page"><p className="review-loading">正在生成批改报告...</p></div>;
+  useEffect(() => {
+    let cancelled = false;
+    let timer = null;
+    const load = async () => {
+      try {
+        const updated = await api(`/essays/${essayId}`);
+        if (cancelled) return updated;
+        setData(updated);
+        const status = String(updated?.essay?.grading_status || '');
+        if (updated?.review || !['grading', 'pending'].includes(status)) {
+          if (timer) clearInterval(timer);
+          timer = null;
+        }
+        return updated;
+      } catch (err) {
+        if (!cancelled) console.error('review page refresh failed', err);
+        return null;
+      }
+    };
+    load().then((updated) => {
+      const status = String(updated?.essay?.grading_status || '');
+      if (!cancelled && !updated?.review && ['grading', 'pending'].includes(status)) {
+        timer = setInterval(load, 2000);
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [essayId]);
+  const gradingStatus = String(data?.essay?.grading_status || '');
+  if (!data || (!data.review && ['grading', 'pending'].includes(gradingStatus))) {
+    return <div className="review-page"><p className="review-loading">图片已收到，AI 正在批改中，请稍候...</p></div>;
+  }
+  if (!data.review && gradingStatus === 'failed') {
+    return <div className="review-page"><p className="review-loading">图片批改失败，请返回后重试或改用文字提交。</p></div>;
+  }
   const review = data.review?.raw || {};
   const fallback = {
     teacher_overall: '这篇作文能围绕题目建立基本中心，但文本中的主体段还需要把观点、材料和分析连接得更紧密。开头应先界定核心概念，主体段在举例之后要解释材料为什么能够证明观点，结尾则要回到时代责任或个人选择，让文章从态度表达推进到有层次的论证。',
@@ -934,6 +971,163 @@ function ReviewPage() {
   </div>;
 }
 
+function StudentEssayReportPage() {
+  return <ReviewPage />;
+}
+
+function StudentMobileLoginPage() {
+  return <Navigate to="/login" replace state={{ returnTo: '/student-mobile/home', role: 'student' }} />;
+}
+
+function StudentMobileJoinPage() {
+  const [token] = useState(() => new URLSearchParams(location.search).get('token') || '');
+  const [data, setData] = useState(null);
+  const [form, setForm] = useState({ studentName: '', studentNo: '' });
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const nav = useNavigate();
+  useEffect(() => {
+    if (!token) return;
+    api(`/student-mobile/join/${encodeURIComponent(token)}`).then(setData).catch((err) => setError(err.message));
+  }, [token]);
+  async function submit() {
+    if (!token) return setError('缺少入班令牌');
+    if (!form.studentName.trim()) return setError('请填写学生姓名');
+    try {
+      const result = await api(`/student-mobile/join/${encodeURIComponent(token)}`, {
+        method: 'POST',
+        body: { studentName: form.studentName.trim(), studentNo: form.studentNo.trim() }
+      });
+      nav(`/student-mobile/join/status?status=${encodeURIComponent(result.status || 'pending')}&classId=${encodeURIComponent(result.class_id || '')}&requestId=${encodeURIComponent(result.id || '')}`, { replace: true });
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+  return <Layout><Card title="加入班级" icon={<Users size={20} />}>
+    {data ? <div className="form-stack">
+      <p><b>{data.name}</b> · {data.grade || '未填写年级'} · {data.teacher_name || '任课教师未填'}</p>
+      <p className="hint">入班方式：{data.join_mode || 'approval'} · 当前状态：{data.status || 'active'}</p>
+      <input placeholder="学生姓名" value={form.studentName} onChange={(e) => setForm({ ...form, studentName: e.target.value })} />
+      <input placeholder="学号（可选）" value={form.studentNo} onChange={(e) => setForm({ ...form, studentNo: e.target.value })} />
+      <button onClick={submit}>提交入班申请</button>
+    </div> : <p className="hint">请通过教师发来的二维码或链接进入。</p>}
+    {message && <p className="success">{message}</p>}
+    {error && <p className="error">{error}</p>}
+  </Card></Layout>;
+}
+
+function StudentMobileJoinStatusPage() {
+  const params = new URLSearchParams(location.search);
+  const status = params.get('status') || 'pending';
+  const classId = params.get('classId') || '';
+  const requestId = params.get('requestId') || '';
+  return <Layout><Card title="入班结果" icon={<Check size={20} />}>
+    <div className="form-stack">
+      <p><b>{status === 'approved' ? '已加入班级' : '入班申请已提交'}</b></p>
+      <p className="hint">班级编号：{classId || '未返回'} · 申请编号：{requestId || '未返回'}</p>
+      <p className="hint">如需继续，请返回任务首页或等待教师审核。</p>
+      <div className="actions">
+        <a href="/student-mobile/home">返回首页</a>
+        <a href="/student-mobile/tasks">查看任务</a>
+      </div>
+    </div>
+  </Card></Layout>;
+}
+
+function StudentMobileHomePage() {
+  const [classes, setClasses] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [profile, setProfile] = useState(null);
+  useEffect(() => {
+    api('/student-mobile/classes').then(setClasses).catch(() => {});
+    api('/student-mobile/tasks').then(setTasks).catch(() => {});
+    api('/student-mobile/profile').then(setProfile).catch(() => {});
+  }, []);
+  return <Layout><div className="grid">
+    <Card title="手机学生端" icon={<Home size={20} />}>
+      <p>{profile?.name || '学生'} · {classes.length} 个班级 · {tasks.length} 个任务</p>
+      <div className="actions">
+        <a href="/student">自由作文 AI 批改</a>
+        <a href="/student-mobile/tasks">我的任务</a>
+        <a href="/student-mobile/join">加入班级</a>
+        <a href="/student-mobile/profile">成长档案</a>
+      </div>
+    </Card>
+    <Card title="我的班级" icon={<School size={20} />}>
+      {classes.map((klass) => <article key={klass.id} className="item"><b>{klass.name}</b><p>{klass.grade || '未填写年级'} · {klass.join_mode || 'approval'} · {klass.status || 'active'}</p><p className="hint">邀请码状态：{klass.invite_code ? '已配置' : '未配置'}</p></article>)}
+      {!classes.length && <p className="hint">还没有班级，请先通过邀请码加入。</p>}
+    </Card>
+    <Card title="我的任务" icon={<BookOpen size={20} />}>
+      {tasks.map((task) => <article key={task.id} className="item"><b>{task.title}</b><p>{task.class_name || ''} · {task.essay_type || ''} · 满分 {task.full_score || 60}</p><p><a href={`/student-mobile/tasks/${encodeURIComponent(task.id)}`}>查看详情</a></p></article>)}
+      {!tasks.length && <p className="hint">当前还没有任务。</p>}
+    </Card>
+  </div></Layout>;
+}
+
+function StudentMobileTasksPage() {
+  const { assignmentId } = useParams();
+  const [tasks, setTasks] = useState([]);
+  const [detail, setDetail] = useState(null);
+  const [status, setStatus] = useState(null);
+  useEffect(() => {
+    if (!assignmentId) {
+      api('/student-mobile/tasks').then(setTasks).catch(() => {});
+      return;
+    }
+    Promise.all([
+      api(`/assignments/public/${encodeURIComponent(assignmentId)}`),
+      api(`/assignments/${encodeURIComponent(assignmentId)}/my-status`)
+    ]).then(([assignment, myStatus]) => {
+      setDetail(assignment);
+      setStatus(myStatus);
+    }).catch(() => {});
+  }, [assignmentId]);
+  if (assignmentId) {
+    return <Layout><Card title="任务详情" icon={<BookOpen size={20} />}>
+      {detail ? <div className="form-stack">
+        <p><b>{detail.title}</b></p>
+        <p className="hint">{detail.class_name || ''} · {detail.essay_type || ''} · {detail.grade || ''}</p>
+        <p className="hint">截止时间：{formatDateTime(detail.deadline)}</p>
+        <p>{detail.prompt || '暂无材料说明'}</p>
+        <p>{detail.requirements || '暂无写作要求'}</p>
+        <p className="hint">状态：{status?.state || '未查询'}</p>
+        <div className="actions">
+          <a href={`/submit/${encodeURIComponent(assignmentId)}`}>提交作文</a>
+          <a href={`/upload?assignmentId=${encodeURIComponent(assignmentId)}`}>拍照上传</a>
+          <a href="/student-mobile/tasks">返回任务列表</a>
+        </div>
+      </div> : <p className="hint">任务不存在或暂不可见。</p>}
+    </Card></Layout>;
+  }
+  return <Layout><Card title="我的任务" icon={<BookOpen size={20} />}>
+    {tasks.map((task) => <article key={task.id} className="item"><b>{task.title}</b><p>{task.class_name || ''} · {task.essay_type || ''} · 截止 {formatDateTime(task.deadline)}</p><p className="hint">{task.prompt || task.requirements || '暂无说明'}</p><p><a href={`/student-mobile/tasks/${encodeURIComponent(task.id)}`}>查看详情</a></p></article>)}
+    {!tasks.length && <p className="hint">当前没有可见任务。</p>}
+  </Card></Layout>;
+}
+
+function StudentMobileProfilePage() {
+  const [profile, setProfile] = useState(null);
+  useEffect(() => { api('/student-mobile/profile').then(setProfile).catch(() => {}); }, []);
+  return <Layout><Card title="成长档案" icon={<ChartNoAxesCombined size={20} />}>
+    {profile ? <div className="form-stack">
+      <p><b>{profile.name}</b> · {profile.student_no || '未填写学号'}</p>
+      <p className="hint">{profile.growth_report || '暂无成长记录'}</p>
+      <pre style={{whiteSpace:'pre-wrap'}}>{profile.score_trend || '[]'}</pre>
+    </div> : <p className="hint">请先登录后查看。</p>}
+  </Card></Layout>;
+}
+
+function LegacyReviewRoute() {
+  const { essayId } = useParams();
+  const location = useLocation();
+  const session = getSession();
+  const suffix = location.search || '';
+  const target = session?.role === 'teacher'
+    ? `/teacher/essays/${encodeURIComponent(essayId)}${suffix}`
+    : `/student/essays/${encodeURIComponent(essayId)}/report${suffix}`;
+  return <Navigate to={target} replace />;
+}
+
 function splitLines(value) {
   return String(value || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
 }
@@ -976,9 +1170,10 @@ function RichTextEditor({ value, onChange, placeholder }) {
 }
 
 function TeacherEssayDetailPage() {
-  const { essayId } = useParams();
+  const { essayId, reportId: routeReportId } = useParams();
   const nav = useNavigate();
   const location = useLocation();
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const [data, setData] = useState(null);
   const [message, setMessage] = useState('');
   const [selectedVersion, setSelectedVersion] = useState('');
@@ -992,12 +1187,21 @@ function TeacherEssayDetailPage() {
     const detail = await api(`/teacher/essays/${encodeURIComponent(essayId)}/detail`);
     setData(detail);
     const latestVersion = detail?.history?.at?.(-1)?.version_number || detail?.review?.version_number || 1;
-    setSelectedVersion(String(latestVersion));
+    const requestedReportId = String(routeReportId || searchParams.get('reportId') || '').trim();
+    const requestedAction = String(searchParams.get('action') || '').trim();
+    const matchedVersion = detail?.history?.find((item) => {
+      const itemId = String(item.id || '');
+      const version = String(item.version_number || 1);
+      const reportId = String(item.report_id || '');
+      return requestedReportId && (requestedReportId === itemId || requestedReportId === version || requestedReportId === reportId);
+    })?.version_number || latestVersion;
+    setSelectedVersion(String(matchedVersion));
+    setRerunOpen(requestedAction === 'regrade');
   }
 
   useEffect(() => {
     load().catch((err) => setMessage(err.message));
-  }, [essayId]);
+  }, [essayId, location.search]);
 
   const versionItems = data?.history || [];
   const selectedReview = useMemo(() => {
@@ -1259,7 +1463,7 @@ function TeacherEssayDetailPage() {
       <aside className="teacher-workspace-rail">
         <Card title="报告操作" icon={<Download size={20} />}>
           <div className="report-action-stack">
-            <button type="button" className="report-button" onClick={() => links.reportUrl && window.open(links.reportUrl, '_blank', 'noopener,noreferrer')}>打开网页报告</button>
+            <button type="button" className="report-button" onClick={() => links.reportUrl && window.open(links.reportUrl, '_blank', 'noopener,noreferrer')}>查看归档报告</button>
             <button type="button" className="report-button" onClick={() => links.pdfUrl && window.open(links.pdfUrl, '_blank', 'noopener,noreferrer')}>下载 PDF</button>
             <button type="button" className="report-button" onClick={() => links.docxUrl && window.open(links.docxUrl, '_blank', 'noopener,noreferrer')}>下载 Word</button>
           </div>
@@ -1952,11 +2156,11 @@ function TeacherReviewCenter() {
     </article>) : <div className="empty-records">暂无班级作业记录</div>)}
     {reviewMode === 'grading' && (filtered.length ? <article className="assignment-record">
       <div className="record-head"><div><h3>{assignments.find((assignment) => String(assignment.id) === String(activeAssignmentId))?.title || '前往批改'}</h3><p>已导入本任务的待批改作文，完成后进入批改记录查看。</p></div></div>
-      {filtered.map((essay) => <div className="student-record" key={essay.id}><div><b>{essay.student_name}</b><strong>{essay.total_score ?? '--'}分</strong><p>{formatDateTime(essay.created_at)} <span>{essay.total_score == null ? '待批改' : '已自动批阅'}</span></p></div><span className="record-actions"><button className="review-btn-primary" onClick={() => triggerReview(essay.id)} disabled={reviewingId === essay.id || batchReviewing}>{reviewingId === essay.id ? '批阅中...' : essay.total_score == null ? '批改' : '重新批改'}</button><a href={`/teacher/essay/${essay.id}`}>点击查看</a></span></div>)}
+      {filtered.map((essay) => <div className="student-record" key={essay.id}><div><b>{essay.student_name}</b><strong>{essay.total_score ?? '--'}分</strong><p>{formatDateTime(essay.created_at)} <span>{essay.total_score == null ? '待批改' : '已自动批阅'}</span></p></div><span className="record-actions"><button className="review-btn-primary" onClick={() => triggerReview(essay.id)} disabled={reviewingId === essay.id || batchReviewing}>{reviewingId === essay.id ? '批阅中...' : essay.total_score == null ? '批改' : '重新批改'}</button><a href={`/teacher/essays/${essay.id}`}>点击查看</a></span></div>)}
     </article> : <div className="empty-records">当前任务暂无待批改作文</div>)}
     {reviewMode === 'records' && (reviewedEssays.length ? reviewedEssays.map((essay) => <article className="assignment-record review-record-card" key={essay.id}>
       <div className="record-head"><div><h3>{essay.assignment_title}</h3><p>批改进度 <span className="progress"><i style={{ width: '100%' }} /></span>100% 1/1</p></div><button onClick={() => api(`/reports/essay/${essay.id}/docx`, { method: 'POST', body: {} }).then((data) => window.open(assetUrl(data.url), '_blank'))}><Download size={18} />导出</button></div>
-      <div className="student-record"><div><b>{essay.student_name}</b><strong>{essay.total_score}分</strong><p>{formatDateTime(essay.created_at)} <span>已自动批阅</span></p></div><span className="record-actions"><a href={`/teacher/essay/${essay.id}`}>点击查看</a></span></div>
+      <div className="student-record"><div><b>{essay.student_name}</b><strong>{essay.total_score}分</strong><p>{formatDateTime(essay.created_at)} <span>已自动批阅</span></p></div><span className="record-actions"><a href={`/teacher/essays/${essay.id}`}>点击查看</a></span></div>
     </article>) : <div className="empty-records">暂无已批改作文记录</div>)}
   </section>;
 }
@@ -2578,7 +2782,7 @@ function EssayList() {
   const { classId } = useParams();
   const [rows, setRows] = useState([]);
   useEffect(() => { api(`/essays?classId=${classId}`).then(setRows); }, [classId]);
-  return <Layout><Card title="班级作文列表" icon={<FileText size={20} />}>{rows.map((x) => <article className="item" key={x.id}><b>{x.student_name} · {x.assignment_title}</b><p>{x.total_score || '-'}分 · {x.level || '待批改'}</p><a href={`/teacher/essay/${x.id}`}>进入详情</a></article>)}</Card></Layout>;
+  return <Layout><Card title="班级作文列表" icon={<FileText size={20} />}>{rows.map((x) => <article className="item" key={x.id}><b>{x.student_name} · {x.assignment_title}</b><p>{x.total_score || '-'}分 · {x.level || '待批改'}</p><a href={`/teacher/essays/${x.id}`}>进入详情</a></article>)}</Card></Layout>;
 }
 
 function AnalyticsPage() {
@@ -2780,11 +2984,20 @@ function AdminHome() {
 function App() {
   return <BrowserRouter><Routes>
     <Route path="/login" element={<LoginPage />} />
+    <Route path="/student-mobile" element={<Navigate to="/student-mobile/home" replace />} />
+    <Route path="/student-mobile/login" element={<StudentMobileLoginPage />} />
+    <Route path="/student-mobile/join" element={<StudentMobileJoinPage />} />
+    <Route path="/student-mobile/join/status" element={<StudentMobileJoinStatusPage />} />
+    <Route path="/student-mobile/home" element={<RoleRoute roles={['student']}><StudentMobileHomePage /></RoleRoute>} />
+    <Route path="/student-mobile/tasks" element={<RoleRoute roles={['student']}><StudentMobileTasksPage /></RoleRoute>} />
+    <Route path="/student-mobile/tasks/:assignmentId" element={<RoleRoute roles={['student']}><StudentMobileTasksPage /></RoleRoute>} />
+    <Route path="/student-mobile/profile" element={<RoleRoute roles={['student']}><StudentMobileProfilePage /></RoleRoute>} />
     <Route path="/student" element={<RoleRoute roles={['student']}><StudentHome /></RoleRoute>} />
     <Route path="/student/workspace/:studentId" element={<RoleRoute roles={['student']}><StudentWorkspacePage /></RoleRoute>} />
+    <Route path="/student/essays/:essayId/report" element={<RoleRoute roles={['student']}><StudentEssayReportPage /></RoleRoute>} />
     <Route path="/upload" element={<RoleRoute roles={['student']}><UploadPage /></RoleRoute>} />
     <Route path="/submit/:assignmentId" element={<RoleRoute roles={['student']}><SubmitPage /></RoleRoute>} />
-    <Route path="/review/:essayId" element={<RoleRoute roles={['student', 'teacher']}><ReviewPage /></RoleRoute>} />
+    <Route path="/review/:essayId" element={<RoleRoute roles={['student', 'teacher']}><LegacyReviewRoute /></RoleRoute>} />
     <Route path="/profile" element={<RoleRoute roles={['student']}><StudentProfile /></RoleRoute>} />
     <Route path="/teacher" element={<RoleRoute roles={['teacher']}><TeacherHome /></RoleRoute>} />
     <Route path="/teacher/classes" element={<RoleRoute roles={['teacher']}><TeacherClassesPage /></RoleRoute>} />
@@ -2794,6 +3007,8 @@ function App() {
     <Route path="/teacher/tasks" element={<RoleRoute roles={['teacher']}><TeacherTasksPage /></RoleRoute>} />
     <Route path="/teacher/benchmark" element={<RoleRoute roles={['teacher']}><BenchmarkCenterPage /></RoleRoute>} />
     <Route path="/teacher/essay/:essayId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
+    <Route path="/teacher/essays/:essayId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
+    <Route path="/teacher/essays/:essayId/report/:reportId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
     <Route path="/admin" element={<RoleRoute roles={['admin']}><AdminHome /></RoleRoute>} />
     <Route path="/admin/feishu/teachers" element={<RoleRoute roles={['admin']}><AdminFeishuTeachersPage /></RoleRoute>} />
     <Route path="/teacher/feishu/classes" element={<RoleRoute roles={['teacher']}><TeacherFeishuClassesPage /></RoleRoute>} />
@@ -2804,7 +3019,7 @@ function App() {
     <Route path="/classes" element={<RoleRoute roles={['teacher']}><Layout><ClassManagement /></Layout></RoleRoute>} />
     <Route path="/assignments/new" element={<RoleRoute roles={['teacher']}><Layout><AssignmentPublish /></Layout></RoleRoute>} />
     <Route path="/class/:classId/essays" element={<RoleRoute roles={['teacher']}><EssayList /></RoleRoute>} />
-    <Route path="/essay/:essayId" element={<RoleRoute roles={['teacher']}><ReviewPage /></RoleRoute>} />
+    <Route path="/essay/:essayId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
     <Route path="/class/:classId/analytics" element={<RoleRoute roles={['teacher']}><AnalyticsPage /></RoleRoute>} />
     <Route path="/student/:studentId/profile" element={<RoleRoute roles={['teacher']}><StudentProfile /></RoleRoute>} />
     <Route path="*" element={<RoleRoute roles={['student', 'teacher', 'admin']}><Navigate to={homeByRole[getSession()?.role] || '/login'} replace /></RoleRoute>} />

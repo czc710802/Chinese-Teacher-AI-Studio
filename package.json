@@ -22,6 +22,8 @@
     "db:backup": "node ops/scripts/db-backup.mjs",
     "db:migrate:p2-feishu": "node ops/scripts/db-migrate-p2-feishu.mjs",
     "db:rollback:p2-feishu": "node ops/scripts/db-migrate-p2-feishu.mjs --down",
+    "db:migrate:p3-mobile": "node ops/scripts/db-migrate-p3-mobile.mjs",
+    "db:rollback:p3-mobile": "node ops/scripts/db-migrate-p3-mobile.mjs --down",
     "p2:test-data:init": "node ops/scripts/p2-test-data.mjs",
     "p2:test-data:clean": "node ops/scripts/p2-test-data.mjs --clean",
     "feishu:setup": "bash ops/scripts/setup-feishu-app.sh",

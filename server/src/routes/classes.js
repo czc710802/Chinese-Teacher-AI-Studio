@@ -4,6 +4,19 @@ import { requireUser, roleGuard } from '../middleware/auth.js';
 import { deleteManagedEmptyClass, getClassRosterForUser, renameStudentForManagedClass } from '../services/class-access.js';
 import { bindFeishuClass, bindFeishuStudent, listFeishuClassBindings } from '../services/feishu-assignment-bindings.js';
 import {
+  approveJoinRequest,
+  archiveLifecycleClass,
+  buildQrSvg,
+  createLifecycleClass,
+  listClassMembers,
+  listJoinRequests,
+  listLifecycleClasses,
+  rejectJoinRequest,
+  restoreLifecycleClass,
+  rotateClassInvite,
+  updateLifecycleClass
+} from '../services/class-lifecycle.js';
+import {
   archiveClass,
   getClass,
   getClassStatistics,
@@ -34,25 +47,15 @@ classRouter.get('/', (req, res) => {
     `).all(req.user.id);
     return res.json(rows);
   }
-  const teacher = db.prepare('SELECT id FROM teachers WHERE user_id = ?').get(req.user.id);
-  const rows = db.prepare(`
-    SELECT c.*, COUNT(cs.student_id) AS student_count
-    FROM classes c
-    LEFT JOIN class_students cs ON cs.class_id = c.id
-    WHERE c.teacher_id = ?
-    GROUP BY c.id
-    ORDER BY c.created_at DESC
-  `).all(teacher?.id || 0);
-  res.json(rows);
+  const result = listLifecycleClasses(db, req.user, req.query);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.rows);
 });
 
 classRouter.post('/', roleGuard('teacher'), (req, res) => {
-  const teacher = db.prepare('SELECT id FROM teachers WHERE user_id = ?').get(req.user.id);
-  const teacherId = teacher?.id;
-  if (!teacherId) return res.status(400).json({ message: '请先创建教师账号后再创建班级' });
-  const result = db.prepare('INSERT INTO classes (name, grade, teacher_id) VALUES (?, ?, ?)')
-    .run(req.body.name, req.body.grade, teacherId);
-  res.json(db.prepare('SELECT * FROM classes WHERE id = ?').get(result.lastInsertRowid));
+  const result = createLifecycleClass(db, req.user, req.body);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.class);
 });
 
 classRouter.get('/import-template', (_req, res) => {
@@ -61,6 +64,69 @@ classRouter.get('/import-template', (_req, res) => {
 
 classRouter.get('/:id/feishu-binding', roleGuard('teacher'), (req, res) => {
   const result = listFeishuClassBindings(db, req.user, { classId: req.params.id });
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.rows);
+});
+
+classRouter.get('/:id/invite', roleGuard('teacher'), (req, res) => {
+  const result = listJoinRequests(db, req.user, req.params.id);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  const klass = db.prepare('SELECT * FROM classes WHERE id = ?').get(req.params.id);
+  if (!klass) return res.status(404).json({ message: '班级不存在' });
+  const invite = db.prepare('SELECT * FROM class_invites WHERE class_id = ? AND status = ? ORDER BY id DESC LIMIT 1').get(req.params.id, 'active');
+  res.json({
+    class: klass,
+    invite,
+    invite_url: invite ? `/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}` : '',
+    qr_svg: invite ? buildQrSvg(`/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`, klass.name) : '',
+    requests: result.rows
+  });
+});
+
+classRouter.post('/:id/invite/rotate', roleGuard('teacher'), (req, res) => {
+  const result = rotateClassInvite(db, req.user, req.params.id, req.body);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.class);
+});
+
+classRouter.patch('/:id/lifecycle', roleGuard('teacher'), (req, res) => {
+  const result = updateLifecycleClass(db, req.user, req.params.id, req.body);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.class);
+});
+
+classRouter.post('/:id/archive', roleGuard('teacher'), (req, res) => {
+  const result = archiveLifecycleClass(db, req.user, req.params.id);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.class);
+});
+
+classRouter.post('/:id/restore', roleGuard('teacher'), (req, res) => {
+  const result = restoreLifecycleClass(db, req.user, req.params.id);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.class);
+});
+
+classRouter.get('/:id/join-requests', roleGuard('teacher'), (req, res) => {
+  const result = listJoinRequests(db, req.user, req.params.id);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.rows);
+});
+
+classRouter.post('/:id/join-requests/:requestId/approve', roleGuard('teacher'), (req, res) => {
+  const result = approveJoinRequest(db, req.user, req.params.id, req.params.requestId);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.request);
+});
+
+classRouter.post('/:id/join-requests/:requestId/reject', roleGuard('teacher'), (req, res) => {
+  const result = rejectJoinRequest(db, req.user, req.params.id, req.params.requestId, req.body.reason || '');
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.request);
+});
+
+classRouter.get('/:id/members', roleGuard('teacher'), (req, res) => {
+  const result = listClassMembers(db, req.user, req.params.id);
   if (result.status !== 200) return res.status(result.status).json({ message: result.message });
   res.json(result.rows);
 });
@@ -155,6 +221,15 @@ classRouter.post('/:id/students', roleGuard('teacher'), (req, res) => {
   const addUser = db.prepare('INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)');
   const addStudent = db.prepare('INSERT INTO students (user_id, student_no, grade, school) VALUES (?, ?, ?, ?)');
   const addRelation = db.prepare('INSERT OR IGNORE INTO class_students (class_id, student_id) VALUES (?, ?)');
+  const addBinding = db.prepare(`
+    INSERT INTO student_class_bindings (student_id, class_id, join_mode, status, joined_at, updated_at)
+    VALUES (?, ?, 'approval', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(student_id, class_id) DO UPDATE SET
+      join_mode = excluded.join_mode,
+      status = 'active',
+      left_at = NULL,
+      updated_at = CURRENT_TIMESTAMP
+  `);
   const created = [];
 
   for (const item of students) {
@@ -178,6 +253,7 @@ classRouter.post('/:id/students', roleGuard('teacher'), (req, res) => {
       created.push({ ...student, initial_password: '123456' });
     }
     addRelation.run(req.params.id, student.id);
+    addBinding.run(student.id, Number(req.params.id));
   }
   res.json({ ok: true, created });
 });
@@ -185,6 +261,11 @@ classRouter.post('/:id/students', roleGuard('teacher'), (req, res) => {
 classRouter.delete('/:classId/students/:studentId', roleGuard('teacher'), (req, res) => {
   if (!getManagedClass(req, req.params.classId)) return res.status(403).json({ message: '没有管理该班级的权限' });
   db.prepare('DELETE FROM class_students WHERE class_id = ? AND student_id = ?').run(req.params.classId, req.params.studentId);
+  db.prepare(`
+    UPDATE student_class_bindings
+    SET status = ?, left_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE class_id = ? AND student_id = ?
+  `).run('left', req.params.classId, req.params.studentId);
   res.json({ ok: true });
 });
 
