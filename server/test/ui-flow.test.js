@@ -124,8 +124,9 @@ test('student submit page keeps the selected assignment when switching to photo 
   assert.match(submitPage, /href=\{`\/upload\?assignmentId=\$\{assignmentId\}`\}/);
   assert.match(submitPage, /请输入或粘贴\/黏贴作文正文/);
   assert.match(submitPage, /当前提交状态/);
-  assert.match(submitPage, /accept="\.doc,\.docx,\.pdf,\.txt,\.md"/);
   assert.match(submitPage, /OCR 后人工确认/);
+  assert.doesNotMatch(submitPage, /保存草稿|上传文件并批改/);
+  assert.match(submitPage, /正式提交并批改/);
 });
 
 test('teacher assignment management exposes Feishu group publish preview revoke and missing reminders', () => {

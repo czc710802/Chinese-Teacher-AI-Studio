@@ -734,9 +734,7 @@ function SubmitPage() {
   const [text, setText] = useState(params.get('text') || '');
   const [title, setTitle] = useState('');
   const [studentInfo, setStudentInfo] = useState({ className: '', name: session?.name || '', studentNo: '' });
-  const [files, setFiles] = useState([]);
   const [submissionStatus, setSubmissionStatus] = useState(null);
-  const [draftMessage, setDraftMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const nav = useNavigate();
@@ -749,9 +747,6 @@ function SubmitPage() {
     api(`/essays/drafts/${assignmentId}`).then((draft) => {
       if (draft?.content) setText(draft.content);
       if (draft?.title) setTitle(draft.title);
-      if (draft?.attachments) {
-        try { setFiles(JSON.parse(draft.attachments)); } catch {}
-      }
     }).catch(() => {});
     if (session?.role === 'student') {
       api(`/assignments/${assignmentId}/my-status`).then(setSubmissionStatus).catch(() => {});
@@ -760,36 +755,6 @@ function SubmitPage() {
   const wordCount = text.replace(/\s+/g, '').length;
   const tooShort = assignment?.min_words && wordCount < Number(assignment.min_words);
   const tooLong = assignment?.max_words && wordCount > Number(assignment.max_words);
-  async function saveDraft() {
-    setDraftMessage('');
-    setError('');
-    try {
-      await api('/essays/drafts', { method: 'POST', body: { assignment_id: assignmentId, title, content: text, attachments: files.map((file) => ({ name: file.name || file.originalname || String(file.name || '') })) } });
-      setDraftMessage('草稿已保存');
-    } catch (err) {
-      setError(`保存草稿失败：${err.message}`);
-    }
-  }
-  async function submitFiles() {
-    if (!files.length) {
-      setError('请先选择 Word、PDF 或文本文件');
-      return;
-    }
-    const fd = new FormData();
-    fd.append('assignment_id', assignmentId);
-    fd.append('title', title || assignment?.title || 'Word 文档作文');
-    files.forEach((file) => file instanceof File && fd.append('files', file));
-    setBusy(true);
-    setError('');
-    try {
-      const data = await api('/essays/files', { method: 'POST', formData: fd });
-      nav(`/student/essays/${data.essayId}/report`);
-    } catch (err) {
-      setError(`文件提交失败：${err.message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
   async function submit() {
     if (!text.trim()) {
       setError('请先粘贴或输入作文正文');
@@ -826,18 +791,13 @@ function SubmitPage() {
     </div>
     <input placeholder="作文标题" value={title} onChange={(e) => setTitle(e.target.value)} />
     <textarea placeholder="请输入或粘贴/黏贴作文正文" value={text} onChange={(e) => setText(e.target.value)} rows="18" />
-    <label className="upload-choice"><FileText size={18} />上传 Word / PDF / 文本<input type="file" accept=".doc,.docx,.pdf,.txt,.md" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))} /></label>
-    <p className="hint">图片、拍照、多图和 HEIC 请使用“拍照上传”，OCR 识别后可人工确认再提交。</p>
-    {files.length > 0 && <div className="upload-file-list">{files.map((file, index) => <p key={`${file.name}-${index}`}>{index + 1}. {file.name}</p>)}</div>}
+    <p className="hint">手机端请优先使用“拍照上传”或“OCR 后人工确认”。本页保留文字直接提交入口，文件上传入口已移除以避免误操作。</p>
     {tooShort && <p className="error">当前字数低于最低要求。</p>}
     {tooLong && <p className="error">当前字数超过最高限制。</p>}
-    {draftMessage && <p className="hint">{draftMessage}</p>}
     {error && <p className="error">{error}</p>}
     <div className="actions">
       <a className="ghost" href={`/upload?assignmentId=${assignmentId}`}>拍照上传</a>
       <a className="ghost" href={`/upload?assignmentId=${assignmentId}&confirm=ocr`}>OCR 后人工确认</a>
-      <button type="button" onClick={saveDraft} disabled={busy}>保存草稿</button>
-      <button type="button" onClick={submitFiles} disabled={busy || !files.length}><FileText size={18} />上传文件并批改</button>
       <button onClick={submit} disabled={busy || !text.trim() || tooShort || tooLong}><Send size={18} />{busy ? '提交批改中...' : '正式提交并批改'}</button>
     </div>
   </Card></Layout>;
