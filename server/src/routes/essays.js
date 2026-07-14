@@ -8,6 +8,7 @@ import { db } from '../db/connection.js';
 import { requireUser } from '../middleware/auth.js';
 import { recognizeImages } from '../services/openai.js';
 import { gradeEssay } from '../services/essay-grading/grading-service.js';
+import { buildReviewHistoryComparison, listEssayReviewHistory, saveEssayReviewVersion } from '../services/essay-grading/review-history.js';
 import { canReadEssay, countEssayWords, getSubmissionDraft, resolveEssayAssignmentTarget, resolveEssayListScope, resolveEssaySubmitTarget, saveSubmissionDraft } from '../services/essay-access.js';
 import { buildEssayResultCard } from '../integrations/feishu/cards.js';
 import { getActiveStudentBinding } from '../services/feishu-assignment-bindings.js';
@@ -91,27 +92,17 @@ async function createReviewedEssay({ assignment, studentId, title, essayText, im
     model: '',
     teacherRequirements: assignment.requirements || ''
   });
-  const insertedReview = db.prepare(`
-    INSERT INTO ai_reviews
-    (essay_id, total_score, level, dimension_scores, strengths, problems, paragraph_comments, editable_sentences, suggestions, upgraded_paragraph, good_sentences, next_training, raw_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  saveEssayReviewVersion(db, {
     essayId,
-    review.total_score,
-    review.level,
-    safeJson(review.dimension_scores),
-    safeJson(review.strengths),
-    safeJson(review.problems),
-    safeJson(review.paragraph_comments),
-    safeJson(review.editable_sentences),
-    safeJson(review.suggestions),
-    review.upgraded_paragraph || '',
-    safeJson(review.good_sentences),
-    safeJson(review.next_training),
-    JSON.stringify(review)
-  );
-  db.prepare('UPDATE essays SET grading_status = ?, report_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run('graded', insertedReview.lastInsertRowid, essayId);
+    review,
+    promptText: assignment.prompt || '',
+    promptMode: 'latest',
+    reportVersion: review.reportVersion || review.metadata?.reportVersion || '2.0',
+    model: review.metadata?.model || review.ai_meta?.model || '',
+    sourceType: 'web',
+    createdByUserId: '',
+    createdByRole: ''
+  });
   await recordReviewArtifact({ storageService, database: db, essayId, review, logger });
   archiveEssayToZSpaceAsync({
     appDir: storageService?.rawConfig?.appDir || path.resolve(__dirname, '../../..'),
@@ -349,52 +340,52 @@ essayRouter.post('/:id/review', async (req, res, next) => {
   try {
     if (!canReadEssay(db, req.user, req.params.id)) return res.status(403).json({ message: '没有批阅该作文的权限' });
     const essay = db.prepare(`
-      SELECT e.*, a.title AS assignment_title, a.prompt AS assignment_prompt, a.essay_type, a.full_score
+      SELECT
+        e.*,
+        a.title AS assignment_title,
+        a.prompt AS assignment_prompt,
+        a.essay_type,
+        a.full_score,
+        a.class_id,
+        c.grade AS class_grade,
+        s.id AS student_internal_id,
+        u.name AS student_name
       FROM essays e
       JOIN assignments a ON a.id = e.assignment_id
+      JOIN classes c ON c.id = a.class_id
+      JOIN students s ON s.id = e.student_id
+      JOIN users u ON u.id = s.user_id
       WHERE e.id = ?
     `).get(req.params.id);
     if (!essay) return res.status(404).json({ message: '作文不存在' });
-
-    const assignment = {
-      title: essay.assignment_title,
-      prompt: essay.assignment_prompt,
-      essay_type: essay.essay_type,
-      full_score: essay.full_score
-    };
     const essayText = essay.revised_text || essay.original_text;
+    const review = await gradeEssay({
+      essayId: essay.id,
+      studentId: essay.student_id,
+      studentName: essay.student_name,
+      classId: essay.class_id,
+      grade: essay.class_grade || '',
+      title: essay.title || essay.assignment_title || '',
+      prompt: essay.assignment_prompt || '',
+      essayText,
+      sourceType: 'web',
+      scoringStandard: '',
+      maxScore: essay.full_score || 60,
+      model: '',
+      teacherRequirements: ''
+    });
 
-    const review = await reviewEssay({ assignment, essayText });
-
-    const existing = db.prepare('SELECT id FROM ai_reviews WHERE essay_id = ?').get(essay.id);
-    if (existing) {
-      db.prepare(`
-        UPDATE ai_reviews SET
-          total_score = ?, level = ?, dimension_scores = ?, strengths = ?, problems = ?,
-          paragraph_comments = ?, editable_sentences = ?, suggestions = ?, upgraded_paragraph = ?,
-          good_sentences = ?, next_training = ?, raw_json = ?
-        WHERE essay_id = ?
-      `).run(
-        review.total_score, review.level,
-        safeJson(review.dimension_scores), safeJson(review.strengths), safeJson(review.problems),
-        safeJson(review.paragraph_comments), safeJson(review.editable_sentences), safeJson(review.suggestions),
-        review.upgraded_paragraph || '', safeJson(review.good_sentences), safeJson(review.next_training),
-        JSON.stringify(review), essay.id
-      );
-    } else {
-      db.prepare(`
-        INSERT INTO ai_reviews
-        (essay_id, total_score, level, dimension_scores, strengths, problems, paragraph_comments,
-         editable_sentences, suggestions, upgraded_paragraph, good_sentences, next_training, raw_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        essay.id, review.total_score, review.level,
-        safeJson(review.dimension_scores), safeJson(review.strengths), safeJson(review.problems),
-        safeJson(review.paragraph_comments), safeJson(review.editable_sentences), safeJson(review.suggestions),
-        review.upgraded_paragraph || '', safeJson(review.good_sentences), safeJson(review.next_training),
-        JSON.stringify(review)
-      );
-    }
+    saveEssayReviewVersion(db, {
+      essayId: essay.id,
+      review,
+      promptText: essay.assignment_prompt || '',
+      promptMode: 'latest',
+      reportVersion: review.reportVersion || review.metadata?.reportVersion || '2.0',
+      model: review.metadata?.model || review.ai_meta?.model || '',
+      sourceType: 'web',
+      createdByUserId: String(req.user?.id || ''),
+      createdByRole: String(req.user?.role || '')
+    });
 
     await recordReviewArtifact({ storageService: req.app.locals.storageService, database: db, essayId: essay.id, review, logger: req.app.locals.logger || console });
     archiveEssayToZSpaceAsync({
@@ -416,4 +407,10 @@ essayRouter.post('/:id/review', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+essayRouter.get('/:id/history', (req, res) => {
+  if (!canReadEssay(db, req.user, req.params.id)) return res.status(403).json({ message: '没有查看该作文历史的权限' });
+  const history = listEssayReviewHistory(db, req.params.id);
+  res.json({ items: history, total: history.length, comparison: buildReviewHistoryComparison(history) });
 });

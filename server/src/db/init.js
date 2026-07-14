@@ -101,7 +101,19 @@ export function migrateAssignmentWorkflow(database = db) {
   addColumnIfMissing(database, 'essays', 'grading_status', "TEXT NOT NULL DEFAULT 'pending'");
   addColumnIfMissing(database, 'essays', 'report_id', 'INTEGER');
   addColumnIfMissing(database, 'essays', 'submitted_at', 'TEXT');
+  addColumnIfMissing(database, 'ai_reviews', 'version_number', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnIfMissing(database, 'ai_reviews', 'report_version', "TEXT DEFAULT '2.0'");
+  addColumnIfMissing(database, 'ai_reviews', 'prompt_version', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'ai_reviews', 'prompt_text', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'ai_reviews', 'prompt_mode', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'ai_reviews', 'model', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'ai_reviews', 'source_type', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'ai_reviews', 'grading_job_id', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'ai_reviews', 'rerun_reason', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'ai_reviews', 'created_by_user_id', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'ai_reviews', 'created_by_role', "TEXT DEFAULT ''");
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_assignments_public_id ON assignments(public_id) WHERE public_id IS NOT NULL');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_ai_reviews_essay_version ON ai_reviews(essay_id, version_number DESC, id DESC)');
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS submission_drafts (

@@ -976,20 +976,18 @@ export class FeishuService {
   async handleCardAction(event = {}) {
     const action = parseEssayCardActionValue(event?.action?.value);
     const command = String(action.command || event?.action?.tag || '').trim();
-    if (command === 'essay-rerun') {
-      await this.sendMessage(event.chatId || event?.chat_id || '', '已收到重新批改请求，请在网页端或教师工作台发起再次批改。', {
-        receiveIdType: 'chat_id',
-        messageId: event.messageId || ''
-      });
-      return { ok: true, command };
-    }
-    if (!command || !command.startsWith('essay-report-')) return { ok: false, skipped: true, reason: 'unsupported action' };
-
+    const actionContext = event?.context || {};
+    const chatId = String(actionContext.open_chat_id || actionContext.chat_id || event.chatId || event?.chat_id || '');
+    const messageId = String(actionContext.open_message_id || event.messageId || event?.message_id || '');
+    const receiveIdType = chatId.startsWith('oc_') ? 'chat_id' : detectReceiveIdType(chatId);
     const archiveId = String(action.archiveId || '').trim();
+    if (!command || (!command.startsWith('essay-report-') && command !== 'essay-rerun')) {
+      return { ok: false, skipped: true, reason: 'unsupported action' };
+    }
     if (!archiveId) {
-      await this.sendMessage(event.chatId || event?.chat_id || '', '缺少报告标识，无法打开分页报告', {
-        receiveIdType: 'chat_id',
-        messageId: event.messageId || ''
+      await this.sendMessage(chatId || '', '缺少报告标识，无法打开分页报告', {
+        receiveIdType,
+        messageId
       });
       return { ok: false, reason: 'archive id missing' };
     }
@@ -1003,37 +1001,62 @@ export class FeishuService {
       logger: this.logger
     });
     if (!report.ok) {
-      await this.sendMessage(event.chatId || event?.chat_id || '', '未找到对应批改报告，请先重新批改一次', {
-        receiveIdType: 'chat_id',
-        messageId: event.messageId || ''
+      await this.sendMessage(chatId || '', '未找到对应批改报告，请先重新批改一次', {
+        receiveIdType,
+        messageId
       });
       return { ok: false, reason: report.reason || 'report missing' };
     }
 
     const links = { ...(report.links || {}), archiveId };
+    const teacherEssayUrl = links.teacherEssayUrl || (report?.record?.essayId ? `${this.env.PUBLIC_APP_ORIGIN || this.env.FEISHU_REPORT_PUBLIC_BASE_URL || 'https://pi.zhenwanyue.icu'}/teacher/essay/${encodeURIComponent(String(report.record.essayId))}` : '');
+    if (command === 'essay-rerun') {
+      const rerunCard = buildEssayResultCard(report.reportJson || {}, { links: { ...links, teacherEssayUrl } });
+      const result = await this.replyMessage({
+        target: chatId || '',
+        chatId,
+        messageId,
+        replyType: 'card',
+        card: rerunCard,
+        forceMode: this.config.replyMode,
+        receiveIdType
+      });
+      this.logSendHttpResponse(result, {
+        replyType: 'card',
+        requestedMode: this.config.replyMode,
+        actualMode: result?.mode || '',
+        targetChatId: chatId || '',
+        receiveId: chatId || '',
+        targetMessageId: messageId || '',
+        incomingChatId: chatId || '',
+        incomingMessageId: messageId || '',
+        receiveIdType
+      });
+      return { ok: true, command, archiveId };
+    }
     const page = Number(action.page || 1);
     const replyCard = command === 'essay-report-overview'
       ? buildEssayResultCard(report.reportJson || {}, { links })
       : buildEssayReportPageCard(report.reportJson || {}, { links, archiveId, page });
     const result = await this.replyMessage({
-      target: event.chatId || '',
-      chatId: event.chatId || '',
-      messageId: event.messageId || '',
+      target: chatId || '',
+      chatId,
+      messageId,
       replyType: 'card',
       card: replyCard,
       forceMode: this.config.replyMode,
-      receiveIdType: 'chat_id'
+      receiveIdType
     });
     this.logSendHttpResponse(result, {
       replyType: 'card',
       requestedMode: this.config.replyMode,
       actualMode: result?.mode || '',
-      targetChatId: event.chatId || '',
-      receiveId: event.chatId || '',
-      targetMessageId: event.messageId || '',
-      incomingChatId: event.chatId || '',
-      incomingMessageId: event.messageId || '',
-      receiveIdType: 'chat_id'
+      targetChatId: chatId || '',
+      receiveId: chatId || '',
+      targetMessageId: messageId || '',
+      incomingChatId: chatId || '',
+      incomingMessageId: messageId || '',
+      receiveIdType
     });
     return { ok: true, command, archiveId, page };
   }
@@ -1496,7 +1519,8 @@ export class FeishuService {
         });
 
         const publicOrigin = (this.env.PUBLIC_APP_ORIGIN || this.env.FEISHU_REPORT_PUBLIC_BASE_URL || 'https://pi.zhenwanyue.icu').replace(/\/+$/, '');
-        await sendCardReply(buildEssayResultCard(analysis.result || {}, { links: { ...(archiveLinks.links || {}), archiveId: archiveLinks.archiveId || '', teacherReviewUrl: `${publicOrigin}/teacher/reviews?archiveId=${encodeURIComponent(archiveLinks.archiveId || analysis.id || '')}` } }));
+        const teacherEssayId = archiveLinks.archive?.record?.essayId || analysis.id || '';
+        await sendCardReply(buildEssayResultCard(analysis.result || {}, { links: { ...(archiveLinks.links || {}), archiveId: archiveLinks.archiveId || '', teacherEssayUrl: `${publicOrigin}/teacher/essay/${encodeURIComponent(String(teacherEssayId))}` } }));
         const summaryLines = [
           `作文 AI 批改完成：${analysis.result?.totalScore ?? '暂无'} / ${analysis.result?.fullScore ?? 60}`,
           `等级：${analysis.result?.level || '暂无'}`,
