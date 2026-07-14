@@ -934,109 +934,184 @@ function ReviewPage() {
   </div>;
 }
 
+function splitLines(value) {
+  return String(value || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+}
+
+function compactList(items = [], fallback = '暂无') {
+  const list = Array.isArray(items) ? items : [items];
+  const cleaned = list
+    .map((item) => (typeof item === 'string' ? item : item?.focus || item?.title || item?.diagnosis || item?.task || item?.reason || item?.comment || ''))
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+  return cleaned.length ? cleaned : [fallback];
+}
+
+function RichTextEditor({ value, onChange, placeholder }) {
+  const ref = React.useRef(null);
+  function wrap(prefix, suffix = prefix) {
+    const textarea = ref.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? value.length;
+    const end = textarea.selectionEnd ?? value.length;
+    const selected = value.slice(start, end);
+    const payload = selected || placeholder || '';
+    onChange(`${value.slice(0, start)}${prefix}${payload}${suffix}${value.slice(end)}`);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      const cursor = start + prefix.length + payload.length + suffix.length;
+      textarea.setSelectionRange(cursor, cursor);
+    });
+  }
+  return <div className="rich-editor">
+    <div className="rich-editor-toolbar">
+      <button type="button" className="toolbar-button" onClick={() => wrap('**')}>B</button>
+      <button type="button" className="toolbar-button" onClick={() => wrap('*')}>I</button>
+      <button type="button" className="toolbar-button" onClick={() => wrap('> ', '')}>引用</button>
+      <button type="button" className="toolbar-button" onClick={() => wrap('- ', '')}>列表</button>
+      <button type="button" className="toolbar-button" onClick={() => onChange('')}>清空</button>
+    </div>
+    <textarea ref={ref} rows="8" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+  </div>;
+}
+
 function TeacherEssayDetailPage() {
   const { essayId } = useParams();
   const nav = useNavigate();
   const location = useLocation();
   const [data, setData] = useState(null);
   const [message, setMessage] = useState('');
+  const [selectedVersion, setSelectedVersion] = useState('');
+  const [reviewForm, setReviewForm] = useState({ finalScore: '', comment: '', strengths: '', weaknesses: '', suggestions: '', status: 'draft' });
   const [rerunOpen, setRerunOpen] = useState(false);
   const [rerunForm, setRerunForm] = useState({ promptMode: 'latest', promptText: '', rerunReason: '' });
+  const [savingReview, setSavingReview] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
 
   async function load() {
     const detail = await api(`/teacher/essays/${encodeURIComponent(essayId)}/detail`);
     setData(detail);
+    const latestVersion = detail?.history?.at?.(-1)?.version_number || detail?.review?.version_number || 1;
+    setSelectedVersion(String(latestVersion));
   }
 
   useEffect(() => {
     load().catch((err) => setMessage(err.message));
   }, [essayId]);
 
+  const versionItems = data?.history || [];
+  const selectedReview = useMemo(() => {
+    const fallback = data?.review || null;
+    if (!versionItems.length) return fallback;
+    const picked = versionItems.find((item) => String(item.version_number || 1) === String(selectedVersion));
+    return picked || fallback || versionItems.at(-1) || null;
+  }, [data, versionItems, selectedVersion]);
+  const selectedRaw = selectedReview?.raw_json || {};
+  const essay = data?.essay || {};
+  const links = data?.links || {};
+  const comparison = data?.comparison || null;
+  const teacherReview = selectedRaw.teacherReview || data?.teacherReview || selectedReview?.teacherReview || {};
+  const selectedPrompt = selectedReview?.prompt_version || selectedRaw.metadata?.promptVersion || '--';
+  const selectedModel = selectedReview?.model || selectedRaw.metadata?.model || '--';
+  const selectedVersionTime = formatDateTime(selectedReview?.created_at || selectedReview?.createdAt);
+
+  useEffect(() => {
+    if (!selectedReview) return;
+    setReviewForm({
+      finalScore: teacherReview.finalScore ?? '',
+      comment: teacherReview.comment || '',
+      strengths: compactList(teacherReview.strengths || selectedRaw.summary?.mainStrengths || selectedRaw.strengths || selectedRaw.coreAdvantages || []).join('\n'),
+      weaknesses: compactList(teacherReview.weaknesses || selectedRaw.summary?.mainProblems || selectedRaw.problems || selectedRaw.mainProblems || []).join('\n'),
+      suggestions: compactList(teacherReview.suggestions || selectedRaw.summary?.priorityImprovements || selectedRaw.nextTraining || selectedRaw.suggestions || []).join('\n'),
+      status: teacherReview.status || 'draft'
+    });
+    setRerunForm({ promptMode: 'latest', promptText: '', rerunReason: '' });
+  }, [selectedReview?.id]);
+
+  async function saveReview(status) {
+    setMessage('');
+    setSavingReview(true);
+    try {
+      const result = await api(`/teacher/essays/${encodeURIComponent(essayId)}/teacher-review`, {
+        method: 'POST',
+        body: {
+          reviewId: selectedReview?.id,
+          versionNumber: selectedReview?.version_number,
+          status,
+          finalScore: reviewForm.finalScore === '' ? null : Number(reviewForm.finalScore),
+          comment: reviewForm.comment,
+          strengths: splitLines(reviewForm.strengths),
+          weaknesses: splitLines(reviewForm.weaknesses),
+          suggestions: splitLines(reviewForm.suggestions)
+        }
+      });
+      setMessage(status === 'submitted' ? '教师评分已提交并写回数据库。' : '草稿已保存。');
+      setData(result.detail);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setSavingReview(false);
+    }
+  }
+
   async function rerunEssay() {
     setMessage('');
+    setRerunning(true);
     try {
       const result = await api(`/teacher/essays/${encodeURIComponent(essayId)}/rerun`, { method: 'POST', body: rerunForm });
-      setMessage(`已重新批改，生成版本 V${result.review?.version_number || '?'}。`);
+      setMessage(`已重新批改，生成版本 V${result.review?.version_number || '?' }。`);
       setRerunOpen(false);
       await load();
     } catch (err) {
       setMessage(err.message);
+    } finally {
+      setRerunning(false);
     }
   }
 
-  const essay = data?.essay || {};
-  const review = data?.review || {};
-  const raw = review.raw_json || {};
-  const history = data?.history || [];
-  const comparison = data?.comparison || null;
-  const links = data?.links || {};
-  const teacherReview = raw.teacherReview || {};
+  const summaryStrengths = compactList(selectedRaw.summary?.mainStrengths || selectedRaw.strengths || selectedRaw.coreAdvantages || []).slice(0, 3);
+  const summaryProblems = compactList(selectedRaw.summary?.mainProblems || selectedRaw.problems || selectedRaw.mainProblems || []).slice(0, 3);
+  const summaryImprovements = compactList(selectedRaw.summary?.priorityImprovements || selectedRaw.nextTraining || selectedRaw.suggestions || []).slice(0, 3);
 
   if (!data) {
-    return <Layout><Card title="教师作文详情" icon={<FileText size={20} />}>{message ? <p className="error">{message}</p> : <p className="hint">正在加载作文详情...</p>}</Card></Layout>;
+    return <Layout><Card title="教师工作台" icon={<FileText size={20} />}>{message ? <p className="error">{message}</p> : <p className="hint">正在加载作文详情...</p>}</Card></Layout>;
   }
 
   return <Layout>
-    <section className="teacher-essay-detail">
-      <Card title="作文详情" icon={<FileText size={20} />}>
-        <div className="stats">
-          <span>{essay.student_name || '未填写'} · {essay.student_no || '无学号'}</span>
-          <span>{essay.class_name || '未填写班级'} · {essay.class_grade || '未填写年级'}</span>
-          <span>{essay.assignment_title || '未命名作文'}</span>
-          <span>{essay.word_count || 0} 字</span>
-        </div>
-        {message && <p className={message.includes('已重新批改') ? 'success' : 'hint'}>{message}</p>}
-        <div className="actions">
-          <button type="button" onClick={() => nav(location.state?.returnTo || '/teacher/reviews')}><ArrowLeft size={16} />返回</button>
-          <button type="button" onClick={() => links.reportUrl && window.open(links.reportUrl, '_blank', 'noopener,noreferrer')}>查看完整报告</button>
-          <button type="button" onClick={() => links.pdfUrl && window.open(links.pdfUrl, '_blank', 'noopener,noreferrer')}>查看 PDF</button>
-          <button type="button" onClick={() => links.docxUrl && window.open(links.docxUrl, '_blank', 'noopener,noreferrer')}>查看 Word</button>
-          <button type="button" onClick={() => setRerunOpen(true)}><RotateCcw size={16} />重新批改</button>
-        </div>
-      </Card>
+    <section className="teacher-workspace">
+      <aside className="teacher-workspace-rail">
+        <Card title="作文版本" icon={<RotateCcw size={20} />}>
+          <div className="version-switcher">
+            {versionItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={String(selectedVersion) === String(item.version_number || 1) ? 'version-button active' : 'version-button'}
+                onClick={() => setSelectedVersion(String(item.version_number || 1))}
+              >
+                <b>V{item.version_number || 1}</b>
+                <span>{item.total_score ?? '--'}分</span>
+                <small>{formatDateTime(item.created_at)}</small>
+              </button>
+            ))}
+          </div>
+          {versionItems.length > 1 && comparison && (
+            <div className="version-compare">
+              <p><b>分数变化</b>{comparison.scoreDelta >= 0 ? '+' : ''}{comparison.scoreDelta}</p>
+              <p><b>Prompt</b>{comparison.promptFrom || '--'} → {comparison.promptTo || '--'}</p>
+              <p><b>模型</b>{comparison.modelFrom || '--'} → {comparison.modelTo || '--'}</p>
+            </div>
+          )}
+        </Card>
 
-      <div className="grid">
-        <Card title="AI 评分" icon={<Star size={20} />}>
-          <div className="score-panel"><strong>{review.total_score ?? review.totalScore ?? '--'}<small>分</small></strong><span>{review.level || review.grade || '待评'}</span></div>
-          <p className="hint">报告版本：{review.report_version || review.reportVersion || '2.0'} · 模型：{review.model || '--'} · Prompt：{review.prompt_version || '--'}</p>
-        </Card>
-        <Card title="教师评分" icon={<Check size={20} />}>
-          <p>{teacherReview.comment || raw.teacherComment || raw.teacher_overall || '暂无教师评语。'}</p>
-          <p className="hint">教师终评分：{teacherReview.finalScore ?? '--'}</p>
-        </Card>
-        <Card title="逻辑分析" icon={<BrainCircuit size={20} />}>
-          <p><b>中心论点：</b>{raw.logicAnalysis?.centralClaim || raw.logicAnalysisText || '暂无'}</p>
-          <p><b>分论点：</b>{(raw.logicAnalysis?.subClaims || []).join('；') || '暂无'}</p>
-          <p><b>推理链：</b>{(raw.logicAnalysis?.reasoningChain || []).join('；') || '暂无'}</p>
-          <p><b>逻辑断点：</b>{(raw.logicAnalysis?.logicalBreaks || []).join('；') || '暂无'}</p>
-          <p><b>深度建议：</b>{(raw.logicAnalysis?.depthSuggestions || []).join('；') || '暂无'}</p>
-        </Card>
-        <Card title="修改建议" icon={<PenLine size={20} />}>
-          <div className="item" style={{ marginBottom: 12 }}>
-            <SectionTitle title="主要问题" />
-            <ul>{(raw.summary?.mainProblems || raw.mainProblems || []).map((item, index) => <li key={index}>{typeof item === 'string' ? item : JSON.stringify(item)}</li>)}</ul>
-          </div>
-          <div className="item" style={{ marginBottom: 12 }}>
-            <SectionTitle title="优先修改" />
-            <ul>{(raw.summary?.priorityImprovements || raw.nextTraining || []).map((item, index) => <li key={index}>{typeof item === 'string' ? item : JSON.stringify(item)}</li>)}</ul>
-          </div>
-          <div className="item">
-            <SectionTitle title="示范修改" />
-            <ul>{(raw.exampleRevisions || raw.rewrittenParagraphs || []).map((item, index) => <li key={index}>{typeof item === 'string' ? item : JSON.stringify(item)}</li>)}</ul>
-          </div>
-        </Card>
-      </div>
-
-      <div className="grid">
-        <Card title="报告历史" icon={<RotateCcw size={20} />}>
-          {comparison && <div className="item">
-            <p>分数变化：{comparison.scoreDelta >= 0 ? '+' : ''}{comparison.scoreDelta}</p>
-            <p>Prompt：{comparison.promptFrom || '--'} → {comparison.promptTo || '--'}</p>
-            <p>模型：{comparison.modelFrom || '--'} → {comparison.modelTo || '--'}</p>
-            <p>建议变化：{comparison.suggestionsChanged ? '有变化' : '无变化'}</p>
+        <Card title="历史记录" icon={<FileSpreadsheet size={20} />}>
+          {versionItems.length > 1 && comparison && <div className="version-compare compact">
+            <p><b>评分变化</b>{comparison.scoreDelta >= 0 ? '+' : ''}{comparison.scoreDelta}</p>
+            <p><b>Prompt</b>{comparison.promptFrom || '--'} → {comparison.promptTo || '--'}</p>
+            <p><b>模型</b>{comparison.modelFrom || '--'} → {comparison.modelTo || '--'}</p>
           </div>}
           <div className="management-table">
-            {history.map((item) => <article className="management-row" key={item.id}>
+            {versionItems.map((item) => <article className={String(selectedVersion) === String(item.version_number || 1) ? 'management-row active' : 'management-row'} key={item.id}>
               <b>V{item.version_number || 1}<span>{formatDateTime(item.created_at)}</span></b>
               <span>{item.total_score}分</span>
               <span>{item.level || '--'}</span>
@@ -1045,41 +1120,151 @@ function TeacherEssayDetailPage() {
             </article>)}
           </div>
         </Card>
-        <Card title="报告链接" icon={<Download size={20} />}>
-          <p>网页报告：{links.reportUrl || '暂无'}</p>
-          <p>PDF：{links.pdfUrl || '暂无'}</p>
-          <p>Word：{links.docxUrl || '暂无'}</p>
-          <div className="actions">
-            <button type="button" onClick={() => links.reportUrl && window.open(links.reportUrl, '_blank', 'noopener,noreferrer')}>打开网页报告</button>
-            <button type="button" onClick={() => links.pdfUrl && window.open(links.pdfUrl, '_blank', 'noopener,noreferrer')}>打开 PDF</button>
-            <button type="button" onClick={() => links.docxUrl && window.open(links.docxUrl, '_blank', 'noopener,noreferrer')}>打开 Word</button>
+      </aside>
+
+      <main className="teacher-workspace-main">
+        <Card title="作文详情" icon={<FileText size={20} />}>
+          <div className="workspace-summary">
+            <div>
+              <strong>{essay.student_name || '未填写'}</strong>
+              <span>{essay.class_name || '未填写班级'} · {essay.class_grade || '未填写年级'}</span>
+            </div>
+            <div>
+              <strong>{essay.assignment_title || '未命名作文'}</strong>
+              <span>{essay.word_count || 0} 字 · 当前版本 V{selectedReview?.version_number || 1}</span>
+            </div>
+            <div>
+              <strong>{selectedReview?.total_score ?? selectedReview?.totalScore ?? '--'} / {selectedReview?.full_score ?? selectedReview?.fullScore ?? 60}</strong>
+              <span>{selectedReview?.level || selectedReview?.grade || '待评'} · {selectedModel}</span>
+            </div>
+          </div>
+          {message && <p className={message.includes('已重新批改') || message.includes('已保存') || message.includes('已提交') ? 'success' : 'hint'}>{message}</p>}
+          <div className="workspace-actions">
+            <button type="button" className="secondary-button" onClick={() => nav(location.state?.returnTo || '/teacher/reviews')}><ArrowLeft size={16} />返回列表</button>
+            <button type="button" className="secondary-button" onClick={() => setRerunOpen((value) => !value)}>重新批改</button>
           </div>
         </Card>
-      </div>
 
-      {rerunOpen && <div className="modal-overlay">
-        <div className="modal">
-          <h3>重新批改</h3>
-          <p className="hint">选择提示词策略后，将启动新的 gradingJob 并保留历史版本。</p>
-          <label>提示词模式
-            <select value={rerunForm.promptMode} onChange={(e) => setRerunForm({ ...rerunForm, promptMode: e.target.value })}>
-              <option value="keep_original">保持原 Prompt</option>
-              <option value="update">更新 Prompt</option>
-              <option value="latest">使用最新 Prompt</option>
-            </select>
-          </label>
-          <label>新 Prompt
-            <textarea rows="5" value={rerunForm.promptText} onChange={(e) => setRerunForm({ ...rerunForm, promptText: e.target.value })} placeholder="仅在更新 Prompt 时填写" />
-          </label>
-          <label>重新批改原因
-            <textarea rows="4" value={rerunForm.rerunReason} onChange={(e) => setRerunForm({ ...rerunForm, rerunReason: e.target.value })} placeholder="例如：教师补充反馈后重批" />
-          </label>
-          <div className="actions">
-            <button type="button" onClick={() => setRerunOpen(false)}>取消</button>
-            <button type="button" onClick={rerunEssay}><RotateCcw size={16} />确认重新批改</button>
+        <Card title="作文全文" icon={<BookOpen size={20} />}>
+          <div className="essay-meta-row">
+            <span>报告版本 {selectedReview?.report_version || selectedReview?.reportVersion || '2.0'}</span>
+            <span>Prompt {selectedPrompt}</span>
+            <span>{selectedVersionTime}</span>
           </div>
+          <div className="essay-text-block">
+            <h3>{essay.title || essay.assignment_title || '作文全文'}</h3>
+            <p>{essay.original_text || '暂无作文正文。'}</p>
+          </div>
+          {essay.revised_text && essay.revised_text !== essay.original_text && (
+            <div className="essay-text-block secondary">
+              <h3>修订文本</h3>
+              <p>{essay.revised_text}</p>
+            </div>
+          )}
+        </Card>
+
+        <div className="workspace-grid">
+          <Card title="AI 批改结果" icon={<Star size={20} />}>
+            <div className="score-panel">
+              <strong>{selectedReview?.total_score ?? selectedReview?.totalScore ?? '--'}<small>分</small></strong>
+              <span>{selectedReview?.level || selectedReview?.grade || '待评'}</span>
+            </div>
+            <p className="workspace-lead">{selectedRaw.summary?.overallComment || selectedReview?.overallEvaluation || selectedReview?.teacherComment || '暂无总评。'}</p>
+            <div className="workspace-list-grid">
+              <article><b>主要优点</b><p>{summaryStrengths.join('；') || '暂无'}</p></article>
+              <article><b>核心问题</b><p>{summaryProblems.join('；') || '暂无'}</p></article>
+              <article><b>优先修改</b><p>{summaryImprovements.join('；') || '暂无'}</p></article>
+              <article><b>逻辑分析</b><p>{selectedRaw.logicAnalysis?.centralClaim || selectedRaw.logicAnalysisText || '暂无'}</p></article>
+            </div>
+          </Card>
+
+          <Card title="分项评分" icon={<ChartNoAxesCombined size={20} />}>
+            <div className="dimension-grid">
+              {Object.entries(selectedRaw.dimensions || {}).map(([key, value]) => <article key={key}><b>{key}</b><p>{typeof value === 'string' ? value : JSON.stringify(value)}</p></article>)}
+            </div>
+          </Card>
+
+          <Card title="逐段点评" icon={<PenLine size={20} />}>
+            <div className="workspace-list-grid">
+              <article><b>段落点评</b><p>{compactList(selectedRaw.paragraphAnalysis || selectedRaw.paragraph_comments || [], '暂无').join('；')}</p></article>
+              <article><b>关键句</b><p>{compactList(selectedRaw.sentenceAnalysis || selectedRaw.editableSentences || [], '暂无').join('；')}</p></article>
+              <article><b>错别字 / 病句</b><p>{compactList(selectedRaw.typos || selectedRaw.languageIssues || [], '暂无').join('；')}</p></article>
+            </div>
+          </Card>
+
+          <Card title="教师评分" icon={<Check size={20} />}>
+            <div className="teacher-review-panel">
+              <label>作文总分
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={reviewForm.finalScore}
+                  onChange={(e) => setReviewForm({ ...reviewForm, finalScore: e.target.value })}
+                  placeholder="0 - 100"
+                />
+              </label>
+              <label>教师评语（富文本）
+                <RichTextEditor
+                  value={reviewForm.comment}
+                  onChange={(value) => setReviewForm({ ...reviewForm, comment: value })}
+                  placeholder="输入教师总评、结构建议、逻辑诊断与修改方向"
+                />
+              </label>
+              <div className="teacher-review-columns">
+                <label>优点
+                  <textarea rows="5" value={reviewForm.strengths} onChange={(e) => setReviewForm({ ...reviewForm, strengths: e.target.value })} placeholder="每行一条" />
+                </label>
+                <label>不足
+                  <textarea rows="5" value={reviewForm.weaknesses} onChange={(e) => setReviewForm({ ...reviewForm, weaknesses: e.target.value })} placeholder="每行一条" />
+                </label>
+              </div>
+              <label>修改建议
+                <textarea rows="5" value={reviewForm.suggestions} onChange={(e) => setReviewForm({ ...reviewForm, suggestions: e.target.value })} placeholder="每行一条" />
+              </label>
+              <div className="workspace-actions">
+                <button type="button" className="secondary-button" onClick={() => saveReview('draft')} disabled={savingReview}>{savingReview ? '保存中' : '保存草稿'}</button>
+                <button type="button" className="primary-button" onClick={() => saveReview('submitted')} disabled={savingReview}>{savingReview ? '提交中' : '提交评分'}</button>
+              </div>
+            </div>
+          </Card>
+
+          <details className="rerun-accordion" open={rerunOpen} onToggle={(event) => setRerunOpen(event.currentTarget.open)}>
+            <summary>重新批改</summary>
+            <div className="rerun-panel">
+              <p className="hint">默认收起。确认后将启动新的 gradingJob，并保留历史版本。</p>
+              <label>Prompt
+                <select value={rerunForm.promptMode} onChange={(e) => setRerunForm({ ...rerunForm, promptMode: e.target.value })}>
+                  <option value="keep_original">保持原 Prompt</option>
+                  <option value="update">更新 Prompt</option>
+                  <option value="latest">使用最新 Prompt</option>
+                </select>
+              </label>
+              <label>新 Prompt
+                <textarea rows="5" value={rerunForm.promptText} onChange={(e) => setRerunForm({ ...rerunForm, promptText: e.target.value })} placeholder="仅在更新 Prompt 时填写" />
+              </label>
+              <label>重批原因
+                <textarea rows="4" value={rerunForm.rerunReason} onChange={(e) => setRerunForm({ ...rerunForm, rerunReason: e.target.value })} placeholder="例如：教师补充反馈后重批" />
+              </label>
+              <div className="workspace-actions">
+                <button type="button" className="secondary-button" onClick={() => setRerunOpen(false)}>取消</button>
+                <button type="button" className="primary-button" onClick={rerunEssay} disabled={rerunning}>{rerunning ? '批改中' : '确认重新批改'}</button>
+              </div>
+            </div>
+          </details>
         </div>
-      </div>}
+      </main>
+
+      <aside className="teacher-workspace-rail">
+        <Card title="报告操作" icon={<Download size={20} />}>
+          <div className="report-action-stack">
+            <button type="button" className="report-button" onClick={() => links.reportUrl && window.open(links.reportUrl, '_blank', 'noopener,noreferrer')}>打开网页报告</button>
+            <button type="button" className="report-button" onClick={() => links.pdfUrl && window.open(links.pdfUrl, '_blank', 'noopener,noreferrer')}>下载 PDF</button>
+            <button type="button" className="report-button" onClick={() => links.docxUrl && window.open(links.docxUrl, '_blank', 'noopener,noreferrer')}>下载 Word</button>
+          </div>
+        </Card>
+      </aside>
     </section>
   </Layout>;
 }

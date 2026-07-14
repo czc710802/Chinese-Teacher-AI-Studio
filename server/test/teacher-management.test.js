@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
+import { schemaSql } from '../src/db/schema.js';
 import {
   addTeacherComment,
   archiveClass,
@@ -25,6 +27,7 @@ import {
   retryPendingManagementTasks,
   transferStudent
 } from '../src/services/teacher-management/teacher-management-service.js';
+import { saveEssayReviewVersion, saveTeacherReview } from '../src/services/essay-grading/review-history.js';
 
 function tempAppDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'teacher-management-'));
@@ -33,6 +36,41 @@ function tempAppDir() {
 function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+}
+
+function createReviewDb() {
+  const database = new DatabaseSync(':memory:');
+  database.exec('PRAGMA foreign_keys = ON');
+  database.exec(schemaSql);
+  const addUser = database.prepare('INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)');
+  const teacherUserId = addUser.run('teacher-review', 'unused', 'teacher', 'TEST 陈老师').lastInsertRowid;
+  const studentUserId = addUser.run('student-review', 'unused', 'student', 'TEST 学生').lastInsertRowid;
+  const teacherId = database.prepare('INSERT INTO teachers (user_id, title, school) VALUES (?, ?, ?)').run(teacherUserId, '高中语文教师', 'TEST 中学').lastInsertRowid;
+  const studentId = database.prepare('INSERT INTO students (user_id, student_no, grade, school) VALUES (?, ?, ?, ?)').run(studentUserId, 'T1001', '高二', 'TEST 中学').lastInsertRowid;
+  const classId = database.prepare('INSERT INTO classes (name, grade, teacher_id) VALUES (?, ?, ?)').run('TEST 高二1班', '高二', teacherId).lastInsertRowid;
+  database.prepare('INSERT INTO class_students (class_id, student_id) VALUES (?, ?)').run(classId, studentId);
+  const assignmentId = database.prepare('INSERT INTO assignments (class_id, title, prompt, essay_type, full_score) VALUES (?, ?, ?, ?, ?)').run(classId, 'TEST 责任', '请写作文', '材料作文', 60).lastInsertRowid;
+  const essayId = database.prepare('INSERT INTO essays (assignment_id, student_id, title, original_text, grading_status, status) VALUES (?, ?, ?, ?, ?, ?)').run(assignmentId, studentId, 'TEST 作文', '正文', 'pending', 'submitted').lastInsertRowid;
+  saveEssayReviewVersion(database, {
+    essayId,
+    review: {
+      total_score: 48,
+      level: '二类文',
+      strengths: ['观点明确'],
+      problems: ['论证不足'],
+      suggestions: ['补充事例'],
+      teacherReview: { status: 'draft', comment: '初稿', finalScore: 50 }
+    },
+    promptText: '请按 60 分制批改',
+    promptMode: 'latest',
+    reportVersion: '2.0',
+    model: 'deepseek-chat',
+    sourceType: 'web',
+    createdByUserId: String(teacherUserId),
+    createdByRole: 'teacher',
+    gradingJobId: 'job-1'
+  });
+  return { database, essayId, teacherId };
 }
 
 function seedArchive(appDir) {
@@ -222,4 +260,44 @@ test('teacher import, comments, tasks, exports, audit and retry queue are safe a
   const audit = fs.readFileSync(path.join(appDir, 'logs/audit.log'), 'utf8');
   assert.ok(audit.includes('teacher.comment.upsert'));
   assert.doesNotMatch(audit, /Bearer|sk-|password|Authorization/i);
+});
+
+test('teacher review draft and submit update the latest ai review and persist teacher comment history', () => {
+  const { database, essayId, teacherId } = createReviewDb();
+  const draft = saveTeacherReview(database, {
+    essayId,
+    teacherId: String(teacherId),
+    teacherRole: 'teacher',
+    teacherReview: {
+      status: 'draft',
+      finalScore: 52,
+      comment: '保留结构，强化论证。',
+      strengths: ['观点明确', '语言顺畅'],
+      weaknesses: ['论证偏浅'],
+      suggestions: ['补充反方分析']
+    }
+  });
+  assert.equal(draft.raw_json.teacherReview.status, 'draft');
+  assert.equal(draft.raw_json.teacherReview.finalScore, 52);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM teacher_comments WHERE essay_id = ?').get(essayId).count, 0);
+
+  const submitted = saveTeacherReview(database, {
+    essayId,
+    teacherId: String(teacherId),
+    teacherRole: 'teacher',
+    teacherReview: {
+      status: 'submitted',
+      finalScore: 55,
+      comment: '修改后更完整。',
+      strengths: ['观点明确'],
+      weaknesses: ['举例不足'],
+      suggestions: ['补充具体案例']
+    }
+  });
+  assert.equal(submitted.raw_json.teacherReview.status, 'submitted');
+  assert.equal(submitted.raw_json.teacherReview.finalScore, 55);
+  const commentRow = database.prepare('SELECT * FROM teacher_comments WHERE essay_id = ? ORDER BY id DESC LIMIT 1').get(essayId);
+  assert.equal(commentRow.teacher_id, teacherId);
+  assert.equal(commentRow.comment, '修改后更完整。');
+  assert.equal(Number(commentRow.score_adjustment), 7);
 });

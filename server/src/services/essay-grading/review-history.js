@@ -8,6 +8,22 @@ function toArray(value) {
   return [value];
 }
 
+function normalizeTeacherReview(review = {}) {
+  return {
+    status: String(review.status || 'draft'),
+    finalScore: review.finalScore ?? review.final_score ?? null,
+    comment: String(review.comment || review.overallComment || review.teacherComment || ''),
+    strengths: toArray(review.strengths || review.mainStrengths || []),
+    weaknesses: toArray(review.weaknesses || review.mainProblems || []),
+    suggestions: toArray(review.suggestions || review.priorityImprovements || []),
+    updatedAt: review.updatedAt || new Date().toISOString(),
+    updatedByUserId: String(review.updatedByUserId || review.teacherId || ''),
+    updatedByRole: String(review.updatedByRole || 'teacher'),
+    draftSavedAt: review.draftSavedAt || null,
+    submittedAt: review.submittedAt || null
+  };
+}
+
 function asString(value, fallback = '') {
   return String(value ?? fallback);
 }
@@ -145,6 +161,56 @@ export function saveEssayReviewVersion(database, {
   );
   database.prepare('UPDATE essays SET report_id = ?, grading_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
     .run(result.lastInsertRowid, 'graded', essayId);
+  const updated = database.prepare('SELECT * FROM ai_reviews WHERE id = ?').get(result.lastInsertRowid);
+  return updated ? normalizeReviewRow(updated) : getLatestEssayReview(database, essayId);
+}
+
+export function saveTeacherReview(database, {
+  essayId,
+  reviewId = '',
+  versionNumber = null,
+  teacherReview = {},
+  teacherId = '',
+  teacherRole = 'teacher'
+} = {}) {
+  let target = null;
+  if (reviewId) {
+    target = database.prepare('SELECT * FROM ai_reviews WHERE id = ? AND essay_id = ?').get(reviewId, essayId);
+  } else if (versionNumber !== null && versionNumber !== undefined && versionNumber !== '') {
+    target = database.prepare('SELECT * FROM ai_reviews WHERE essay_id = ? AND version_number = ? ORDER BY id DESC LIMIT 1').get(essayId, Number(versionNumber));
+  }
+  if (!target) target = getLatestEssayReview(database, essayId);
+  if (!target) {
+    const error = new Error('未找到对应批改报告');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const review = normalizeTeacherReview({
+    ...teacherReview,
+    updatedByUserId: teacherId,
+    updatedByRole: teacherRole
+  });
+  const rawJson = { ...(target.raw_json || {}) };
+  rawJson.teacherReview = review;
+
+  database.prepare('UPDATE ai_reviews SET raw_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(JSON.stringify(rawJson), target.id);
+
+  if (String(review.status || 'draft') === 'submitted' && teacherId) {
+    const existing = database.prepare('SELECT id FROM teacher_comments WHERE essay_id = ? AND teacher_id = ? ORDER BY id DESC LIMIT 1')
+      .get(essayId, teacherId || null);
+    const comment = review.comment || '';
+    const scoreAdjustment = review.finalScore == null ? 0 : Number(review.finalScore) - Number(target.total_score || 0);
+    if (existing) {
+      database.prepare('UPDATE teacher_comments SET comment = ?, score_adjustment = ?, created_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(comment, scoreAdjustment, existing.id);
+    } else {
+      database.prepare('INSERT INTO teacher_comments (essay_id, teacher_id, comment, score_adjustment) VALUES (?, ?, ?, ?)')
+      .run(essayId, teacherId || null, comment, scoreAdjustment);
+    }
+  }
+
   return getLatestEssayReview(database, essayId);
 }
 

@@ -3,7 +3,7 @@ import { db } from '../db/connection.js';
 import { requireUser } from '../middleware/auth.js';
 import { getAiStatus } from '../services/openai.js';
 import { gradeEssay } from '../services/essay-grading/grading-service.js';
-import { buildReviewHistoryComparison, getLatestEssayReview, listEssayReviewHistory, saveEssayReviewVersion } from '../services/essay-grading/review-history.js';
+import { buildReviewHistoryComparison, getLatestEssayReview, listEssayReviewHistory, saveEssayReviewVersion, saveTeacherReview } from '../services/essay-grading/review-history.js';
 import { archiveEssayToNASAsync } from '../services/archive-pipeline.js';
 import {
   addTeacherComment,
@@ -98,6 +98,14 @@ async function loadTeacherEssayDetail(req, essayId) {
   const review = getLatestEssayReview(db, essayId);
   const history = listEssayReviewHistory(db, essayId);
   const comments = db.prepare('SELECT * FROM teacher_comments WHERE essay_id = ? ORDER BY created_at DESC').all(essayId);
+  const teacherReview = review?.raw_json?.teacherReview || {
+    status: 'draft',
+    comment: '',
+    finalScore: null,
+    strengths: [],
+    weaknesses: [],
+    suggestions: []
+  };
   const archiveId = `essay-${essayId}`;
   const archiveRecord = getArchiveRecord(req.app.locals.appDir, archiveId);
   const downloadLinks = archiveRecord
@@ -116,6 +124,7 @@ async function loadTeacherEssayDetail(req, essayId) {
     history,
     comparison: buildReviewHistoryComparison(history),
     comments,
+    teacherReview,
     archive: archiveRecord,
     links: {
       ...downloadLinks,
@@ -370,6 +379,49 @@ teacherManagementRouter.post('/essays/:essayId/rerun', async (req, res, next) =>
     });
     const updated = await loadTeacherEssayDetail(req, req.params.essayId);
     res.json({ ok: true, gradingJobId, review: latest, detail: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+teacherManagementRouter.post('/essays/:essayId/teacher-review', async (req, res, next) => {
+  try {
+    const detail = await loadTeacherEssayDetail(req, req.params.essayId);
+    if (!detail) return res.status(404).json({ message: '作文不存在' });
+    if (detail.status && detail.status !== 200) return res.status(detail.status).json({ message: detail.message || '没有保存该作文教师评分的权限' });
+    const essay = detail.essay;
+    const teacher = db.prepare('SELECT id FROM teachers WHERE user_id = ?').get(req.user?.id);
+    const status = String(req.body?.status || 'draft').trim() === 'submitted' ? 'submitted' : 'draft';
+    const latest = saveTeacherReview(db, {
+      essayId: essay.id,
+      reviewId: req.body?.reviewId || '',
+      versionNumber: req.body?.versionNumber,
+      teacherId: String(teacher?.id || ''),
+      teacherRole: String(req.user?.role || 'teacher'),
+      teacherReview: {
+        status,
+        finalScore: req.body?.finalScore ?? null,
+        comment: String(req.body?.comment || ''),
+        strengths: Array.isArray(req.body?.strengths) ? req.body.strengths : String(req.body?.strengths || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+        weaknesses: Array.isArray(req.body?.weaknesses) ? req.body.weaknesses : String(req.body?.weaknesses || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+        suggestions: Array.isArray(req.body?.suggestions) ? req.body.suggestions : String(req.body?.suggestions || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+        draftSavedAt: status === 'draft' ? new Date().toISOString() : detail.teacherReview?.draftSavedAt || null,
+        submittedAt: status === 'submitted' ? new Date().toISOString() : detail.teacherReview?.submittedAt || null
+      }
+    });
+    const updated = await loadTeacherEssayDetail(req, req.params.essayId);
+    writeAuditLog(req.app.locals.appDir, {
+      actorId: String(req.user?.id || ''),
+      actorRole: String(req.user?.role || 'teacher'),
+      action: status === 'submitted' ? 'teacher.essay.review.submit' : 'teacher.essay.review.draft',
+      targetType: 'essay',
+      targetId: String(essay.id),
+      details: {
+        finalScore: req.body?.finalScore ?? null,
+        status,
+        reportVersion: latest?.report_version || '2.0'
+      }
+    });
+    res.json({ ok: true, review: latest, detail: updated });
   } catch (error) {
     next(error);
   }

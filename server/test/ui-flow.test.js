@@ -142,6 +142,25 @@ test('teacher assignment management exposes Feishu group publish preview revoke 
   assert.match(assignmentRoutesSource, /remind-missing/);
 });
 
+test('teacher essay workspace exposes version rail, report actions, scoring panel and collapsed rerun area', () => {
+  const teacherWorkspace = functionBody('TeacherEssayDetailPage');
+  assert.match(teacherWorkspace, /作文版本/);
+  assert.match(teacherWorkspace, /作文详情/);
+  assert.match(teacherWorkspace, /作文全文/);
+  assert.match(teacherWorkspace, /AI 批改结果/);
+  assert.match(teacherWorkspace, /教师评分/);
+  assert.match(teacherWorkspace, /保存草稿/);
+  assert.match(teacherWorkspace, /提交评分/);
+  assert.match(teacherWorkspace, /打开网页报告/);
+  assert.match(teacherWorkspace, /下载 PDF/);
+  assert.match(teacherWorkspace, /下载 Word/);
+  assert.match(teacherWorkspace, /重新批改/);
+  assert.match(teacherWorkspace, /details className="rerun-accordion"/);
+  assert.doesNotMatch(teacherWorkspace, /网页报告：\{links\.reportUrl/);
+  assert.doesNotMatch(teacherWorkspace, /PDF：\{links\.pdfUrl/);
+  assert.doesNotMatch(teacherWorkspace, /Word：\{links\.docxUrl/);
+});
+
 test('student photo upload sends images directly for AI recognition and review', () => {
   const uploadPage = functionBody('UploadPage');
   assert.match(uploadPage, /api\('\/essays\/images'/);
