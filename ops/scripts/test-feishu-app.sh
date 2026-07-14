@@ -30,19 +30,4 @@ else
 fi
 
 echo "== feishu health =="
-HEALTH_JSON="$(curl -fsS http://127.0.0.1:4000/api/feishu/health)"
-printf '%s\n' "$HEALTH_JSON"
-
-echo "== system status =="
-curl -fsS http://127.0.0.1:4000/api/system/status
-
-node - <<'NODE' "$HEALTH_JSON"
-const health = JSON.parse(process.argv[2]);
-const configured = Boolean(health.appConfigured);
-const connected = Boolean(health.connected);
-if (configured && !connected) {
-  console.error('飞书已配置但当前未连接，请先运行 npm run feishu:connect');
-  process.exit(1);
-}
-console.log(configured ? (connected ? '飞书长连接已连接' : '飞书配置已读取，但未启用') : '飞书配置未完成，已跳过连接测试');
-NODE
+exec node "$SCRIPT_DIR/feishu-real-test.mjs" "$@"

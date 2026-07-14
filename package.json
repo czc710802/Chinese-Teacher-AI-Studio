@@ -31,6 +31,7 @@
     "feishu:status": "bash ops/scripts/feishu-status.sh",
     "feishu:logs": "bash ops/scripts/feishu-logs.sh",
     "feishu:connect": "bash ops/scripts/feishu-connect.sh",
+    "feishu:doctor": "node ops/scripts/feishu-doctor.mjs",
     "feishu:test": "bash ops/scripts/test-feishu-app.sh",
     "feishu:send-test": "node ops/scripts/feishu-send-test.mjs",
     "feishu:health": "bash ops/scripts/feishu-health.sh",
