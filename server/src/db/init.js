@@ -59,7 +59,7 @@ function migrateClassLifecycleWorkflow(database = db) {
   addColumnIfMissing(database, 'classes', 'max_students', 'INTEGER DEFAULT 0');
   addColumnIfMissing(database, 'classes', 'archived_at', 'TEXT');
   addColumnIfMissing(database, 'classes', 'deleted_at', 'TEXT');
-  addColumnIfMissing(database, 'classes', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  addColumnIfMissing(database, 'classes', 'updated_at', 'TEXT');
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS student_class_bindings (
