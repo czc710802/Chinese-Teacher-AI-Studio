@@ -355,7 +355,11 @@ teacherManagementRouter.post('/essays/:essayId/rerun', async (req, res, next) =>
       client: req.app.locals.zspaceClient,
       logger: req.app.locals.logger || console
     });
-    refreshStudentProfile(essay.student_id, { storageService: req.app.locals.storageService, logger: req.app.locals.logger || console });
+    try {
+      refreshStudentProfile(essay.student_id, { storageService: req.app.locals.storageService, logger: req.app.locals.logger || console });
+    } catch (error) {
+      (req.app.locals.logger || console).warn?.('refreshStudentProfile failed after teacher rerun', error?.message || error);
+    }
     writeAuditLog(req.app.locals.appDir, {
       actorId: String(req.user?.id || ''),
       actorRole: String(req.user?.role || 'teacher'),

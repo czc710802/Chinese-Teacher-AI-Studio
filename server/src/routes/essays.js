@@ -118,7 +118,11 @@ async function createReviewedEssay({ assignment, studentId, title, essayText, im
     client: zspaceClient,
     logger
   });
-  refreshStudentProfile(studentId, { storageService, logger });
+  try {
+    refreshStudentProfile(studentId, { storageService, logger });
+  } catch (error) {
+    logger?.warn?.('refreshStudentProfile failed after submit', error?.message || error);
+  }
   return { essayId };
 }
 
@@ -402,7 +406,11 @@ essayRouter.post('/:id/review', async (req, res, next) => {
       client: req.app.locals.zspaceClient,
       logger: req.app.locals.logger || console
     });
-    refreshStudentProfile(essay.student_id, { storageService: req.app.locals.storageService, logger: req.app.locals.logger || console });
+    try {
+      refreshStudentProfile(essay.student_id, { storageService: req.app.locals.storageService, logger: req.app.locals.logger || console });
+    } catch (error) {
+      (req.app.locals.logger || console).warn?.('refreshStudentProfile failed after review', error?.message || error);
+    }
     res.json({ message: '批阅完成', review });
   } catch (error) {
     next(error);

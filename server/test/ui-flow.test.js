@@ -84,7 +84,7 @@ test('teacher review records list reviewed essays with view and batch export act
   assert.match(teacherReviewCenter, /\/reports\/reviewed\/docx/);
   assert.match(teacherReviewCenter, /reviewMode === 'records'/);
   assert.match(teacherReviewCenter, /essay\.total_score != null/);
-  assert.match(teacherReviewCenter, /href=\{`\/review\/\$\{essay\.id\}`\}/);
+  assert.match(teacherReviewCenter, /href=\{`\/teacher\/essay\/\$\{essay\.id\}`\}/);
   assert.match(teacherReviewCenter, /点击查看/);
   assert.match(mainSource, /已自动批阅/);
   assert.doesNotMatch(teacherReviewCenter, /调阅批阅结果/);
@@ -105,7 +105,7 @@ test('teacher review results mode lets teacher click into each student AI review
   assert.match(teacherReviewCenter, /onlyReviewed/);
   assert.match(teacherReviewCenter, /reviewMode === 'records'/);
   assert.match(teacherReviewCenter, /essay\.total_score != null/);
-  assert.match(teacherReviewCenter, /href=\{`\/review\/\$\{essay\.id\}`\}/);
+  assert.match(teacherReviewCenter, /href=\{`\/teacher\/essay\/\$\{essay\.id\}`\}/);
   assert.match(teacherReviewCenter, /点击查看/);
 });
 
