@@ -390,6 +390,8 @@ export function renderReportHtml({ record, reportJson = {}, links = {} } = {}) {
     <section><h2>高考评分</h2>${paragraphHtml(reportJson.gaokaoScoring || reportJson.gaokao_scoring || reportJson.gaokao_dimensions || '暂无')}</section>
     <section><h2>修改建议</h2><ul>${listHtml(reportJson.suggestions)}</ul></section>
     <section><h2>逐段精修</h2><ul>${listHtml(reportJson.paragraphRefinements || reportJson.paragraph_refinements || reportJson.paragraph_rewrites)}</ul></section>
+    <section><h2>段落分析</h2><ul>${listHtml(reportJson.paragraphAnalysis || reportJson.paragraph_analysis)}</ul></section>
+    <section><h2>句子分析</h2><ul>${listHtml(reportJson.sentenceAnalysis || reportJson.sentence_analysis)}</ul></section>
     <section><h2>整篇升格文章</h2>${paragraphHtml(reportJson.excellentVersion || reportJson.excellent_version || reportJson.polished_full_text || '暂无')}</section>
     <section><h2>教师点评</h2>${paragraphHtml(reportJson.teacherComment || reportJson.teacher_comment || reportJson.teacher_overall || record?.teacherComment || '暂无')}</section>
     <section><h2>训练任务</h2><ul>${listHtml(reportJson.trainingTasks || reportJson.training_tasks || reportJson.nextTraining || reportJson.next_training)}</ul></section>

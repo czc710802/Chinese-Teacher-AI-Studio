@@ -6,7 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { db } from '../db/connection.js';
 import { requireUser } from '../middleware/auth.js';
-import { reviewEssay, recognizeImages } from '../services/openai.js';
+import { recognizeImages } from '../services/openai.js';
+import { gradeEssay } from '../services/essay-grading/grading-service.js';
 import { canReadEssay, countEssayWords, getSubmissionDraft, resolveEssayAssignmentTarget, resolveEssayListScope, resolveEssaySubmitTarget, saveSubmissionDraft } from '../services/essay-access.js';
 import { buildEssayResultCard } from '../integrations/feishu/cards.js';
 import { getActiveStudentBinding } from '../services/feishu-assignment-bindings.js';
@@ -75,7 +76,21 @@ async function createReviewedEssay({ assignment, studentId, title, essayText, im
   await recordOriginalArtifact({ storageService, database: db, essayId, files: sourceFiles, text: sourceFiles.length ? '' : essayText, logger });
   if (imageOcrText) await recordOcrArtifact({ storageService, database: db, essayId, text: imageOcrText, files: sourceFiles, logger });
 
-  const review = await reviewEssay({ assignment, essayText });
+  const review = await gradeEssay({
+    essayId,
+    studentId,
+    studentName: '',
+    classId: assignment.class_id,
+    grade: assignment.grade || '',
+    title,
+    prompt: assignment.prompt,
+    essayText,
+    sourceType: 'web',
+    scoringStandard: assignment.scoring_standard || '',
+    maxScore: assignment.full_score || 60,
+    model: '',
+    teacherRequirements: assignment.requirements || ''
+  });
   const insertedReview = db.prepare(`
     INSERT INTO ai_reviews
     (essay_id, total_score, level, dimension_scores, strengths, problems, paragraph_comments, editable_sentences, suggestions, upgraded_paragraph, good_sentences, next_training, raw_json)

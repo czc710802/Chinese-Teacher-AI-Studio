@@ -136,6 +136,8 @@ function normalizeReviewJson(review, reviewRaw) {
     recommendedMaterials: Array.isArray(raw.recommended_materials) ? raw.recommended_materials : raw.recommendedMaterials || [],
     gaokaoScoring: raw.gaokao_scoring || raw.gaokaoScoring || raw.gaokao_dimensions || {},
     paragraphRefinements: Array.isArray(raw.paragraph_refinements) ? raw.paragraph_refinements : (raw.paragraphRefinements || raw.paragraph_rewrites || []),
+    paragraphAnalysis: Array.isArray(raw.paragraphAnalysis) ? raw.paragraphAnalysis : (Array.isArray(raw.paragraph_refinements) ? raw.paragraph_refinements : []),
+    sentenceAnalysis: Array.isArray(raw.sentenceAnalysis) ? raw.sentenceAnalysis : (Array.isArray(raw.editable_sentences) ? raw.editable_sentences : []),
     excellentVersion: raw.excellent_version || raw.excellentVersion || raw.polished_full_text || '',
     teacherComment: raw.teacher_comment || raw.teacher_overall || review.teacher_overall || '',
     suggestions: Array.isArray(raw.suggestions) ? raw.suggestions : parseJson(review.suggestions, []),
@@ -281,6 +283,8 @@ function reportSections({ essay, metadata, reportJson, reportMarkdown }) {
     { title: '高考评分', content: formatContent(reportJson.gaokaoScoring) },
     { title: '提升建议', content: reportJson.suggestions },
     { title: '逐段精修', content: reportJson.paragraphRefinements },
+    { title: '段落分析', content: reportJson.paragraphAnalysis },
+    { title: '句子分析', content: reportJson.sentenceAnalysis },
     { title: '整篇升格文章', content: reportJson.excellentVersion },
     { title: '教师评语', content: reportJson.teacherComment },
     { title: '训练任务', content: reportJson.trainingTasks },
@@ -374,6 +378,7 @@ export async function archiveEssayToNAS({ appDir = process.cwd(), database, essa
     wordCount: generated.metadata.wordCount,
     archiveVersion: ARCHIVE_VERSION,
     nasPath: generated.basePath,
+    reportJson: generated.reportJson,
     files: generated.artifacts.map((artifact) => ({ name: path.posix.basename(artifact.remotePath), remotePath: artifact.remotePath, contentType: artifact.contentType }))
   };
 
@@ -502,7 +507,7 @@ export async function archiveSyntheticPayload({ appDir = process.cwd(), client, 
       await client.uploadBuffer(artifact.remotePath, artifact.buffer, artifact.contentType);
       logArchive(appDir, 'upload.ok', { remotePath: artifact.remotePath, bytes: artifact.buffer.length });
     }
-    const record = upsertArchiveRecord(appDir, { id: archiveId, ...metadata, archiveStatus: 'archived', files: artifacts.map((artifact) => ({ name: path.posix.basename(artifact.remotePath), remotePath: artifact.remotePath, contentType: artifact.contentType })) });
+    const record = upsertArchiveRecord(appDir, { id: archiveId, ...metadata, reportJson: jsonClone(reportJson), archiveStatus: 'archived', files: artifacts.map((artifact) => ({ name: path.posix.basename(artifact.remotePath), remotePath: artifact.remotePath, contentType: artifact.contentType })) });
     logArchive(appDir, 'archive.ok', { id: archiveId, files: artifacts.length });
     return { ok: true, queued: false, record, files: artifacts.length, basePath, checks: { json: true, markdown: true, word: true, pdf: true, metadata: true, nasUpload: true } };
   } catch (error) {
