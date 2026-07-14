@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, setSession, getSession } from './api/client.js';
 import './styles/app.css';
 import { ArrowLeft, BookOpen, Camera, ChartNoAxesCombined, Check, ChevronUp, Copy, Download, FileText, Filter, GraduationCap, Home, LockKeyhole, LogOut, MoreHorizontal, PackageOpen, PenLine, Plus, Search, School, Send, Share2, Star, Trash2, UserPlus, Users } from 'lucide-react';
@@ -58,12 +58,13 @@ function LoginPage() {
   const [form, setForm] = useState({ username: 'teacher', password: '123456' });
   const [error, setError] = useState('');
   const nav = useNavigate();
+  const location = useLocation();
   async function submit(e) {
     e.preventDefault();
     try {
       const data = await api('/auth/login', { method: 'POST', body: form });
       setSession(data.user);
-      nav(homeByRole[data.user.role]);
+      nav(location.state?.returnTo || homeByRole[data.user.role]);
     } catch (err) {
       setError(err.message);
     }
@@ -929,8 +930,158 @@ function ReviewPage() {
     </main>
     <AiTutorChat essayId={essayId} />
     <ReviewBottomBar essayId={essayId} onReReview={reReview} />
-    <button className="back-top" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} title="回到顶部"><ChevronUp /><span>顶部</span></button>
+  <button className="back-top" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} title="回到顶部"><ChevronUp /><span>顶部</span></button>
   </div>;
+}
+
+function TeacherEssayDetailPage() {
+  const { essayId } = useParams();
+  const nav = useNavigate();
+  const location = useLocation();
+  const [data, setData] = useState(null);
+  const [message, setMessage] = useState('');
+  const [rerunOpen, setRerunOpen] = useState(false);
+  const [rerunForm, setRerunForm] = useState({ promptMode: 'latest', promptText: '', rerunReason: '' });
+
+  async function load() {
+    const detail = await api(`/teacher/essays/${encodeURIComponent(essayId)}/detail`);
+    setData(detail);
+  }
+
+  useEffect(() => {
+    load().catch((err) => setMessage(err.message));
+  }, [essayId]);
+
+  async function rerunEssay() {
+    setMessage('');
+    try {
+      const result = await api(`/teacher/essays/${encodeURIComponent(essayId)}/rerun`, { method: 'POST', body: rerunForm });
+      setMessage(`已重新批改，生成版本 V${result.review?.version_number || '?'}。`);
+      setRerunOpen(false);
+      await load();
+    } catch (err) {
+      setMessage(err.message);
+    }
+  }
+
+  const essay = data?.essay || {};
+  const review = data?.review || {};
+  const raw = review.raw_json || {};
+  const history = data?.history || [];
+  const comparison = data?.comparison || null;
+  const links = data?.links || {};
+  const teacherReview = raw.teacherReview || {};
+
+  if (!data) {
+    return <Layout><Card title="教师作文详情" icon={<FileText size={20} />}>{message ? <p className="error">{message}</p> : <p className="hint">正在加载作文详情...</p>}</Card></Layout>;
+  }
+
+  return <Layout>
+    <section className="teacher-essay-detail">
+      <Card title="作文详情" icon={<FileText size={20} />}>
+        <div className="stats">
+          <span>{essay.student_name || '未填写'} · {essay.student_no || '无学号'}</span>
+          <span>{essay.class_name || '未填写班级'} · {essay.class_grade || '未填写年级'}</span>
+          <span>{essay.assignment_title || '未命名作文'}</span>
+          <span>{essay.word_count || 0} 字</span>
+        </div>
+        {message && <p className={message.includes('已重新批改') ? 'success' : 'hint'}>{message}</p>}
+        <div className="actions">
+          <button type="button" onClick={() => nav(location.state?.returnTo || '/teacher/reviews')}><ArrowLeft size={16} />返回</button>
+          <button type="button" onClick={() => links.reportUrl && window.open(links.reportUrl, '_blank', 'noopener,noreferrer')}>查看完整报告</button>
+          <button type="button" onClick={() => links.pdfUrl && window.open(links.pdfUrl, '_blank', 'noopener,noreferrer')}>查看 PDF</button>
+          <button type="button" onClick={() => links.docxUrl && window.open(links.docxUrl, '_blank', 'noopener,noreferrer')}>查看 Word</button>
+          <button type="button" onClick={() => setRerunOpen(true)}><RotateCcw size={16} />重新批改</button>
+        </div>
+      </Card>
+
+      <div className="grid">
+        <Card title="AI 评分" icon={<Star size={20} />}>
+          <div className="score-panel"><strong>{review.total_score ?? review.totalScore ?? '--'}<small>分</small></strong><span>{review.level || review.grade || '待评'}</span></div>
+          <p className="hint">报告版本：{review.report_version || review.reportVersion || '2.0'} · 模型：{review.model || '--'} · Prompt：{review.prompt_version || '--'}</p>
+        </Card>
+        <Card title="教师评分" icon={<Check size={20} />}>
+          <p>{teacherReview.comment || raw.teacherComment || raw.teacher_overall || '暂无教师评语。'}</p>
+          <p className="hint">教师终评分：{teacherReview.finalScore ?? '--'}</p>
+        </Card>
+        <Card title="逻辑分析" icon={<BrainCircuit size={20} />}>
+          <p><b>中心论点：</b>{raw.logicAnalysis?.centralClaim || raw.logicAnalysisText || '暂无'}</p>
+          <p><b>分论点：</b>{(raw.logicAnalysis?.subClaims || []).join('；') || '暂无'}</p>
+          <p><b>推理链：</b>{(raw.logicAnalysis?.reasoningChain || []).join('；') || '暂无'}</p>
+          <p><b>逻辑断点：</b>{(raw.logicAnalysis?.logicalBreaks || []).join('；') || '暂无'}</p>
+          <p><b>深度建议：</b>{(raw.logicAnalysis?.depthSuggestions || []).join('；') || '暂无'}</p>
+        </Card>
+        <Card title="修改建议" icon={<PenLine size={20} />}>
+          <div className="item" style={{ marginBottom: 12 }}>
+            <SectionTitle title="主要问题" />
+            <ul>{(raw.summary?.mainProblems || raw.mainProblems || []).map((item, index) => <li key={index}>{typeof item === 'string' ? item : JSON.stringify(item)}</li>)}</ul>
+          </div>
+          <div className="item" style={{ marginBottom: 12 }}>
+            <SectionTitle title="优先修改" />
+            <ul>{(raw.summary?.priorityImprovements || raw.nextTraining || []).map((item, index) => <li key={index}>{typeof item === 'string' ? item : JSON.stringify(item)}</li>)}</ul>
+          </div>
+          <div className="item">
+            <SectionTitle title="示范修改" />
+            <ul>{(raw.exampleRevisions || raw.rewrittenParagraphs || []).map((item, index) => <li key={index}>{typeof item === 'string' ? item : JSON.stringify(item)}</li>)}</ul>
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid">
+        <Card title="报告历史" icon={<RotateCcw size={20} />}>
+          {comparison && <div className="item">
+            <p>分数变化：{comparison.scoreDelta >= 0 ? '+' : ''}{comparison.scoreDelta}</p>
+            <p>Prompt：{comparison.promptFrom || '--'} → {comparison.promptTo || '--'}</p>
+            <p>模型：{comparison.modelFrom || '--'} → {comparison.modelTo || '--'}</p>
+            <p>建议变化：{comparison.suggestionsChanged ? '有变化' : '无变化'}</p>
+          </div>}
+          <div className="management-table">
+            {history.map((item) => <article className="management-row" key={item.id}>
+              <b>V{item.version_number || 1}<span>{formatDateTime(item.created_at)}</span></b>
+              <span>{item.total_score}分</span>
+              <span>{item.level || '--'}</span>
+              <span>{item.model || '--'}</span>
+              <code>{item.prompt_version || '--'}</code>
+            </article>)}
+          </div>
+        </Card>
+        <Card title="报告链接" icon={<Download size={20} />}>
+          <p>网页报告：{links.reportUrl || '暂无'}</p>
+          <p>PDF：{links.pdfUrl || '暂无'}</p>
+          <p>Word：{links.docxUrl || '暂无'}</p>
+          <div className="actions">
+            <button type="button" onClick={() => links.reportUrl && window.open(links.reportUrl, '_blank', 'noopener,noreferrer')}>打开网页报告</button>
+            <button type="button" onClick={() => links.pdfUrl && window.open(links.pdfUrl, '_blank', 'noopener,noreferrer')}>打开 PDF</button>
+            <button type="button" onClick={() => links.docxUrl && window.open(links.docxUrl, '_blank', 'noopener,noreferrer')}>打开 Word</button>
+          </div>
+        </Card>
+      </div>
+
+      {rerunOpen && <div className="modal-overlay">
+        <div className="modal">
+          <h3>重新批改</h3>
+          <p className="hint">选择提示词策略后，将启动新的 gradingJob 并保留历史版本。</p>
+          <label>提示词模式
+            <select value={rerunForm.promptMode} onChange={(e) => setRerunForm({ ...rerunForm, promptMode: e.target.value })}>
+              <option value="keep_original">保持原 Prompt</option>
+              <option value="update">更新 Prompt</option>
+              <option value="latest">使用最新 Prompt</option>
+            </select>
+          </label>
+          <label>新 Prompt
+            <textarea rows="5" value={rerunForm.promptText} onChange={(e) => setRerunForm({ ...rerunForm, promptText: e.target.value })} placeholder="仅在更新 Prompt 时填写" />
+          </label>
+          <label>重新批改原因
+            <textarea rows="4" value={rerunForm.rerunReason} onChange={(e) => setRerunForm({ ...rerunForm, rerunReason: e.target.value })} placeholder="例如：教师补充反馈后重批" />
+          </label>
+          <div className="actions">
+            <button type="button" onClick={() => setRerunOpen(false)}>取消</button>
+            <button type="button" onClick={rerunEssay}><RotateCcw size={16} />确认重新批改</button>
+          </div>
+        </div>
+      </div>}
+    </section>
+  </Layout>;
 }
 
 function SectionTitle({ title, actions }) {
@@ -1505,7 +1656,7 @@ function TeacherHome() {
         <h2>班级管理、任务发布与批改汇总</h2>
       </div>
     </section>
-    <div className="grid"><TeacherDashboardCard /><PublicAccessPanel title="公网演示入口" intro="用于手机端访问、课堂展示和线上演示。复制后可直接发给听众。" /><Card title="飞书班级群" icon={<MessageCircle size={20} />}><p className="hint">绑定班级主群、备用群，并发送系统测试消息。</p><div className="actions"><a className="button-link" href="/teacher/feishu/classes">进入群绑定</a></div></Card><Card title="Archive" icon={<PackageOpen size={20} />}><p className="hint">查看作文自动归档、NAS 路径和待同步状态。</p><div className="actions"><a className="button-link" href="/archive">进入 Archive</a></div></Card><Card title="学生成长档案" icon={<TrendingUp size={20} />}><p className="hint">查看学生分数趋势、能力变化、高频问题和训练计划。</p><div className="actions"><a className="button-link" href="/student-profiles">进入档案中心</a></div></Card><PasswordCard /><AssignmentPublish /><AssignmentManagement /><ClassManagement /><TeacherReviewCenter /><TeacherInsightPanel /></div>
+    <div className="grid"><TeacherDashboardCard /><PublicAccessPanel title="公网演示入口" intro="用于手机端访问、课堂展示和线上演示。复制后可直接发给听众。" /><TeacherRerunTaskCard /><Card title="飞书班级群" icon={<MessageCircle size={20} />}><p className="hint">绑定班级主群、备用群，并发送系统测试消息。</p><div className="actions"><a className="button-link" href="/teacher/feishu/classes">进入群绑定</a></div></Card><Card title="Archive" icon={<PackageOpen size={20} />}><p className="hint">查看作文自动归档、NAS 路径和待同步状态。</p><div className="actions"><a className="button-link" href="/archive">进入 Archive</a></div></Card><Card title="学生成长档案" icon={<TrendingUp size={20} />}><p className="hint">查看学生分数趋势、能力变化、高频问题和训练计划。</p><div className="actions"><a className="button-link" href="/student-profiles">进入档案中心</a></div></Card><PasswordCard /><AssignmentPublish /><AssignmentManagement /><ClassManagement /><TeacherReviewCenter /><TeacherInsightPanel /></div>
   </Layout>;
 }
 
@@ -1616,11 +1767,11 @@ function TeacherReviewCenter() {
     </article>) : <div className="empty-records">暂无班级作业记录</div>)}
     {reviewMode === 'grading' && (filtered.length ? <article className="assignment-record">
       <div className="record-head"><div><h3>{assignments.find((assignment) => String(assignment.id) === String(activeAssignmentId))?.title || '前往批改'}</h3><p>已导入本任务的待批改作文，完成后进入批改记录查看。</p></div></div>
-      {filtered.map((essay) => <div className="student-record" key={essay.id}><div><b>{essay.student_name}</b><strong>{essay.total_score ?? '--'}分</strong><p>{formatDateTime(essay.created_at)} <span>{essay.total_score == null ? '待批改' : '已自动批阅'}</span></p></div><span className="record-actions"><button className="review-btn-primary" onClick={() => triggerReview(essay.id)} disabled={reviewingId === essay.id || batchReviewing}>{reviewingId === essay.id ? '批阅中...' : essay.total_score == null ? '批改' : '重新批改'}</button><a href={`/review/${essay.id}`}>点击查看</a></span></div>)}
+      {filtered.map((essay) => <div className="student-record" key={essay.id}><div><b>{essay.student_name}</b><strong>{essay.total_score ?? '--'}分</strong><p>{formatDateTime(essay.created_at)} <span>{essay.total_score == null ? '待批改' : '已自动批阅'}</span></p></div><span className="record-actions"><button className="review-btn-primary" onClick={() => triggerReview(essay.id)} disabled={reviewingId === essay.id || batchReviewing}>{reviewingId === essay.id ? '批阅中...' : essay.total_score == null ? '批改' : '重新批改'}</button><a href={`/teacher/essay/${essay.id}`}>点击查看</a></span></div>)}
     </article> : <div className="empty-records">当前任务暂无待批改作文</div>)}
     {reviewMode === 'records' && (reviewedEssays.length ? reviewedEssays.map((essay) => <article className="assignment-record review-record-card" key={essay.id}>
       <div className="record-head"><div><h3>{essay.assignment_title}</h3><p>批改进度 <span className="progress"><i style={{ width: '100%' }} /></span>100% 1/1</p></div><button onClick={() => api(`/reports/essay/${essay.id}/docx`, { method: 'POST', body: {} }).then((data) => window.open(assetUrl(data.url), '_blank'))}><Download size={18} />导出</button></div>
-      <div className="student-record"><div><b>{essay.student_name}</b><strong>{essay.total_score}分</strong><p>{formatDateTime(essay.created_at)} <span>已自动批阅</span></p></div><span className="record-actions"><a href={`/review/${essay.id}`}>点击查看</a></span></div>
+      <div className="student-record"><div><b>{essay.student_name}</b><strong>{essay.total_score}分</strong><p>{formatDateTime(essay.created_at)} <span>已自动批阅</span></p></div><span className="record-actions"><a href={`/teacher/essay/${essay.id}`}>点击查看</a></span></div>
     </article>) : <div className="empty-records">暂无已批改作文记录</div>)}
   </section>;
 }
@@ -1653,10 +1804,31 @@ function TeacherInsightPanel() {
   </Card>;
 }
 
+function TeacherRerunTaskCard() {
+  const [tasks, setTasks] = useState([]);
+  useEffect(() => {
+    api('/teacher/tasks').then((data) => setTasks(data.items || [])).catch(() => setTasks([]));
+  }, []);
+  const counts = tasks.reduce((acc, task) => {
+    const key = String(task.status || 'unknown');
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  return <Card title="重新批改任务" icon={<RotateCcw size={20} />}>
+    <div className="stats">
+      <span><b>{counts.pending || 0}</b>待重新批改</span>
+      <span><b>{counts.processing || 0}</b>正在重新批改</span>
+      <span><b>{counts.completed || 0}</b>重新批改完成</span>
+    </div>
+    <p className="hint">状态来自教师任务中心，点击可进入筛选后的任务列表。</p>
+    <div className="actions"><a className="button-link" href="/teacher/tasks">查看全部任务</a></div>
+  </Card>;
+}
+
 function QuickLinks({ role }) {
   const links = role === 'student'
     ? [['/upload', '拍照上传', Camera], ['/profile', '个人档案', ChartNoAxesCombined]]
-    : [['/teacher/reviews', '作文批改', FileText], ['/archive', 'Archive', PackageOpen], ['/classes', '我的班级', Users], ['/assignments/new', '发布任务', Plus]];
+    : [['/teacher/reviews', '作文批改', FileText], ['/teacher/tasks', '重新批改任务', RotateCcw], ['/archive', 'Archive', PackageOpen], ['/classes', '我的班级', Users], ['/assignments/new', '发布任务', Plus]];
   return <Card title="快捷入口" icon={<Home size={20} />}><div className="quick">{links.map(([href, label, Icon]) => <a key={href} href={href}><Icon size={18} />{label}</a>)}</div></Card>;
 }
 
@@ -1917,7 +2089,8 @@ function StudentProfileDetailPage() {
 
 function RoleRoute({ roles, children }) {
   const session = getSession();
-  if (!session) return <Navigate to="/login" replace />;
+  const location = useLocation();
+  if (!session) return <Navigate to="/login" replace state={{ returnTo: `${location.pathname}${location.search || ''}` }} />;
   if (!roles.includes(session.role)) return <Navigate to={homeByRole[session.role] || '/login'} replace />;
   return children;
 }
@@ -2220,7 +2393,7 @@ function EssayList() {
   const { classId } = useParams();
   const [rows, setRows] = useState([]);
   useEffect(() => { api(`/essays?classId=${classId}`).then(setRows); }, [classId]);
-  return <Layout><Card title="班级作文列表" icon={<FileText size={20} />}>{rows.map((x) => <article className="item" key={x.id}><b>{x.student_name} · {x.assignment_title}</b><p>{x.total_score || '-'}分 · {x.level || '待批改'}</p><a href={`/review/${x.id}`}>进入详情</a></article>)}</Card></Layout>;
+  return <Layout><Card title="班级作文列表" icon={<FileText size={20} />}>{rows.map((x) => <article className="item" key={x.id}><b>{x.student_name} · {x.assignment_title}</b><p>{x.total_score || '-'}分 · {x.level || '待批改'}</p><a href={`/teacher/essay/${x.id}`}>进入详情</a></article>)}</Card></Layout>;
 }
 
 function AnalyticsPage() {
@@ -2435,6 +2608,7 @@ function App() {
     <Route path="/teacher/essays" element={<RoleRoute roles={['teacher']}><TeacherEssaysPage /></RoleRoute>} />
     <Route path="/teacher/tasks" element={<RoleRoute roles={['teacher']}><TeacherTasksPage /></RoleRoute>} />
     <Route path="/teacher/benchmark" element={<RoleRoute roles={['teacher']}><BenchmarkCenterPage /></RoleRoute>} />
+    <Route path="/teacher/essay/:essayId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
     <Route path="/admin" element={<RoleRoute roles={['admin']}><AdminHome /></RoleRoute>} />
     <Route path="/admin/feishu/teachers" element={<RoleRoute roles={['admin']}><AdminFeishuTeachersPage /></RoleRoute>} />
     <Route path="/teacher/feishu/classes" element={<RoleRoute roles={['teacher']}><TeacherFeishuClassesPage /></RoleRoute>} />

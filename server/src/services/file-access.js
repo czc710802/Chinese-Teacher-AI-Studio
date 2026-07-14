@@ -44,7 +44,7 @@ function safeCompare(a, b) {
 }
 
 function normalizeOrigin(env = process.env) {
-  const raw = String(env.PUBLIC_APP_ORIGIN || env.PUBLIC_APP_URL || DEFAULT_PUBLIC_ORIGIN).trim().replace(/\/+$/, '');
+  const raw = String(env.FEISHU_REPORT_PUBLIC_BASE_URL || env.PUBLIC_APP_ORIGIN || env.PUBLIC_APP_URL || DEFAULT_PUBLIC_ORIGIN).trim().replace(/\/+$/, '');
   const url = new URL(/^https?:\/\//.test(raw) ? raw : `https://${raw}`);
   if (!/^https?:$/.test(url.protocol)) throw new Error('PUBLIC_APP_ORIGIN 协议无效');
   if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(url.hostname)) throw new Error('PUBLIC_APP_ORIGIN 不能是本机地址');
@@ -186,6 +186,19 @@ export function getArchiveFileDescriptor({ appDir, archiveId, fileType } = {}) {
     throw error;
   }
   const safeFileType = normalizeFileType(fileType);
+  if (safeFileType === 'json' && record.reportJson) {
+    return {
+      record,
+      file: {
+        name: FILE_TYPES.json.fileName,
+        remotePath: record.nasPath ? `${record.nasPath}/${FILE_TYPES.json.fileName}` : '',
+        contentType: FILE_TYPES.json.contentType,
+        inlineBuffer: Buffer.from(JSON.stringify(record.reportJson, null, 2), 'utf8')
+      },
+      fileType: safeFileType,
+      contentType: FILE_TYPES[safeFileType].contentType
+    };
+  }
   const file = findArchiveFile(record, safeFileType);
   if (!file) {
     const error = new Error('归档文件尚未生成');
@@ -226,7 +239,8 @@ export async function buildArchiveDownloadLinks({
       files[type] = createSignedDownloadUrl({ archiveId: record.id, fileType: type, userId, expiresInSeconds, env });
     }
   }
-  const reportUrl = files.report || files.markdown
+  const reportJsonAvailable = Boolean(record.reportJson && Object.keys(record.reportJson || {}).length > 0);
+  const reportUrl = files.report || files.markdown || reportJsonAvailable
     ? createSignedReportUrl({ archiveId: record.id, userId, expiresInSeconds, env })
     : '';
   return {
@@ -390,6 +404,8 @@ export function renderReportHtml({ record, reportJson = {}, links = {} } = {}) {
     <section><h2>高考评分</h2>${paragraphHtml(reportJson.gaokaoScoring || reportJson.gaokao_scoring || reportJson.gaokao_dimensions || '暂无')}</section>
     <section><h2>修改建议</h2><ul>${listHtml(reportJson.suggestions)}</ul></section>
     <section><h2>逐段精修</h2><ul>${listHtml(reportJson.paragraphRefinements || reportJson.paragraph_refinements || reportJson.paragraph_rewrites)}</ul></section>
+    <section><h2>段落分析</h2><ul>${listHtml(reportJson.paragraphAnalysis || reportJson.paragraph_analysis)}</ul></section>
+    <section><h2>句子分析</h2><ul>${listHtml(reportJson.sentenceAnalysis || reportJson.sentence_analysis)}</ul></section>
     <section><h2>整篇升格文章</h2>${paragraphHtml(reportJson.excellentVersion || reportJson.excellent_version || reportJson.polished_full_text || '暂无')}</section>
     <section><h2>教师点评</h2>${paragraphHtml(reportJson.teacherComment || reportJson.teacher_comment || reportJson.teacher_overall || record?.teacherComment || '暂无')}</section>
     <section><h2>训练任务</h2><ul>${listHtml(reportJson.trainingTasks || reportJson.training_tasks || reportJson.nextTraining || reportJson.next_training)}</ul></section>

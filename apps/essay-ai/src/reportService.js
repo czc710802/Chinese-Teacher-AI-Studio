@@ -44,6 +44,11 @@ function formatDimensionScores(items = []) {
   return items.map((item) => `- ${item.name || '维度'}：${item.score ?? '-'} / ${item.full ?? '-'}  ${item.comment || ''}`.trim()).join('\n');
 }
 
+function formatOptionalList(value = []) {
+  const items = Array.isArray(value) ? value : [value].filter(Boolean);
+  return items.length ? items.map((item) => `- ${typeof item === 'string' ? item : JSON.stringify(item)}`).join('\n') : '- 暂无';
+}
+
 export function buildEssayReportMarkdown(record = {}) {
   const result = record.result || {};
   const title = record.title || '未命名作文';
@@ -98,6 +103,12 @@ ${suggestionLines}
 
 ## 逐段精修
 ${formatRich(result.paragraphRefinements || [])}
+
+## 段落分析
+${formatOptionalList(result.paragraphAnalysis || result.paragraph_analysis || [])}
+
+## 句子分析
+${formatOptionalList(result.sentenceAnalysis || result.sentence_analysis || [])}
 
 ## 升格示例
 ${result.upgradedParagraph || '暂无'}

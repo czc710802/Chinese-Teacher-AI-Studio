@@ -164,6 +164,65 @@ test('feishu service auto-detects long Chinese text as an essay review request',
   assert.equal(texts.length, 0);
 });
 
+test('feishu service handles essay report pagination card actions', async () => {
+  const appDir = rootDir;
+  const archiveId = 'feishu-essay-1';
+  fs.mkdirSync(path.join(appDir, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(appDir, 'data', 'archive-records.json'), `${JSON.stringify({
+    version: 1,
+    records: [{
+      id: archiveId,
+      archiveStatus: 'archived',
+      reportJson: {
+        totalScore: 55,
+        fullScore: 60,
+        level: '一类文',
+        overallEvaluation: '整体完成度较高。',
+        strengths: ['观点明确'],
+        problems: ['论证不够深'],
+        suggestions: ['补强因果链']
+      },
+      files: []
+    }]
+  }, null, 2)}\n`, 'utf8');
+
+  const service = createFeishuService({
+    appDir,
+    env: {
+      FEISHU_APP_ID: 'app-id',
+      FEISHU_APP_SECRET: 'app-secret',
+      FEISHU_BOT_NAME: 'Chinese Teacher AI Studio',
+      FEISHU_FILE_LINK_SECRET: 'test-link-secret',
+      FEISHU_REPORT_PUBLIC_BASE_URL: 'https://pi.zhenwanyue.icu'
+    }
+  });
+
+  const replies = [];
+  service.replyMessage = async (...args) => {
+    replies.push(args);
+    return { ok: true, messageId: 'reply-1', mode: 'reply' };
+  };
+
+  const result = await service.handleCardAction({
+    messageId: 'open-msg-1',
+    chatId: 'chat-1',
+    operator: { openId: 'ou-1' },
+    action: {
+      value: {
+        command: 'essay-report-page',
+        archiveId,
+        page: 2
+      }
+    }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.command, 'essay-report-page');
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0][0].messageId, 'open-msg-1');
+  assert.equal(replies[0][0].card.header.subtitle.content, '第 2 页 / 共 10 页');
+});
+
 test('feishu service gives short unknown text a default guidance reply', async () => {
   const service = createFeishuService({
     appDir: rootDir,

@@ -169,6 +169,17 @@ CREATE TABLE IF NOT EXISTS essay_images (
 CREATE TABLE IF NOT EXISTS ai_reviews (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   essay_id INTEGER NOT NULL,
+  version_number INTEGER NOT NULL DEFAULT 1,
+  report_version TEXT DEFAULT '2.0',
+  prompt_version TEXT DEFAULT '',
+  prompt_text TEXT DEFAULT '',
+  prompt_mode TEXT DEFAULT '',
+  model TEXT DEFAULT '',
+  source_type TEXT DEFAULT '',
+  grading_job_id TEXT DEFAULT '',
+  rerun_reason TEXT DEFAULT '',
+  created_by_user_id TEXT DEFAULT '',
+  created_by_role TEXT DEFAULT '',
   total_score REAL NOT NULL,
   level TEXT NOT NULL,
   dimension_scores TEXT NOT NULL,
@@ -182,6 +193,7 @@ CREATE TABLE IF NOT EXISTS ai_reviews (
   next_training TEXT NOT NULL,
   raw_json TEXT NOT NULL,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(essay_id) REFERENCES essays(id) ON DELETE CASCADE
 );
 

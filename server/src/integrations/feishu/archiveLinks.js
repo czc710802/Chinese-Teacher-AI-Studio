@@ -1,6 +1,10 @@
+import path from 'node:path';
+
 import { archiveSyntheticPayload } from '../../services/archive-pipeline.js';
 import { buildArchiveDownloadLinks } from '../../services/file-access.js';
 import { sanitizePathSegment } from '../../services/zspace-storage.js';
+import { getArchiveRecord } from '../../services/archive-pipeline.js';
+import { parseJson } from '../../utils/json.js';
 
 function safeUserSegment(value) {
   return sanitizePathSegment(String(value || '').replace(/[^\w\u4e00-\u9fa5-]+/g, ''), 'feishu-user').slice(0, 48) || 'feishu-user';
@@ -23,13 +27,47 @@ function reportJsonFromResult(result = {}) {
     problems: Array.isArray(result.mainProblems) ? result.mainProblems : (result.problems || []),
     weaknesses: Array.isArray(result.mainProblems) ? result.mainProblems : (result.weaknesses || []),
     dimensionScores: dimensions,
-    logicAnalysis: result.logicAnalysis || findDimension('逻辑') || findDimension('结构'),
+    paragraphAnalysis: Array.isArray(result.paragraphAnalysis) ? result.paragraphAnalysis : (Array.isArray(result.paragraphRefinements) ? result.paragraphRefinements : []),
+    sentenceAnalysis: Array.isArray(result.sentenceAnalysis) ? result.sentenceAnalysis : (Array.isArray(result.editableSentences) ? result.editableSentences : []),
+    logicAnalysis: result.logicAnalysisText || result.logic_analysis || (typeof result.logicAnalysis === 'string' ? result.logicAnalysis : '') || findDimension('逻辑') || findDimension('结构'),
     languageAnalysis: result.languageAnalysis || findDimension('语言'),
     intentAnalysis: result.intentAnalysis || findDimension('审题') || findDimension('立意'),
     materialAnalysis: result.materialAnalysis || findDimension('内容') || findDimension('素材'),
     suggestions: normalizeSuggestions(result.suggestions),
     trainingTasks: Array.isArray(result.nextTraining) ? result.nextTraining : [],
     raw: result
+  };
+}
+
+export async function loadFeishuEssayReport({
+  appDir,
+  archiveId,
+  client,
+  env = process.env,
+  userId = 'feishu',
+  logger = console
+} = {}) {
+  if (!archiveId) return { ok: false, reason: 'archive id missing', record: null, reportJson: null, links: {} };
+  const record = getArchiveRecord(appDir, archiveId);
+  if (!record) return { ok: false, reason: 'archive record missing', record: null, reportJson: null, links: {} };
+  let reportJson = record.reportJson || null;
+  if (!reportJson && client?.downloadFile) {
+    const reportFile = (record.files || []).find((file) => path.posix.basename(file.remotePath || '') === 'report.json');
+    if (reportFile?.remotePath) {
+      try {
+        const buffer = await client.downloadFile(reportFile.remotePath);
+        reportJson = parseJson(buffer.toString('utf8'), null);
+      } catch (error) {
+        logger.warn?.('Feishu 报告 JSON 读取失败', { archiveId, message: error?.message || String(error || '') });
+      }
+    }
+  }
+  const links = await buildArchiveDownloadLinks({ appDir, archiveId, userId, env, client });
+  return {
+    ok: Boolean(reportJson),
+    record,
+    reportJson,
+    links
   };
 }
 

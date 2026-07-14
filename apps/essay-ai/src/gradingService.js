@@ -1,6 +1,4 @@
-import path from 'node:path';
-
-import { reviewEssay } from '../../../server/src/services/openai.js';
+import { gradeEssay as runUnifiedGrading, normalizeGradingResult } from '../../../server/src/services/essay-grading/grading-service.js';
 import { getAIProviderStatus } from '../../../server/src/services/ai/client-factory.js';
 
 function toArray(value) {
@@ -160,27 +158,19 @@ function buildMockReview({ title = '', text = '', fullScore = 60 } = {}) {
 
 export async function gradeEssay({ title = '', text = '', fullScore = 60 } = {}) {
   const essayText = String(text || '').trim();
+  const gradingContext = { title: title || '作文批改', essayText, prompt: '请按高中语文 60 分制完成作文批改。', essayType: '材料作文', maxScore: fullScore, sourceType: 'api' };
   if (!essayText) {
-    return buildMockReview({ title, text: essayText, fullScore });
+    return normalizeGradingResult(buildMockReview({ title, text: essayText, fullScore }), gradingContext);
   }
 
   if (!getAIProviderStatus().configured) {
-    return buildMockReview({ title, text: essayText, fullScore });
+    return normalizeGradingResult(buildMockReview({ title, text: essayText, fullScore }), gradingContext);
   }
 
   try {
-    const review = await reviewEssay({
-      assignment: {
-        title: title || '作文批改',
-        prompt: '请按高中语文 60 分制完成作文批改。',
-        essay_type: '材料作文',
-        full_score: fullScore
-      },
-      essayText
-    });
-    return normalizeReview(review, { title, text: essayText, fullScore });
+    return await runUnifiedGrading(gradingContext);
   } catch (error) {
-    return buildMockReview({ title, text: essayText, fullScore });
+    return normalizeGradingResult(buildMockReview({ title, text: essayText, fullScore }), gradingContext);
   }
 }
 
