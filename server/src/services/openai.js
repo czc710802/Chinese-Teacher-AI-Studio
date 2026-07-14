@@ -109,6 +109,7 @@ export async function callTextTask(taskType, prompt, options = {}) {
     jsonMode: Boolean(options.jsonMode),
     maxTokens: options.maxTokens,
     temperature: options.temperature,
+    timeoutMs: options.timeoutMs,
     allowedProviders: options.allowedProviders,
     fallbackEnabled: options.fallbackEnabled
   });
