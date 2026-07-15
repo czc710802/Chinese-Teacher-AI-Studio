@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, setSession, getSession } from './api/client.js';
@@ -1285,7 +1285,6 @@ function StudentMobileProfilePage() {
 function TeacherLifecycleClassPage() {
   const { classKey } = useParams();
   const location = useLocation();
-  const nav = useNavigate();
   const isNumeric = /^\d+$/.test(String(classKey || ''));
   const joinRequestsUrl = buildTeacherJoinRequestsUrl(classKey);
   const initialTab = location.pathname.endsWith('/join-requests')
@@ -1466,7 +1465,7 @@ function TeacherLifecycleClassPage() {
         <div className="stats">
           <span><b>{klass.student_count ?? 0}</b>成员</span>
           <span><b>{klass.binding_count ?? 0}</b>绑定</span>
-          <button type="button" className="kpi-link" onClick={() => nav(joinRequestsUrl)} aria-label="打开入班申请列表"><b>{klass.pending_join_requests ?? 0}</b>待审核<small>点击查看申请</small></button>
+          <a className="kpi-link" href={joinRequestsUrl} aria-label="打开入班申请列表"><b>{klass.pending_join_requests ?? 0}</b>待审核<small>点击查看申请</small></a>
           <span><b>{klass.active_invites ?? 0}</b>有效邀请码</span>
         </div>
         <p>{klass.name || '未命名班级'} · {klass.grade || '未填写年级'} · {klass.join_mode || 'approval'} · {klass.status || 'active'}</p>
@@ -2518,6 +2517,7 @@ function TeacherTestCenterPage() {
 
   const report = data?.report || null;
   const fixtureClass = data?.fixture?.class || null;
+  const joinRequestsUrl = buildTeacherJoinRequestsUrl(fixtureClass?.classId || fixtureClass?.id || '');
   const inviteUrl = String(fixtureClass?.inviteUrl || data?.links?.studentJoin || '').trim();
   const qrDataUrl = getQrDataUrl();
   const stepCounts = {
@@ -2539,8 +2539,8 @@ function TeacherTestCenterPage() {
           <p>{fixtureClass?.grade || '测试'} · {fixtureClass?.schoolYear || '当前学年'} · {fixtureClass?.joinMode || 'approval'} · {fixtureClass?.status || 'active'}</p>
           <div className="teacher-kpis test-center-mini-kpis">
             <span><b>{Number(fixtureClass?.studentCount || 0)}</b>当前学生</span>
-            <button type="button" className="kpi-link" onClick={() => nav(buildTeacherJoinRequestsUrl(fixtureClass?.classId || fixtureClass?.id || ''))}><b>{Number(report?.teacherManagement?.totals?.testStudents || 0)}</b>待审核人数<small>点击查看申请</small></button>
-            <button type="button" className="kpi-link" onClick={() => nav(buildTeacherAssignmentsUrl(fixtureClass?.classId || fixtureClass?.id || '', 'system_test'))}><b>{Number(report?.teacherManagement?.totals?.tasks || 0)}</b>测试任务<small>点击查看列表</small></button>
+            <a className="kpi-link" href={joinRequestsUrl} aria-label="打开入班申请列表"><b>{Number(report?.teacherManagement?.totals?.pendingRequests || report?.teacherManagement?.totals?.requests || 0)}</b>待审核人数<small>点击查看申请</small></a>
+            <a className="kpi-link" href={buildTeacherAssignmentsUrl(fixtureClass?.classId || fixtureClass?.id || '', 'system_test')} aria-label="打开测试任务列表"><b>{Number(report?.teacherManagement?.totals?.tasks || 0)}</b>测试任务<small>点击查看列表</small></a>
             <span><b>{Number(report?.teacherManagement?.totals?.essays || 0)}</b>测试作文</span>
           </div>
           <div className="test-center-invite-code">
@@ -2566,7 +2566,7 @@ function TeacherTestCenterPage() {
             <p><b>{Number(report?.teacherManagement?.totals?.pendingRequests || report?.teacherManagement?.totals?.requests || 0)}</b> 待审核</p>
             <p className="hint">查看最近申请后，再批准加入系统测试班。</p>
             <div className="actions">
-              <a className="button-link" href={data?.links?.testClassRequests || buildTeacherJoinRequestsUrl(fixtureClass?.classId || fixtureClass?.id || '')}>查看待审核申请</a>
+              <a className="button-link" href={data?.links?.testClassRequests || joinRequestsUrl}>查看待审核申请</a>
               <a className="button-link" href={data?.links?.testClassMembers || `${data?.links?.testClassDetail || '/teacher/classes'}/members`}>打开班级成员</a>
             </div>
           </section>
@@ -2705,13 +2705,27 @@ function TeacherJoinRequestsPage() {
   const [rows, setRows] = useState([]);
   const [statusFilter, setStatusFilter] = useState('pending');
   const [message, setMessage] = useState('');
-  useEffect(() => {
-    if (classIdFilter) {
-      api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests`).then((data) => setRows(data || [])).catch((err) => setMessage(err.message));
-      return;
+  const [loading, setLoading] = useState(false);
+  const loadRequests = useCallback(async () => {
+    setLoading(true);
+    setMessage('');
+    try {
+      if (classIdFilter) {
+        const data = await api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests`);
+        setRows(data || []);
+        return;
+      }
+      const data = await api('/teacher/classes');
+      setRows(data.items || data || []);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setLoading(false);
     }
-    api('/teacher/classes').then((data) => setRows(data.items || data || [])).catch((err) => setMessage(err.message));
   }, [classIdFilter]);
+  useEffect(() => {
+    loadRequests().catch(() => {});
+  }, [loadRequests]);
   const visibleRows = classIdFilter && statusFilter !== 'all' ? rows.filter((row) => String(row.status || '') === statusFilter) : rows;
   return <TeacherManagementShell title="入班申请" icon={<UserPlus size={20} />}>
     <p className="hint">{classIdFilter ? `当前班级 ${classIdFilter} 的待审核申请。` : '这里按班级汇总所有待审核申请；进入班级详情后可以完成批准或拒绝。'}</p>
@@ -2721,6 +2735,7 @@ function TeacherJoinRequestsPage() {
       <button type="button" className={statusFilter === 'rejected' ? 'primary-button' : ''} onClick={() => setStatusFilter('rejected')}>已拒绝</button>
       <button type="button" className={statusFilter === 'duplicate' ? 'primary-button' : ''} onClick={() => setStatusFilter('duplicate')}>重复申请</button>
       <button type="button" className={statusFilter === 'all' ? 'primary-button' : ''} onClick={() => setStatusFilter('all')}>全部</button>
+      <button type="button" onClick={() => loadRequests().catch(() => {})} disabled={loading}>{loading ? '刷新中...' : '刷新'}</button>
     </div>}
     {message && <p className="error">{message}</p>}
     <div className="management-table">
@@ -2745,7 +2760,8 @@ function TeacherJoinRequestsPage() {
             <a href={`/teacher/classes/${encodeURIComponent(klass.classId || klass.id || klass.classKey)}/members`}>成员管理</a>
           </span>
         </article>)}
-      {!visibleRows.length && <p className="hint">{classIdFilter ? '当前班级暂无符合条件的申请。' : '暂无班级或暂无待审核申请。'}</p>}
+      {!visibleRows.length && !loading && <p className="hint">{classIdFilter ? '当前班级暂无符合条件的申请。' : '暂无班级或暂无待审核申请。'}</p>}
+      {loading && <p className="hint">申请列表加载中...</p>}
     </div>
   </TeacherManagementShell>;
 }

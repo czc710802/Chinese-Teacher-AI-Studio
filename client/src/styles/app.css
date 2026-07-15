@@ -186,6 +186,35 @@ textarea { line-height: 1.75; resize: vertical; }
   font-size: 13px;
   padding: 6px 10px;
 }
+.stats button,
+.stats a {
+  align-items: flex-start;
+  background: #f8fbf9;
+  border: 1px solid #dfe7e3;
+  border-radius: 8px;
+  color: #60706a;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 72px;
+  padding: 12px;
+  text-align: left;
+  text-decoration: none;
+}
+.stats button b,
+.stats a b {
+  color: #17211f;
+  display: block;
+  font-size: 22px;
+}
+.stats button small,
+.stats a small {
+  color: #60706a;
+  display: block;
+  font-size: 12px;
+  margin-top: 4px;
+}
 .item { border-top: 1px solid #eef1ef; padding: 12px 0; }
 .item p { color: #66726f; margin: 5px 0; }
 .assignment-task-card { cursor: pointer; }
@@ -913,8 +942,12 @@ li { line-height: 1.8; }
   border-radius: 8px;
   color: #60706a;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   padding: 12px;
   text-align: left;
+  text-decoration: none;
 }
 .teacher-kpis button b,
 .teacher-kpis a b {
