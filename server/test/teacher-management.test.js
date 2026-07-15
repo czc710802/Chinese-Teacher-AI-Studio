@@ -262,6 +262,53 @@ test('teacher import, comments, tasks, exports, audit and retry queue are safe a
   assert.doesNotMatch(audit, /Bearer|sk-|password|Authorization/i);
 });
 
+test('teacher class summaries merge live join request and assignment counts', () => {
+  const { database, teacherId } = createReviewDb();
+  const appDir = tempAppDir();
+  writeJson(path.join(appDir, 'data', 'teacher-management', 'classes.json'), {
+    version: '1.0',
+    items: [
+      {
+        classKey: '2026_TEST_TEST 高二1班',
+        className: 'TEST 高二1班',
+        grade: '高二',
+        schoolYear: '2026',
+        teacherId: String(teacherId),
+        teacherName: 'TEST 陈老师',
+        schoolName: '',
+        studentCount: 0,
+        essayCount: 0,
+        averageScore: null,
+        excellentRate: null,
+        passingRate: null,
+        latestSubmittedAt: '',
+        feishuChatId: '',
+        joinMode: 'approval',
+        inviteCode: 'JOIN-TEST',
+        inviteCodeExpiresAt: '',
+        inviteUrl: '',
+        qrSvg: '',
+        maxStudents: 60,
+        status: 'active',
+        isTestData: false,
+        dataScope: 'production',
+        createdAt: '2026-07-15T00:00:00.000Z',
+        updatedAt: '2026-07-15T00:00:00.000Z'
+      }
+    ]
+  });
+  const classId = database.prepare('SELECT id FROM classes WHERE teacher_id = ? LIMIT 1').get(teacherId).id;
+  database.prepare('INSERT INTO class_join_requests (class_id, student_name, student_no, source, status, invite_id, requested_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(classId, '申请学生', 'S001', 'student-mobile', 'pending', null);
+  database.prepare('INSERT INTO assignments (class_id, title, prompt, essay_type, full_score, status) VALUES (?, ?, ?, ?, ?, ?)').run(classId, 'TEST 任务', '写作文', '材料作文', 60, 'published');
+
+  const rows = listClasses(appDir, { teacherId: String(teacherId) }, database).items;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].pending_join_requests, 1);
+  assert.equal(rows[0].pendingJoinRequests, 1);
+  assert.equal(rows[0].assignment_count, 2);
+  assert.equal(rows[0].assignmentCount, 2);
+});
+
 test('teacher review draft and submit update the latest ai review and persist teacher comment history', () => {
   const { database, essayId, teacherId } = createReviewDb();
   const draft = saveTeacherReview(database, {

@@ -207,6 +207,11 @@ teacherManagementRouter.get('/test-center', (req, res) => {
         LEFT JOIN student_class_bindings b ON b.student_id = cs.student_id AND b.class_id = cs.class_id
         WHERE cs.class_id = ? AND COALESCE(b.status, 'active') = 'active'
       `).get(klass.id)?.count || 0);
+      const pendingJoinRequests = Number(db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM class_join_requests
+        WHERE class_id = ? AND status = 'pending'
+      `).get(klass.id)?.count || 0);
       const classKey = `${new Date().getFullYear()}_测试_系统测试班`;
       const inviteUrl = invite?.invite_token ? buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`) : snapshot.fixture?.class?.inviteUrl || '';
         snapshot.fixture = {
@@ -219,6 +224,8 @@ teacherManagementRouter.get('/test-center', (req, res) => {
           teacherId: String(klass.teacher_id || ''),
           teacherName: klass.teacher_name || '',
           studentCount,
+          pendingJoinRequests,
+          pending_join_requests: pendingJoinRequests,
           joinMode: klass.join_mode || 'approval',
           inviteCode: invite?.invite_code || klass.invite_code || snapshot.fixture?.class?.inviteCode || 'SYSTEM-TEST-001',
           inviteCodeExpiresAt: invite?.expires_at || klass.invite_code_expires_at || '',
@@ -232,6 +239,10 @@ teacherManagementRouter.get('/test-center', (req, res) => {
         },
         student: snapshot.fixture?.student || null
       };
+      if (snapshot?.report?.teacherManagement?.totals) {
+        snapshot.report.teacherManagement.totals.pendingRequests = pendingJoinRequests;
+        snapshot.report.teacherManagement.totals.requests = pendingJoinRequests;
+      }
       snapshot.links = {
         ...snapshot.links,
         studentJoin: snapshot.fixture.class.inviteUrl || snapshot.links?.studentJoin || buildPublicUrl('/student-mobile/join/code'),
@@ -268,7 +279,7 @@ teacherManagementRouter.get('/cleanup/legacy/dry-run', (req, res) => {
   });
 });
 
-teacherManagementRouter.get('/classes', (req, res) => res.json(listClasses(req.app.locals.appDir, req.query)));
+teacherManagementRouter.get('/classes', (req, res) => res.json(listClasses(req.app.locals.appDir, req.query, db)));
 teacherManagementRouter.post('/classes', (req, res, next) => {
   try {
     res.json(createClass(req.app.locals.appDir, req.body, actor(req)));

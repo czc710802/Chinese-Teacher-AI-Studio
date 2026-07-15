@@ -74,6 +74,58 @@ function pageRows(rows, filters = {}) {
   return { items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize };
 }
 
+function resolveLiveClassSummary(database, row = {}) {
+  if (!database?.prepare) return null;
+  const name = String(row.className || row.name || '').trim();
+  if (!name) return null;
+  const grade = String(row.grade || '').trim();
+  const teacherId = Number(row.teacherId || row.teacher_id || 0);
+  const scope = normalizeDataScope(row.dataScope, 'production');
+  const conditions = [
+    'c.name = ?',
+    "COALESCE(c.grade, '') = COALESCE(?, '')"
+  ];
+  const params = [name, grade];
+  if (teacherId > 0) {
+    conditions.push('(c.teacher_id = ? OR t.user_id = ?)');
+    params.push(teacherId, teacherId);
+  }
+  if (scope === 'system_test' || isTrue(row.isTestData)) {
+    conditions.push("LOWER(COALESCE(c.data_scope, 'production')) = 'system_test'");
+  } else if (scope === 'production') {
+    conditions.push("LOWER(COALESCE(c.data_scope, 'production')) = 'production'");
+  }
+  return database.prepare(`
+    SELECT c.id, c.name, c.grade, c.teacher_id, c.data_scope
+    FROM classes c
+    LEFT JOIN teachers t ON t.id = c.teacher_id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY c.updated_at DESC, c.id DESC
+    LIMIT 1
+  `).get(...params);
+}
+
+function activeStudentCount(database, classId) {
+  return database.prepare(`
+    SELECT COUNT(*) AS count
+    FROM class_students cs
+    LEFT JOIN student_class_bindings b ON b.student_id = cs.student_id AND b.class_id = cs.class_id
+    WHERE cs.class_id = ? AND COALESCE(b.status, 'active') = 'active'
+  `).get(classId).count;
+}
+
+function pendingJoinRequestCount(database, classId) {
+  return database.prepare(`
+    SELECT COUNT(*) AS count
+    FROM class_join_requests
+    WHERE class_id = ? AND status = 'pending'
+  `).get(classId).count;
+}
+
+function assignmentCount(database, classId) {
+  return database.prepare('SELECT COUNT(*) AS count FROM assignments WHERE class_id = ?').get(classId).count;
+}
+
 function isTrue(value) {
   if (typeof value === 'boolean') return value;
   const text = String(value ?? '').trim().toLowerCase();
@@ -527,7 +579,7 @@ export function restoreStudent(appDir, studentKey, actor) {
   return updateStudentStatus(appDir, studentKey, 'active', actor);
 }
 
-export function listClasses(appDir, filters = {}) {
+export function listClasses(appDir, filters = {}, liveDatabase = null) {
   let rows = readStore(appDir, 'classes').items;
   if (filters.scope === 'system_test' || isTrue(filters.isTestData)) rows = rows.filter((item) => isTrue(item.isTestData) || normalizeDataScope(item.dataScope, 'production') === 'system_test');
   else if (filters.scope === 'production') rows = rows.filter((item) => !isTrue(item.isTestData) && normalizeDataScope(item.dataScope, 'production') === 'production');
@@ -536,7 +588,28 @@ export function listClasses(appDir, filters = {}) {
   if (filters.teacherId) rows = rows.filter((item) => item.teacherId === filters.teacherId);
   if (filters.status) rows = rows.filter((item) => item.status === filters.status);
   if (filters.keyword) rows = rows.filter((item) => `${item.classKey}${item.className}${item.grade}${item.teacherName}`.includes(filters.keyword));
-  return pageRows(sortRows(rows, filters, 'updatedAt'), filters);
+  const sorted = sortRows(rows, filters, 'updatedAt');
+  const merged = liveDatabase?.prepare
+    ? sorted.map((item) => {
+        const liveClass = resolveLiveClassSummary(liveDatabase, item);
+        if (!liveClass) return item;
+        const classId = Number(liveClass.id || 0);
+        const studentCount = activeStudentCount(liveDatabase, classId);
+        const pendingJoinRequests = pendingJoinRequestCount(liveDatabase, classId);
+        const liveAssignmentCount = assignmentCount(liveDatabase, classId);
+        return {
+          ...item,
+          classId,
+          studentCount,
+          student_count: studentCount,
+          pendingJoinRequests,
+          pending_join_requests: pendingJoinRequests,
+          assignmentCount: liveAssignmentCount,
+          assignment_count: liveAssignmentCount
+        };
+      })
+    : sorted;
+  return pageRows(merged, filters);
 }
 
 export function listStudents(appDir, filters = {}) {
