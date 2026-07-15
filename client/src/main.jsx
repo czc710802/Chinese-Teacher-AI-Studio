@@ -1134,9 +1134,20 @@ function StudentMobileHomePage() {
   const [classes, setClasses] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [profile, setProfile] = useState(null);
+  const [taskError, setTaskError] = useState('');
+  async function loadTasks() {
+    try {
+      const rows = await api('/student-mobile/tasks');
+      setTasks(rows || []);
+      setTaskError('');
+    } catch {
+      setTasks([]);
+      setTaskError('任务数据加载失败，请重试。');
+    }
+  }
   useEffect(() => {
     api('/student-mobile/classes').then(setClasses).catch(() => {});
-    api('/student-mobile/tasks').then(setTasks).catch(() => {});
+    loadTasks();
     api('/student-mobile/profile').then(setProfile).catch(() => {});
   }, []);
   const quickLinks = [
@@ -1161,8 +1172,10 @@ function StudentMobileHomePage() {
       {!classes.length && <p className="hint">还没有班级，请先通过邀请码加入。</p>}
     </Card>
     <Card title="我的任务" icon={<BookOpen size={20} />}>
+      {taskError && <p className="error">{taskError}</p>}
+      <div className="actions"><button type="button" onClick={loadTasks}>刷新任务</button></div>
       {tasks.map((task) => <article key={task.id} className="item"><b>{task.title}</b><p>{task.class_name || ''} · {task.essay_type || ''} · 满分 {task.full_score || 60}</p><p><a href={`/student-mobile/tasks/${encodeURIComponent(task.id)}`}>查看详情</a></p></article>)}
-      {!tasks.length && <p className="hint">当前还没有任务。</p>}
+      {!tasks.length && !taskError && <p className="hint">当前还没有任务。</p>}
     </Card>
   </div></Layout>;
 }
@@ -1234,39 +1247,58 @@ function StudentMobileTasksPage() {
   const [tasks, setTasks] = useState([]);
   const [detail, setDetail] = useState(null);
   const [status, setStatus] = useState(null);
+  const [taskError, setTaskError] = useState('');
+  async function loadTasks() {
+    try {
+      const rows = await api('/student-mobile/tasks');
+      setTasks(rows || []);
+      setTaskError('');
+    } catch {
+      setTasks([]);
+      setTaskError('任务数据加载失败，请重试。');
+    }
+  }
   useEffect(() => {
     if (!assignmentId) {
-      api('/student-mobile/tasks').then(setTasks).catch(() => {});
+      loadTasks();
       return;
     }
+    setTaskError('');
     Promise.all([
-      api(`/assignments/public/${encodeURIComponent(assignmentId)}`),
+      api(`/student-mobile/tasks/${encodeURIComponent(assignmentId)}`),
       api(`/assignments/${encodeURIComponent(assignmentId)}/my-status`)
     ]).then(([assignment, myStatus]) => {
       setDetail(assignment);
       setStatus(myStatus);
-    }).catch(() => {});
+    }).catch(() => {
+      setDetail(null);
+      setTaskError('任务数据加载失败，请重试。');
+    });
   }, [assignmentId]);
   if (assignmentId) {
     return <Layout><Card title="任务详情" icon={<BookOpen size={20} />}>
+      {taskError && <p className="error">{taskError}</p>}
       {detail ? <div className="form-stack">
         <p><b>{detail.title}</b></p>
         <p className="hint">{detail.class_name || ''} · {detail.essay_type || ''} · {detail.grade || ''}</p>
         <p className="hint">截止时间：{formatDateTime(detail.deadline)}</p>
+        <p className="hint">字数要求：不少于 {detail.min_words || 0} 字{detail.max_words ? ` · 不超过 ${detail.max_words} 字` : ''}</p>
         <p>{detail.prompt || '暂无材料说明'}</p>
         <p>{detail.requirements || '暂无写作要求'}</p>
         <p className="hint">状态：{status?.state || '未查询'}</p>
         <div className="actions">
-          <a href={`/submit/${encodeURIComponent(assignmentId)}`}>提交作文</a>
+          <a href={`/submit/${encodeURIComponent(assignmentId)}`}>开始写作/提交作文</a>
           <a href={`/upload?assignmentId=${encodeURIComponent(assignmentId)}`}>拍照上传</a>
           <a href="/student-mobile/tasks">返回任务列表</a>
         </div>
-      </div> : <p className="hint">任务不存在或暂不可见。</p>}
+      </div> : !taskError ? <p className="hint">任务不存在或暂不可见。</p> : null}
     </Card></Layout>;
   }
   return <Layout><Card title="我的任务" icon={<BookOpen size={20} />}>
+    {taskError && <p className="error">{taskError}</p>}
+    <div className="actions"><button type="button" onClick={loadTasks}>刷新任务</button></div>
     {tasks.map((task) => <article key={task.id} className="item"><b>{task.title}</b><p>{task.class_name || ''} · {task.essay_type || ''} · 截止 {formatDateTime(task.deadline)}</p><p className="hint">{task.prompt || task.requirements || '暂无说明'}</p><p><a href={`/student-mobile/tasks/${encodeURIComponent(task.id)}`}>查看详情</a></p></article>)}
-    {!tasks.length && <p className="hint">当前没有可见任务。</p>}
+    {!tasks.length && !taskError && <p className="hint">当前没有可见任务。</p>}
   </Card></Layout>;
 }
 
@@ -1299,6 +1331,7 @@ function TeacherLifecycleClassPage() {
   const [allClasses, setAllClasses] = useState([]);
   const [transferTargets, setTransferTargets] = useState({});
   const [message, setMessage] = useState('');
+  const [taskError, setTaskError] = useState('');
   const [busy, setBusy] = useState('');
 
   useEffect(() => {
@@ -2333,10 +2366,10 @@ function TeacherClassDetailPage() {
     ]).then(async ([klass, stats, students, essays]) => {
       let assignments = [];
       try {
-        const allAssignments = await api('/assignments');
-        assignments = (Array.isArray(allAssignments) ? allAssignments : allAssignments?.items || allAssignments?.rows || [])
-          .filter((assignment) => String(assignment.class_name || '') === String(klass?.className || klass?.name || ''))
-          .filter((assignment) => String(assignment.grade || '') === String(klass?.grade || ''));
+        const targetClassId = klass?.id || klass?.classId || classKey;
+        const targetScope = klass?.data_scope || klass?.dataScope || '';
+        const allAssignments = await api(buildTeacherAssignmentsUrl(targetClassId, targetScope === 'system_test' ? 'system_test' : ''));
+        assignments = Array.isArray(allAssignments) ? allAssignments : allAssignments?.items || allAssignments?.rows || [];
       } catch {}
       setData({
         klass,
@@ -2396,14 +2429,17 @@ function TeacherTestCenterPage() {
       setData(snapshot);
       const classId = snapshot?.fixture?.class?.classId;
       if (classId) {
-        const rows = await api(`/assignments?classId=${encodeURIComponent(classId)}`).catch(() => []);
+        const rows = await api(`/assignments?classId=${encodeURIComponent(classId)}&dataScope=system_test`);
         setAssignments(Array.isArray(rows) ? rows : rows?.items || rows?.rows || []);
+        setTaskError('');
       } else {
         setAssignments([]);
+        setTaskError('');
       }
       setMessage('');
     } catch (error) {
       setMessage(error.message);
+      setTaskError('任务数据加载失败，请重试。');
     } finally {
       setBusy('');
     }
@@ -2523,7 +2559,7 @@ function TeacherTestCenterPage() {
   const stepCounts = {
     students: Number(fixtureClass?.studentCount || 0),
     pending: Number(report?.teacherManagement?.totals?.pendingRequests || report?.teacherManagement?.totals?.requests || 0),
-    tasks: Number(assignments.length || report?.teacherManagement?.totals?.tasks || 0),
+    tasks: Number(assignments.length || report?.teacherManagement?.totals?.liveAssignmentCount || 0),
     essays: Number(report?.teacherManagement?.totals?.essays || 0),
     reports: Number(report?.teacherManagement?.totals?.reports || report?.sqlite?.tables?.teacher_reports || 0)
   };
@@ -2540,7 +2576,7 @@ function TeacherTestCenterPage() {
           <div className="teacher-kpis test-center-mini-kpis">
             <span><b>{Number(fixtureClass?.studentCount || 0)}</b>当前学生</span>
             <a className="kpi-link" href={joinRequestsUrl} aria-label="打开入班申请列表"><b>{Number(report?.teacherManagement?.totals?.pendingRequests || report?.teacherManagement?.totals?.requests || 0)}</b>待审核人数<small>点击查看申请</small></a>
-            <a className="kpi-link" href={buildTeacherAssignmentsUrl(fixtureClass?.classId || fixtureClass?.id || '', 'system_test')} aria-label="打开测试任务列表"><b>{Number(report?.teacherManagement?.totals?.tasks || 0)}</b>测试任务<small>点击查看列表</small></a>
+            <a className="kpi-link" href={buildTeacherAssignmentsUrl(fixtureClass?.classId || fixtureClass?.id || '', 'system_test')} aria-label="打开测试任务列表"><b>{stepCounts.tasks}</b>测试任务<small>点击查看列表</small></a>
             <span><b>{Number(report?.teacherManagement?.totals?.essays || 0)}</b>测试作文</span>
           </div>
           <div className="test-center-invite-code">
@@ -2572,12 +2608,14 @@ function TeacherTestCenterPage() {
           </section>
           <section className="test-center-step">
             <h3>发布测试任务</h3>
-            <p><b>{Number(assignments.length || report?.teacherManagement?.totals?.tasks || 0)}</b> 当前任务</p>
+            <p><b>{stepCounts.tasks}</b> 当前任务</p>
             <p><b>{Number(report?.teacherManagement?.totals?.submissions || report?.teacherManagement?.totals?.essays || 0)}</b> 最近提交</p>
+            {taskError && <p className="error">{taskError}</p>}
             <p className="hint">先发任务，再让测试学生扫码提交作文。</p>
             <div className="actions">
               <a className="button-link" href={data?.links?.teacherAssignments || buildTeacherAssignmentsUrl(fixtureClass?.classId || fixtureClass?.id || '', 'system_test')}>发布测试作文</a>
               <a className="button-link" href={data?.links?.teacherTasks || buildTeacherAssignmentsUrl(fixtureClass?.classId || fixtureClass?.id || '', 'system_test')}>查看测试任务</a>
+              <button type="button" onClick={load} disabled={busy === 'load'}>{busy === 'load' ? '刷新中...' : '刷新任务'}</button>
               <a className="button-link" href="/teacher/submissions">查看学生提交</a>
             </div>
             {assignments.length ? <div className="teacher-advanced-body"><p className="hint">最近任务：{assignments.slice(0, 3).map((assignment) => assignment.title).join(' · ')}</p></div> : null}
@@ -3557,6 +3595,7 @@ function TeacherAssignmentDetailPage() {
           <p className="hint">{assignment.class_name || '未知班级'} · {assignment.essay_type || '材料作文'} · {assignment.grade || '未填写年级'}</p>
           <p className="hint">状态：{assignment.status || 'published'} · 发布时间：{formatDateTime(assignment.published_at || assignment.created_at)} · 截止：{formatDateTime(assignment.deadline)}</p>
           <p className="hint">最低字数：{assignment.min_words || 0} · 最高字数：{assignment.max_words || '不限'} · 满分：{assignment.full_score || 60}</p>
+          <p className="hint">AI 自动批改：{Number(assignment.auto_grading ?? 1) ? '开启' : '关闭'} · 教师审核：{Number(assignment.requires_teacher_review ?? 1) ? '需要' : '不需要'} · 学生查看结果：{Number(assignment.allow_student_view_result ?? 1) ? '允许' : '不允许'}</p>
           <div className="assignment-submit-summary">
             <h3>写作材料</h3>
             <p style={{ whiteSpace: 'pre-wrap' }}>{assignment.prompt || '暂无材料说明'}</p>

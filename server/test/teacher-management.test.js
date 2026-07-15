@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { schemaSql } from '../src/db/schema.js';
+import { buildSystemTestCenterSnapshot } from '../src/services/legacy-cleanup.js';
 import {
   addTeacherComment,
   archiveClass,
@@ -307,6 +308,27 @@ test('teacher class summaries merge live join request and assignment counts', ()
   assert.equal(rows[0].pendingJoinRequests, 1);
   assert.equal(rows[0].assignment_count, 2);
   assert.equal(rows[0].assignmentCount, 2);
+});
+
+test('system test center snapshot uses live sqlite assignment count instead of legacy task json', () => {
+  const { database, teacherId } = createReviewDb();
+  const appDir = tempAppDir();
+  const classId = database.prepare('SELECT id FROM classes WHERE teacher_id = ? LIMIT 1').get(teacherId).id;
+  database.prepare('UPDATE classes SET name = ?, data_scope = ?, status = ? WHERE id = ?').run('系统测试班', 'system_test', 'active', classId);
+  writeJson(path.join(appDir, 'data', 'teacher-management', 'tasks.json'), {
+    version: '1.0',
+    items: []
+  });
+  database.prepare(`
+    INSERT INTO assignments (class_id, title, prompt, requirements, essay_type, full_score, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(classId, '师生闭环测试作文', '测试材料', '测试要求', '材料作文', 60, 'published');
+
+  const snapshot = buildSystemTestCenterSnapshot({ appDir, database });
+
+  assert.equal(snapshot.fixture.class.classId, String(classId));
+  assert.equal(snapshot.report.teacherManagement.totals.tasks, 2);
+  assert.equal(snapshot.report.teacherManagement.totals.liveAssignmentCount, 2);
 });
 
 test('teacher review draft and submit update the latest ai review and persist teacher comment history', () => {

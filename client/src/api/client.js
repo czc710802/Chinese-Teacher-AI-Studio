@@ -15,7 +15,8 @@ export async function api(path, options = {}) {
   const session = getSession();
   const init = {
     method: options.method || 'GET',
-    headers: { 'x-user-id': session?.id || '' }
+    headers: { 'x-user-id': session?.id || '' },
+    cache: 'no-store'
   };
   if (options.formData) init.body = options.formData;
   else if (options.body) {

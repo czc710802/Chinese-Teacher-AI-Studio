@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { db } from '../db/connection.js';
 import { assertAbsoluteHttpUrl, buildPublicUrl } from './public-access.js';
+import { listVisibleAssignmentsForStudent } from './assignment-access.js';
 
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -912,23 +913,5 @@ export function listStudentMobileAssignments(database = db, user, classId = null
   if (!user || user.role !== 'student') return { status: 403, message: '只有学生可以查看任务', rows: [] };
   const student = database.prepare('SELECT id FROM students WHERE user_id = ?').get(user.id);
   if (!student) return { status: 404, message: '学生档案不存在', rows: [] };
-  let rows = database.prepare(`
-    SELECT a.*, c.name AS class_name, c.grade AS class_grade
-    FROM assignments a
-    JOIN classes c ON c.id = a.class_id
-    JOIN class_students cs ON cs.class_id = c.id
-    LEFT JOIN student_class_bindings b ON b.student_id = cs.student_id AND b.class_id = c.id
-    WHERE cs.student_id = ? AND c.status != 'deleted'
-      AND COALESCE(b.status, 'active') = 'active'
-    ORDER BY a.created_at DESC, a.id DESC
-  `).all(student.id);
-  if (classId) rows = rows.filter((row) => String(row.class_id) === String(classId));
-  return {
-    status: 200,
-    rows: rows.map((row) => ({
-      ...row,
-      word_count_range: [Number(row.min_words || 0), Number(row.max_words || 0)],
-      submitted: false
-    }))
-  };
+  return listVisibleAssignmentsForStudent(database, student.id, { classId });
 }

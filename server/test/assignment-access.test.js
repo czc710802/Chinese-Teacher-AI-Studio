@@ -2,7 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { schemaSql } from '../src/db/schema.js';
-import { createManagedAssignment, deleteManagedAssignment, listAssignmentsForUser } from '../src/services/assignment-access.js';
+import {
+  createManagedAssignment,
+  deleteManagedAssignment,
+  ensureSystemTestAssignment,
+  getAssignmentById,
+  listAssignmentsForClass,
+  listAssignmentsForUser,
+  listVisibleAssignmentsForStudent
+} from '../src/services/assignment-access.js';
 
 function createFixtureDb() {
   const database = new DatabaseSync(':memory:');
@@ -141,4 +149,69 @@ test('teacher cannot delete another teacher assignment', () => {
 
   assert.equal(result.status, 403);
   assert.equal(fixture.database.prepare('SELECT 1 FROM assignments WHERE id = ?').get(fixture.newerAssignmentId)['1'], 1);
+});
+
+test('system test assignment initialization creates one live task and preserves production assignments', () => {
+  const fixture = createFixtureDb();
+  const testClassId = fixture.database.prepare(`
+    INSERT INTO classes (name, grade, teacher_id, data_scope, status)
+    VALUES (?, ?, ?, ?, ?)
+  `).run('系统测试班', '测试', 1, 'system_test', 'active').lastInsertRowid;
+  const testStudentUserId = fixture.database.prepare('INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)')
+    .run('system-test-student', '123456', 'student', '测试学生').lastInsertRowid;
+  const testStudentId = fixture.database.prepare('INSERT INTO students (user_id, student_no, grade, school, data_scope) VALUES (?, ?, ?, ?, ?)')
+    .run(testStudentUserId, '6001', '测试', '测试学校', 'system_test').lastInsertRowid;
+  fixture.database.prepare('INSERT INTO class_students (class_id, student_id) VALUES (?, ?)').run(testClassId, testStudentId);
+  const productionAssignmentId = fixture.database.prepare(`
+    INSERT INTO assignments (class_id, title, prompt, essay_type, full_score, status)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(fixture.classId, '周练', '正式任务材料', '材料作文', 60, 'published').lastInsertRowid;
+  fixture.database.prepare(`
+    INSERT INTO assignments (class_id, title, prompt, essay_type, full_score, status)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(testClassId, '周练', '旧测试材料', '材料作文', 60, 'published');
+
+  const first = ensureSystemTestAssignment(fixture.database, { classId: testClassId, actorId: 'test' });
+  const second = ensureSystemTestAssignment(fixture.database, { classId: testClassId, actorId: 'test' });
+  const liveRows = listAssignmentsForClass(fixture.database, testClassId, { dataScope: 'system_test' }).rows;
+  const productionAssignment = getAssignmentById(fixture.database, productionAssignmentId).assignment;
+  const studentRows = listVisibleAssignmentsForStudent(fixture.database, testStudentId).rows;
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(second.assignment.id, first.assignment.id);
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.deepEqual(liveRows.map((row) => row.title), ['师生闭环测试作文']);
+  assert.equal(liveRows[0].status, 'published');
+  assert.equal(liveRows[0].data_scope, 'system_test');
+  assert.equal(liveRows[0].min_words, 300);
+  assert.equal(liveRows[0].submitted_count, 0);
+  assert.equal(liveRows[0].missing_count, 1);
+  assert.equal(studentRows.length, 1);
+  assert.equal(studentRows[0].id, first.assignment.id);
+  assert.equal(productionAssignment.id, productionAssignmentId);
+  assert.equal(productionAssignment.class_id, fixture.classId);
+  assert.equal(productionAssignment.title, '周练');
+});
+
+test('assignment class and student lists isolate production from system test scope', () => {
+  const fixture = createFixtureDb();
+  const systemTeacherClassId = fixture.database.prepare(`
+    INSERT INTO classes (name, grade, teacher_id, data_scope, status)
+    VALUES (?, ?, ?, ?, ?)
+  `).run('系统测试班', '测试', 1, 'system_test', 'active').lastInsertRowid;
+  fixture.database.prepare('INSERT INTO class_students (class_id, student_id) VALUES (?, ?)').run(systemTeacherClassId, fixture.database.prepare('SELECT id FROM students WHERE user_id = ?').get(fixture.studentUser.id).id);
+  fixture.database.prepare(`
+    INSERT INTO assignments (class_id, title, prompt, essay_type, full_score, status)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(systemTeacherClassId, '系统测试旧任务', '旧材料', '材料作文', 60, 'published');
+
+  const systemRows = listAssignmentsForClass(fixture.database, systemTeacherClassId, { dataScope: 'system_test' }).rows;
+  const productionRows = listAssignmentsForClass(fixture.database, fixture.classId, { dataScope: 'production' }).rows;
+
+  assert.ok(systemRows.every((row) => row.data_scope === 'system_test'));
+  assert.ok(systemRows.every((row) => Number(row.class_id) === Number(systemTeacherClassId)));
+  assert.ok(productionRows.every((row) => row.data_scope === 'production'));
+  assert.ok(productionRows.every((row) => Number(row.class_id) === Number(fixture.classId)));
 });

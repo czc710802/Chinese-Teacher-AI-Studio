@@ -186,6 +186,23 @@ test('teacher assignment management exposes task detail and class-scoped task fi
   assert.match(mainSource, /写作要求/);
 });
 
+test('system test center displays live assignment count and not legacy task totals', () => {
+  const testCenter = functionBody('TeacherTestCenterPage');
+  assert.match(testCenter, /stepCounts\.tasks/);
+  assert.match(testCenter, /刷新任务/);
+  assert.match(testCenter, /任务数据加载失败，请重试。/);
+  assert.doesNotMatch(testCenter, /teacherManagement\?\.totals\?\.tasks/);
+});
+
+test('student mobile task pages show loading failures instead of fake zero states', () => {
+  const home = functionBody('StudentMobileHomePage');
+  const tasks = functionBody('StudentMobileTasksPage');
+  assert.match(home, /任务数据加载失败，请重试。/);
+  assert.match(tasks, /任务数据加载失败，请重试。/);
+  assert.match(tasks, /刷新任务/);
+  assert.match(tasks, /开始写作|提交作文/);
+});
+
 test('student mobile home exposes six core entries plus legacy direct grading entry', () => {
   const studentMobileHome = functionBody('StudentMobileHomePage');
   assert.match(studentMobileHome, /我的任务/);

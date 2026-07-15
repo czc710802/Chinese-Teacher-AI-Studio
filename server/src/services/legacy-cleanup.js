@@ -735,6 +735,24 @@ export function buildSystemTestCenterSnapshot({ appDir = process.cwd(), database
       fixture = storeFixture;
     }
   }
+  if (database && fixture.class?.classId && report?.teacherManagement?.totals) {
+    try {
+      const count = Number(database.prepare(`
+        SELECT COUNT(*) AS count
+        FROM assignments a
+        JOIN classes c ON c.id = a.class_id
+        WHERE a.class_id = ?
+          AND COALESCE(NULLIF(a.data_scope, ''), c.data_scope, 'production') = 'system_test'
+          AND a.status = 'published'
+          AND COALESCE(a.deleted_at, '') = ''
+          AND COALESCE(a.archived_at, '') = ''
+      `).get(fixture.class.classId)?.count || 0);
+      report.teacherManagement.totals.tasks = count;
+      report.teacherManagement.totals.liveAssignmentCount = count;
+    } catch {
+      // Keep the dry-run report for audit if the live assignment schema is unavailable.
+    }
+  }
   const classKey = fixture.class?.classKey || generateClassKey({ schoolYear: currentYear(), grade: '测试', className: '系统测试班' });
   const classId = fixture.class?.classId || '';
   const studentKey = fixture.student?.studentKey || '';

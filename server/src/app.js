@@ -105,6 +105,14 @@ export function createApp({
       req.rawBody = buf?.length ? buf.toString('utf8') : '';
     }
   }));
+  app.use('/api', (req, res, next) => {
+    if (/^\/(assignments|student-mobile|teacher|classes)(?:\/|$)/.test(req.path)) {
+      res.set('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+    }
+    next();
+  });
   app.use('/uploads', express.static(path.resolve(__dirname, '../uploads')));
   app.use('/exports', express.static(path.resolve(__dirname, '../exports')));
 

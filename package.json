@@ -37,6 +37,7 @@
     "test-env:reset": "node ops/scripts/test-env.mjs --mode=reset",
     "test-env:rollback": "node ops/scripts/test-env.mjs --mode=rollback",
     "test-env:status": "node ops/scripts/test-env.mjs --mode=status",
+    "system-test:assignment:ensure": "node ops/scripts/ensure-system-test-assignment.mjs --class-id=6",
     "routes:teacher:audit": "node ops/scripts/routes-teacher-audit.mjs",
     "feishu:setup": "bash ops/scripts/setup-feishu-app.sh",
     "feishu:start": "bash ops/scripts/feishu-start.sh",

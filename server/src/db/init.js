@@ -199,7 +199,14 @@ export function migrateAssignmentWorkflow(database = db) {
   addColumnIfMissing(database, 'assignments', 'min_words', 'INTEGER DEFAULT 0');
   addColumnIfMissing(database, 'assignments', 'max_words', 'INTEGER DEFAULT 0');
   addColumnIfMissing(database, 'assignments', 'scoring_standard', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'assignments', 'data_scope', 'TEXT');
+  addColumnIfMissing(database, 'assignments', 'fixture_key', 'TEXT');
   addColumnIfMissing(database, 'assignments', 'status', "TEXT NOT NULL DEFAULT 'published'");
+  addColumnIfMissing(database, 'assignments', 'archived_at', 'TEXT');
+  addColumnIfMissing(database, 'assignments', 'deleted_at', 'TEXT');
+  addColumnIfMissing(database, 'assignments', 'requires_teacher_review', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnIfMissing(database, 'assignments', 'auto_grading', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnIfMissing(database, 'assignments', 'allow_student_view_result', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing(database, 'assignments', 'allow_resubmit', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(database, 'assignments', 'allow_late_submit', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(database, 'assignments', 'second_draft_enabled', 'INTEGER NOT NULL DEFAULT 0');
@@ -226,6 +233,8 @@ export function migrateAssignmentWorkflow(database = db) {
   addColumnIfMissing(database, 'ai_reviews', 'created_by_user_id', "TEXT DEFAULT ''");
   addColumnIfMissing(database, 'ai_reviews', 'created_by_role', "TEXT DEFAULT ''");
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_assignments_public_id ON assignments(public_id) WHERE public_id IS NOT NULL');
+  database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_assignments_fixture_key ON assignments(fixture_key) WHERE fixture_key IS NOT NULL AND fixture_key != ''");
+  database.exec('CREATE INDEX IF NOT EXISTS idx_assignments_class_scope_status ON assignments(class_id, data_scope, status)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_ai_reviews_essay_version ON ai_reviews(essay_id, version_number DESC, id DESC)');
 
   database.exec(`

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db } from '../db/connection.js';
 import { requireUser } from '../middleware/auth.js';
 import { createJoinRequest, createJoinRequestByCode, getJoinPreview, getJoinPreviewByCode, getJoinRequestStatus, listStudentMobileAssignments, listStudentMobileClasses } from '../services/class-lifecycle.js';
+import { getVisibleAssignmentForStudent } from '../services/assignment-access.js';
 
 export const studentMobileRouter = Router();
 
@@ -47,6 +48,14 @@ studentMobileRouter.get('/tasks', (req, res) => {
   const result = listStudentMobileAssignments(db, req.user, req.query.classId || null);
   if (result.status !== 200) return res.status(result.status).json({ message: result.message });
   res.json(result.rows);
+});
+
+studentMobileRouter.get('/tasks/:assignmentId', (req, res) => {
+  const student = db.prepare('SELECT id FROM students WHERE user_id = ?').get(req.user.id);
+  if (!student) return res.status(404).json({ message: '学生档案不存在' });
+  const result = getVisibleAssignmentForStudent(db, student.id, req.params.assignmentId);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.assignment);
 });
 
 studentMobileRouter.get('/profile', (req, res) => {

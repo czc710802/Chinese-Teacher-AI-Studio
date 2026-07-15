@@ -13,6 +13,42 @@ function getStudent(database, user) {
   return database.prepare('SELECT id FROM students WHERE user_id = ?').get(user.id);
 }
 
+function tableColumns(database, tableName) {
+  try {
+    return new Set(database.prepare(`PRAGMA table_info('${tableName}')`).all().map((column) => column.name));
+  } catch {
+    return new Set();
+  }
+}
+
+function hasColumn(database, tableName, columnName) {
+  return tableColumns(database, tableName).has(columnName);
+}
+
+function assignmentScopeExpression(database) {
+  return hasColumn(database, 'assignments', 'data_scope')
+    ? "COALESCE(NULLIF(a.data_scope, ''), c.data_scope, 'production')"
+    : "COALESCE(c.data_scope, 'production')";
+}
+
+function activeAssignmentCondition(database, alias = 'a') {
+  const parts = [`${alias}.status = 'published'`];
+  if (hasColumn(database, 'assignments', 'deleted_at')) parts.push(`COALESCE(${alias}.deleted_at, '') = ''`);
+  if (hasColumn(database, 'assignments', 'archived_at')) parts.push(`COALESCE(${alias}.archived_at, '') = ''`);
+  return parts.join(' AND ');
+}
+
+function normalizeAssignmentRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    data_scope: row.data_scope || row.class_data_scope || 'production',
+    requires_teacher_review: Number(row.requires_teacher_review ?? 1),
+    auto_grading: Number(row.auto_grading ?? 1),
+    allow_student_view_result: Number(row.allow_student_view_result ?? 1)
+  };
+}
+
 function assignmentKey(row) {
   return [
     row.class_id,
@@ -132,7 +168,9 @@ function ensureAssignmentShareFields(database, assignment, options = {}) {
 }
 
 function withSubmissionStats(database, assignment, options = {}) {
-  const shared = ensureAssignmentShareFields(database, assignment, options);
+  const normalized = normalizeAssignmentRow(assignment);
+  const shared = ensureAssignmentShareFields(database, normalized, options);
+  if (!shared) return shared;
   const submitted = database.prepare(`
     SELECT COUNT(DISTINCT student_id) AS count
     FROM essays
@@ -147,37 +185,114 @@ function withSubmissionStats(database, assignment, options = {}) {
   };
 }
 
-export function listAssignmentsForUser(database, user, { classId } = {}) {
+function mapAssignmentRows(database, rows, options = {}) {
+  return dedupeAssignments(rows.map(normalizeAssignmentRow)).map((row) => withSubmissionStats(database, row, options));
+}
+
+export function listAssignmentsForClass(database, classId, { dataScope = '', includeArchived = false, options = {} } = {}) {
+  const scopeExpression = assignmentScopeExpression(database);
+  const conditions = ['a.class_id = ?'];
+  const params = [String(classId)];
+  if (dataScope) {
+    conditions.push(`${scopeExpression} = ?`);
+    params.push(String(dataScope));
+  }
+  if (!includeArchived) conditions.push(activeAssignmentCondition(database));
+  const rows = database.prepare(`
+    SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(e.id) AS essay_count
+    FROM assignments a
+    JOIN classes c ON c.id = a.class_id
+    LEFT JOIN essays e ON e.assignment_id = a.id
+    WHERE ${conditions.join(' AND ')}
+    GROUP BY a.id
+    ORDER BY a.created_at DESC, a.id DESC
+  `).all(...params);
+  return { status: 200, rows: mapAssignmentRows(database, rows, options) };
+}
+
+export function getAssignmentById(database, assignmentId, options = {}) {
+  const scopeExpression = assignmentScopeExpression(database);
+  const assignment = database.prepare(`
+    SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(e.id) AS essay_count
+    FROM assignments a
+    JOIN classes c ON c.id = a.class_id
+    LEFT JOIN essays e ON e.assignment_id = a.id
+    WHERE a.id = ? OR a.public_id = ?
+    GROUP BY a.id
+  `).get(Number(assignmentId) || -1, String(assignmentId || ''));
+  if (!assignment) return { status: 404, message: '作文任务不存在' };
+  return { status: 200, assignment: withSubmissionStats(database, assignment, options) };
+}
+
+export function listVisibleAssignmentsForStudent(database, studentId, { classId = '', dataScope = '', options = {} } = {}) {
+  const scopeExpression = assignmentScopeExpression(database);
+  const conditions = ['cs.student_id = ?', "c.status != 'deleted'", "COALESCE(b.status, 'active') = 'active'", activeAssignmentCondition(database)];
+  const params = [Number(studentId)];
+  if (classId) {
+    conditions.push('a.class_id = ?');
+    params.push(String(classId));
+  }
+  if (dataScope) {
+    conditions.push(`${scopeExpression} = ?`);
+    params.push(String(dataScope));
+  }
+  const rows = database.prepare(`
+    SELECT a.*, c.name AS class_name, c.grade AS class_grade, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(e.id) AS essay_count
+    FROM assignments a
+    JOIN classes c ON c.id = a.class_id
+    JOIN class_students cs ON cs.class_id = c.id
+    LEFT JOIN student_class_bindings b ON b.student_id = cs.student_id AND b.class_id = c.id
+    LEFT JOIN essays e ON e.assignment_id = a.id
+    WHERE ${conditions.join(' AND ')}
+    GROUP BY a.id
+    ORDER BY a.created_at DESC, a.id DESC
+  `).all(...params);
+  return {
+    status: 200,
+    rows: mapAssignmentRows(database, rows, options).map((row) => ({
+      ...row,
+      word_count_range: [Number(row.min_words || 0), Number(row.max_words || 0)],
+      submitted: false
+    }))
+  };
+}
+
+export function getVisibleAssignmentForStudent(database, studentId, assignmentId, options = {}) {
+  const rows = listVisibleAssignmentsForStudent(database, studentId, { options }).rows;
+  const assignment = rows.find((row) => String(row.id) === String(assignmentId) || String(row.public_id || '') === String(assignmentId));
+  if (!assignment) return { status: 404, message: '任务不存在或暂不可见' };
+  return { status: 200, assignment };
+}
+
+export function listAssignmentsForUser(database, user, { classId, dataScope } = {}) {
   const scopedClassId = classId ? String(classId) : null;
+  const scopeExpression = assignmentScopeExpression(database);
 
   if (user.role === 'teacher') {
     const teacher = getTeacher(database, user);
+    const conditions = ['c.teacher_id = ?', '(? IS NULL OR a.class_id = ?)'];
+    const params = [teacher?.id || 0, scopedClassId, scopedClassId];
+    if (dataScope) {
+      conditions.push(`${scopeExpression} = ?`);
+      params.push(String(dataScope));
+    }
+    conditions.push(activeAssignmentCondition(database));
     const rows = database.prepare(`
-      SELECT a.*, c.name AS class_name, COUNT(e.id) AS essay_count
+      SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(e.id) AS essay_count
       FROM assignments a
       JOIN classes c ON c.id = a.class_id
       LEFT JOIN essays e ON e.assignment_id = a.id
-      WHERE c.teacher_id = ? AND (? IS NULL OR a.class_id = ?)
+      WHERE ${conditions.join(' AND ')}
       GROUP BY a.id
       ORDER BY a.created_at DESC, a.id DESC
-    `).all(teacher?.id || 0, scopedClassId, scopedClassId);
-    return { status: 200, rows: dedupeAssignments(rows).map((row) => withSubmissionStats(database, row)) };
+    `).all(...params);
+    return { status: 200, rows: mapAssignmentRows(database, rows) };
   }
 
   if (user.role === 'student') {
     const student = getStudent(database, user);
     if (!student) return { status: 403, message: '没有查看作文任务的权限', rows: [] };
-    const rows = database.prepare(`
-      SELECT a.*, c.name AS class_name, COUNT(e.id) AS essay_count
-      FROM assignments a
-      JOIN classes c ON c.id = a.class_id
-      JOIN class_students cs ON cs.class_id = c.id
-      LEFT JOIN essays e ON e.assignment_id = a.id
-      WHERE cs.student_id = ? AND (? IS NULL OR a.class_id = ?)
-      GROUP BY a.id
-      ORDER BY a.created_at DESC, a.id DESC
-    `).all(student.id, scopedClassId, scopedClassId);
-    return { status: 200, rows: dedupeAssignments(rows).map((row) => withSubmissionStats(database, row)) };
+    return listVisibleAssignmentsForStudent(database, student.id, { classId: scopedClassId, dataScope });
   }
 
   return { status: 403, message: '没有查看作文任务的权限', rows: [] };
@@ -205,6 +320,11 @@ export function createManagedAssignment(database, user, body, options = {}) {
     scoring_standard: String(body.scoring_standard || body.scoringStandard || '').trim(),
     deadline: String(body.deadline || '').trim(),
     status: String(body.status || 'published').trim() || 'published',
+    data_scope: String(body.data_scope || body.dataScope || klass.data_scope || '').trim(),
+    fixture_key: String(body.fixture_key || body.fixtureKey || '').trim(),
+    requires_teacher_review: body.requires_teacher_review === false || body.requiresTeacherReview === false ? 0 : 1,
+    auto_grading: body.auto_grading === false || body.autoGrading === false ? 0 : 1,
+    allow_student_view_result: body.allow_student_view_result === false || body.allowStudentViewResult === false ? 0 : 1,
     allow_resubmit: body.allow_resubmit || body.allowResubmit ? 1 : 0,
     allow_late_submit: body.allow_late_submit || body.allowLateSubmit ? 1 : 0,
     second_draft_enabled: body.second_draft_enabled || body.secondDraftEnabled ? 1 : 0,
@@ -230,6 +350,8 @@ export function createManagedAssignment(database, user, body, options = {}) {
       AND COALESCE(a.min_words, 0) = ?
       AND COALESCE(a.max_words, 0) = ?
       AND COALESCE(TRIM(a.deadline), '') = COALESCE(TRIM(?), '')
+      AND COALESCE(a.archived_at, '') = ''
+      AND COALESCE(a.deleted_at, '') = ''
     GROUP BY a.id
     ORDER BY essay_count DESC, a.created_at DESC, a.id DESC
     LIMIT 1
@@ -243,13 +365,15 @@ export function createManagedAssignment(database, user, body, options = {}) {
   const result = database.prepare(`
     INSERT INTO assignments
       (class_id, public_id, title, prompt, requirements, essay_type, full_score, grade,
-       min_words, max_words, scoring_standard, status, allow_resubmit, allow_late_submit,
+       min_words, max_words, scoring_standard, data_scope, fixture_key, status,
+       requires_teacher_review, auto_grading, allow_student_view_result, allow_resubmit, allow_late_submit,
        second_draft_enabled, reminder_enabled, published_at,
        share_url, qr_svg, feishu_chat_id, deadline)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
   `).run(
     next.class_id, publicId, next.title, next.prompt, next.requirements, next.essay_type, next.full_score, next.grade,
-    next.min_words, next.max_words, next.scoring_standard, next.status, next.allow_resubmit,
+    next.min_words, next.max_words, next.scoring_standard, next.data_scope || null, next.fixture_key || null, next.status,
+    next.requires_teacher_review, next.auto_grading, next.allow_student_view_result, next.allow_resubmit,
     next.allow_late_submit, next.second_draft_enabled, next.reminder_enabled,
     submissionUrl, qrSvg, next.feishu_chat_id, next.deadline || null
   );
@@ -259,12 +383,131 @@ export function createManagedAssignment(database, user, body, options = {}) {
   };
 }
 
+export function ensureSystemTestAssignment(database, { classId, actorId = 'system', options = {} } = {}) {
+  const liveClassId = Number(classId || 0);
+  const klass = database.prepare(`
+    SELECT c.*, t.user_id AS teacher_user_id
+    FROM classes c
+    JOIN teachers t ON t.id = c.teacher_id
+    WHERE c.id = ?
+  `).get(liveClassId);
+  if (!klass) return { status: 404, message: '系统测试班不存在' };
+  if (String(klass.data_scope || '').toLowerCase() !== 'system_test') return { status: 409, message: '目标班级不是 system_test，已拒绝初始化测试任务' };
+
+  const fixtureKey = `system_test_assignment:${liveClassId}:teacher_student_loop`;
+  const existing = hasColumn(database, 'assignments', 'fixture_key')
+    ? database.prepare(`
+      SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope, ${assignmentScopeExpression(database)} AS data_scope
+      FROM assignments a
+      JOIN classes c ON c.id = a.class_id
+      WHERE a.fixture_key = ? AND ${activeAssignmentCondition(database)}
+      LIMIT 1
+    `).get(fixtureKey)
+    : null;
+
+  const archiveDuplicates = (keepId) => {
+    const candidates = database.prepare(`
+      SELECT a.id, a.title, a.status
+      FROM assignments a
+      JOIN classes c ON c.id = a.class_id
+      WHERE a.class_id = ? AND a.id != ? AND ${activeAssignmentCondition(database)}
+    `).all(liveClassId, keepId);
+    for (const row of candidates) {
+      database.prepare("UPDATE assignments SET data_scope = COALESCE(NULLIF(data_scope, ''), 'system_test'), status = 'archived', archived_at = COALESCE(archived_at, CURRENT_TIMESTAMP) WHERE id = ?").run(row.id);
+      database.prepare(`
+        INSERT INTO class_membership_audit_logs (operator_id, operator_role, target_type, target_id, action, before_state, after_state, reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        String(actorId || 'system'),
+        'system',
+        'assignment',
+        String(row.id),
+        'assignment.archive_duplicate_system_test',
+        JSON.stringify(row),
+        JSON.stringify({ status: 'archived', archived_at: 'CURRENT_TIMESTAMP' }),
+        `保留 class ${liveClassId} 的唯一系统测试任务`
+      );
+    }
+    return candidates.length;
+  };
+
+  try {
+    database.exec('BEGIN IMMEDIATE');
+    if (existing) {
+      const archivedCount = archiveDuplicates(existing.id);
+      database.exec('COMMIT');
+      return { status: 200, assignment: withSubmissionStats(database, existing, options), created: false, archivedDuplicates: archivedCount };
+    }
+
+    const created = createManagedAssignment(database, { id: klass.teacher_user_id, role: 'teacher' }, {
+      class_id: liveClassId,
+      title: '师生闭环测试作文',
+      prompt: '用于验证教师发布、学生查看、作文提交、AI 批改、教师审核和学生查看结果的完整教学流程。',
+      requirements: '写一篇不少于300字的测试作文。只允许使用虚构内容，不得填写真实学生隐私。',
+      essay_type: '材料作文',
+      full_score: 60,
+      grade: klass.grade || '测试',
+      min_words: 300,
+      max_words: 0,
+      scoring_standard: '内容、表达、发展等级综合评分',
+      data_scope: 'system_test',
+      fixture_key: fixtureKey,
+      status: 'published',
+      requires_teacher_review: true,
+      auto_grading: true,
+      allow_student_view_result: true
+    }, options);
+    if (created.status !== 200) {
+      database.exec('ROLLBACK');
+      return created;
+    }
+    database.prepare(`
+      UPDATE assignments
+      SET data_scope = 'system_test',
+          fixture_key = ?,
+          status = 'published',
+          requires_teacher_review = 1,
+          auto_grading = 1,
+          allow_student_view_result = 1,
+          deleted_at = NULL,
+          archived_at = NULL,
+          published_at = COALESCE(published_at, CURRENT_TIMESTAMP)
+      WHERE id = ?
+    `).run(fixtureKey, created.assignment.id);
+    database.prepare(`
+      INSERT INTO class_membership_audit_logs (operator_id, operator_role, target_type, target_id, action, before_state, after_state, reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      String(actorId || 'system'),
+      'system',
+      'assignment',
+      String(created.assignment.id),
+      'assignment.seed_system_test',
+      '{}',
+      JSON.stringify({ classId: liveClassId, fixtureKey, title: '师生闭环测试作文' }),
+      '初始化唯一系统测试任务'
+    );
+    const archivedCount = archiveDuplicates(created.assignment.id);
+    database.exec('COMMIT');
+    return {
+      status: 200,
+      assignment: withSubmissionStats(database, database.prepare('SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope FROM assignments a JOIN classes c ON c.id = a.class_id WHERE a.id = ?').get(created.assignment.id), options),
+      created: true,
+      archivedDuplicates: archivedCount
+    };
+  } catch (error) {
+    try { database.exec('ROLLBACK'); } catch {}
+    throw error;
+  }
+}
+
 export function getAssignmentPublicSummary(database, assignmentId, options = {}) {
+  const scopeExpression = assignmentScopeExpression(database);
   const assignment = database.prepare(`
-    SELECT a.*, c.name AS class_name
+    SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope
     FROM assignments a
     JOIN classes c ON c.id = a.class_id
-    WHERE a.id = ? OR a.public_id = ?
+    WHERE (a.id = ? OR a.public_id = ?) AND ${activeAssignmentCondition(database)}
   `).get(Number(assignmentId) || -1, String(assignmentId || ''));
   if (!assignment) return { status: 404, message: '作文作业不存在或链接已失效' };
   if (assignment.status && assignment.status !== 'published') return { status: 404, message: '作文作业尚未发布' };
@@ -272,11 +515,12 @@ export function getAssignmentPublicSummary(database, assignmentId, options = {})
 }
 
 export function getAssignmentSubmissionStatus(database, user, assignmentId, options = {}) {
+  const scopeExpression = assignmentScopeExpression(database);
   const assignment = database.prepare(`
-    SELECT a.*, c.name AS class_name, c.teacher_id
+    SELECT a.*, c.name AS class_name, c.teacher_id, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope
     FROM assignments a
     JOIN classes c ON c.id = a.class_id
-    WHERE a.id = ? OR a.public_id = ?
+    WHERE (a.id = ? OR a.public_id = ?) AND ${activeAssignmentCondition(database)}
   `).get(Number(assignmentId) || -1, String(assignmentId || ''));
   if (!assignment) return { status: 404, message: '作文作业不存在' };
   const teacher = getTeacher(database, user);

@@ -27,7 +27,7 @@ assignmentRouter.get('/public/:assignmentId', (req, res) => {
 assignmentRouter.use(requireUser);
 
 assignmentRouter.get('/', (req, res) => {
-  const result = listAssignmentsForUser(db, req.user, { classId: req.query.classId });
+  const result = listAssignmentsForUser(db, req.user, { classId: req.query.classId, dataScope: req.query.dataScope });
   if (result.status !== 200) return res.status(result.status).json({ message: result.message });
   res.json(result.rows);
 });
