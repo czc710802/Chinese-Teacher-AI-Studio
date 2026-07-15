@@ -2808,10 +2808,10 @@ function TeacherSettingsPage() {
         </article>
         <article className="archive-row">
           <div>
-            <b>飞书教师绑定</b>
-            <p>仅保留历史兼容和系统通知，不再承载核心业务。</p>
+            <b>飞书业务</b>
+            <p>已暂停。历史数据与兼容路由保留，仅由管理员集成页查看。</p>
           </div>
-          <span className="archive-actions"><a href="/admin/feishu/teachers">打开</a></span>
+          <span className="archive-actions"><a href="/admin/integrations">查看状态</a></span>
         </article>
       </div>
     </div>
@@ -3427,8 +3427,8 @@ function AssignmentPublish() {
       <p><b>学生提交链接：</b>{published.submission_url || published.share_url}</p>
       <div className="actions">
         <button type="button" onClick={() => copyLink(published.submission_url || published.share_url)}>复制链接</button>
-        <button type="button" onClick={() => api(`/assignments/${published.public_id || published.id}/share/feishu`, { method: 'POST', body: {} }).then((data) => alert(data.sent ? '已发送到飞书' : data.message || '已生成飞书分享卡片'))}>发送到飞书</button>
       </div>
+      <p className="hint">飞书业务已暂停，当前仅保留链接复制与二维码分享。</p>
       {published.qr_svg && <div className="qr-preview" dangerouslySetInnerHTML={{ __html: published.qr_svg }} />}
     </div>}
   </Card>;
