@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, setSession, getSession } from './api/client.js';
 import './styles/app.css';
-import { ArrowLeft, BookOpen, Camera, ChartNoAxesCombined, Check, ChevronUp, Copy, Download, FileText, Filter, GraduationCap, Home, LockKeyhole, LogOut, MoreHorizontal, PackageOpen, PenLine, Plus, Search, School, Send, Share2, Star, Trash2, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, BookOpen, Camera, ChartNoAxesCombined, Check, ChevronUp, Copy, Download, FileText, Filter, GraduationCap, Home, LockKeyhole, LogOut, MoreHorizontal, PackageOpen, PenLine, Plus, Search, School, Send, Share2, Star, TestTube2, Trash2, UserPlus, Users } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Sparkles, MessageCircle, Trophy, Newspaper, Bookmark, RotateCcw, TrendingUp, BrainCircuit, Scale, FileSpreadsheet } from 'lucide-react';
 
@@ -2066,8 +2066,10 @@ function TeacherDashboardCard() {
   return <Card title="教师工作台" icon={<School size={20} />}>
     {!data ? <p className="hint">正在读取教师后台数据...</p> : <>
       <div className="teacher-kpis">
-        <span><b>{data.classes.total}</b>班级</span>
-        <span><b>{data.students.total}</b>学生</span>
+        <span><b>{data.classes.visible ?? data.classes.total}</b>可见班级</span>
+        <span><b>{data.students.visible ?? data.students.total}</b>可见学生</span>
+        <span><b>{data.classes.test ?? 0}</b>测试班级</span>
+        <span><b>{data.students.test ?? 0}</b>测试学生</span>
         <span><b>{data.essays.total}</b>作文</span>
         <span><b>{data.scores.average7d ?? '--'}</b>7天均分</span>
       </div>
@@ -2082,6 +2084,7 @@ function TeacherDashboardCard() {
         <a href="/teacher/students"><GraduationCap size={18} />学生管理</a>
         <a href="/teacher/essays"><FileText size={18} />作文管理</a>
         <a href="/teacher/tasks"><RotateCcw size={18} />任务中心</a>
+        <a href="/teacher/test-center"><TestTube2 size={18} />系统测试中心</a>
         <a href="/teacher/benchmark"><FileSpreadsheet size={18} />Benchmark Center</a>
       </div>
     </>}
@@ -2103,6 +2106,7 @@ function TeacherManagementShell({ title, icon, children }) {
       <a href="/teacher/students">学生</a>
       <a href="/teacher/essays">作文</a>
       <a href="/teacher/tasks">任务</a>
+      <a href="/teacher/test-center">测试中心</a>
       <a href="/teacher/benchmark">Benchmark</a>
     </div>
     <Card title={title} icon={icon}>{children}</Card>
@@ -2200,7 +2204,7 @@ function BenchmarkCenterPage() {
 
 function TeacherClassesPage() {
   const [rows, setRows] = useState([]);
-  const [filters, setFilters] = useState({ keyword: '', grade: '', schoolYear: '', status: '' });
+  const [filters, setFilters] = useState({ scope: 'system_test', keyword: '', grade: '', schoolYear: '', status: '' });
   const [message, setMessage] = useState('');
   async function load() {
     const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString();
@@ -2215,12 +2219,14 @@ function TeacherClassesPage() {
   }
   return <TeacherManagementShell title="班级管理" icon={<Users size={20} />}>
     <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
+      <select value={filters.scope} onChange={(e) => setFilters({ ...filters, scope: e.target.value })}><option value="system_test">仅系统测试数据</option><option value="">全部历史数据</option></select>
       <label><Search size={18} /><input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="搜索班级/教师" /></label>
       <input value={filters.grade} onChange={(e) => setFilters({ ...filters, grade: e.target.value })} placeholder="年级" />
       <input value={filters.schoolYear} onChange={(e) => setFilters({ ...filters, schoolYear: e.target.value })} placeholder="学年" />
       <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="">全部状态</option><option value="active">active</option><option value="archived">archived</option></select>
       <button><Filter size={18} />筛选</button>
     </form>
+    <p className="hint">默认仅展示系统测试班级。切换到“全部历史数据”可以查看旧班级，但不会自动执行删除。</p>
     {message && <p className="error">{message}</p>}
     <div className="management-table">
       {rows.map((klass) => <article className="management-row" key={klass.classKey}>
@@ -2233,7 +2239,7 @@ function TeacherClassesPage() {
         <span className="record-actions">
           <a href={`/teacher/classes/${encodeURIComponent(klass.classKey)}`}>详情</a>
           <a href={`/teacher/classes/${encodeURIComponent(klass.classKey)}/members`}>成员管理</a>
-          <button type="button" onClick={() => archive(klass.classKey)}>归档</button>
+          {klass.status !== 'archived' ? <button type="button" onClick={() => archive(klass.classKey)}>归档</button> : <span className="hint">已归档</span>}
         </span>
       </article>)}
       {!rows.length && <p className="hint">暂无班级数据，请先运行 classes:rebuild 或创建班级。</p>}
@@ -2265,7 +2271,7 @@ function TeacherClassDetailPage() {
 
 function TeacherStudentsPage() {
   const [rows, setRows] = useState([]);
-  const [filters, setFilters] = useState({ keyword: '', classKey: '', trend: '', status: '' });
+  const [filters, setFilters] = useState({ scope: 'system_test', keyword: '', classKey: '', trend: '', status: '' });
   async function load() {
     const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString();
     const data = await api(`/teacher/students${query ? `?${query}` : ''}`);
@@ -2274,13 +2280,133 @@ function TeacherStudentsPage() {
   useEffect(() => { load().catch(() => {}); }, []);
   return <TeacherManagementShell title="学生管理" icon={<GraduationCap size={20} />}>
     <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
+      <select value={filters.scope} onChange={(e) => setFilters({ ...filters, scope: e.target.value })}><option value="system_test">仅系统测试数据</option><option value="">全部历史数据</option></select>
       <label><Search size={18} /><input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="搜索姓名/学号" /></label>
       <input value={filters.classKey} onChange={(e) => setFilters({ ...filters, classKey: e.target.value })} placeholder="classKey" />
       <select value={filters.trend} onChange={(e) => setFilters({ ...filters, trend: e.target.value })}><option value="">全部趋势</option><option value="up">up</option><option value="stable">stable</option><option value="down">down</option></select>
       <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="">全部状态</option><option value="active">active</option><option value="archived">archived</option></select>
       <button><Filter size={18} />筛选</button>
     </form>
+    <p className="hint">默认仅展示系统测试学生。切换到“全部历史数据”可以查看旧学生名单，但不会自动执行删除。</p>
     <div className="management-table">{rows.map((student) => <a className="management-row" href={`/student-profiles/${encodeURIComponent(student.studentKey)}`} key={student.studentKey}><b>{student.studentName}<span>{student.studentId}</span></b><span>{student.className}</span><span>{student.essayCount}篇</span><span>均分 {student.averageScore ?? '--'}</span><span>最近 {student.latestScore ?? '--'}</span><span>{student.scoreTrend || '--'}</span><span>{student.weakestAbility || '--'}</span></a>)}</div>
+  </TeacherManagementShell>;
+}
+
+function TeacherTestCenterPage() {
+  const [data, setData] = useState(null);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState('');
+
+  async function load() {
+    setBusy('load');
+    try {
+      setData(await api('/teacher/test-center'));
+      setMessage('');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  useEffect(() => { load().catch(() => {}); }, []);
+
+  async function resetFixture() {
+    setBusy('reset');
+    try {
+      const result = await api('/teacher/test-center/reset-fixture', { method: 'POST', body: {} });
+      setData(result.snapshot);
+      setMessage('系统测试入口已重建。');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function rerunDryRun() {
+    setBusy('dry-run');
+    try {
+      const result = await api('/teacher/cleanup/legacy/dry-run');
+      const snapshot = await api('/teacher/test-center');
+      setData({ ...snapshot, report: result.report, reportFiles: result.files });
+      setMessage(`dry-run 已生成：可归档 ${result.report?.archive?.length || 0} 条，物理删除候选 ${result.report?.physicalDelete?.length || 0} 条。`);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  const report = data?.report || null;
+  const fixtureClass = data?.fixture?.class || null;
+  const fixtureStudent = data?.fixture?.student || null;
+
+  return <TeacherManagementShell title="系统测试中心" icon={<TestTube2 size={20} />}>
+    <p className="hint">仅供系统测试，请勿用于真实学生数据。这里默认只展示系统测试班级和系统测试学生，旧数据保留在历史视图中。</p>
+    {message && <p className="hint">{message}</p>}
+    <div className="actions">
+      <button type="button" onClick={resetFixture} disabled={busy === 'reset'}>{busy === 'reset' ? '重建中...' : '重建系统测试入口'}</button>
+      <button type="button" onClick={rerunDryRun} disabled={busy === 'dry-run'}>{busy === 'dry-run' ? '生成中...' : '重新生成 dry-run'}</button>
+      <button type="button" onClick={load} disabled={busy === 'load'}>{busy === 'load' ? '刷新中...' : '刷新'}</button>
+    </div>
+    <div className="teacher-kpis">
+      <span><b>{report?.teacherManagement?.totals?.testClasses ?? 0}</b>测试班级</span>
+      <span><b>{report?.teacherManagement?.totals?.testStudents ?? 0}</b>测试学生</span>
+      <span><b>{report?.archive?.length ?? 0}</b>拟归档</span>
+      <span><b>{report?.logicalDelete?.length ?? 0}</b>拟逻辑删除</span>
+      <span><b>{report?.physicalDelete?.length ?? 0}</b>拟物理删除</span>
+    </div>
+    <div className="archive-grid">
+      <div className="archive-list">
+        <h3>测试入口</h3>
+        <article className="archive-row">
+          <div>
+            <b>{fixtureClass?.className || '系统测试班'}</b>
+            <p>{fixtureClass?.grade || '测试'} · {fixtureClass?.schoolYear || '当前学年'} · {fixtureClass?.joinMode || 'approval'}</p>
+            <code>{fixtureClass?.classKey || '未配置 classKey'}</code>
+            <p className="hint">邀请口令：{fixtureClass?.inviteCode || 'SYSTEM-TEST-001'} · 状态：{fixtureClass?.status || 'active'}</p>
+          </div>
+        </article>
+        <article className="archive-row">
+          <div>
+            <b>{fixtureStudent?.studentName || '测试学生'}</b>
+            <p>{fixtureStudent?.studentId || 'TEST001'} · {fixtureStudent?.className || '系统测试班'}</p>
+            <code>{fixtureStudent?.studentKey || 'TEST001_测试学生'}</code>
+          </div>
+        </article>
+        <div className="actions">
+          <a className="button-link" href={data?.links?.teacherClasses || '/teacher/classes?scope=system_test'}>打开班级管理</a>
+          <a className="button-link" href={data?.links?.teacherStudents || '/teacher/students?scope=system_test'}>打开学生管理</a>
+          <a className="button-link" href={data?.links?.teacherAssignments || '/assignments/new'}>发布测试任务</a>
+        </div>
+        <div className="actions">
+          <a className="button-link" href={data?.links?.studentJoin || '/student-mobile/join/code'}>学生入班页</a>
+          <a className="button-link" href={data?.links?.studentHome || '/student-mobile/home'}>学生首页</a>
+          <a className="button-link" href={data?.links?.teacherTasks || '/teacher/tasks'}>任务中心</a>
+        </div>
+      </div>
+      <aside className="archive-detail">
+        <h3>dry-run 结果</h3>
+        <p className="hint">备份：{report?.backupPath || '未找到最新备份'}</p>
+        {report ? <>
+          <p>teacher-management：班级 {report.teacherManagement?.totals?.classes ?? 0}，学生 {report.teacherManagement?.totals?.students ?? 0}，作文 {report.teacherManagement?.totals?.essays ?? 0}</p>
+          <p>SQLite：班级 {report.sqlite?.tables?.classes ?? 0}，学生 {report.sqlite?.tables?.students ?? 0}，作文 {report.sqlite?.tables?.essays ?? 0}，AI 记录 {report.sqlite?.tables?.ai_reviews ?? 0}</p>
+          <h4>建议保留</h4>
+          {(report.keep || []).slice(0, 6).map((item) => <article className="archive-row" key={`${item.type}-${item.key}`}>
+            <div><b>{item.name}</b><p>{item.type} · {item.key}</p></div>
+          </article>)}
+          <h4>拟归档</h4>
+          {(report.archive || []).slice(0, 6).map((item) => <article className="archive-row" key={item.classKey}>
+            <div><b>{item.className}</b><p>{item.classKey} · {item.recommendedAction}</p></div>
+          </article>)}
+          <h4>拟物理删除</h4>
+          {(report.physicalDelete || []).slice(0, 6).map((item) => <article className="archive-row" key={item.classKey || item.studentKey}>
+            <div><b>{item.className || item.studentName}</b><p>{item.classKey || item.studentKey} · {item.recommendedAction}</p></div>
+          </article>)}
+        </> : <p className="hint">点击“重新生成 dry-run”后会显示清理建议。</p>}
+      </aside>
+    </div>
   </TeacherManagementShell>;
 }
 
@@ -2341,7 +2467,7 @@ function TeacherHome() {
         <h2>班级管理、任务发布与批改汇总</h2>
       </div>
     </section>
-    <div className="grid"><TeacherDashboardCard /><PublicAccessPanel title="公网演示入口" intro="用于手机端访问、课堂展示和线上演示。复制后可直接发给听众。" /><TeacherRerunTaskCard /><Card title="飞书班级群" icon={<MessageCircle size={20} />}><p className="hint">绑定班级主群、备用群，并发送系统测试消息。</p><div className="actions"><a className="button-link" href="/teacher/feishu/classes">进入群绑定</a></div></Card><Card title="Archive" icon={<PackageOpen size={20} />}><p className="hint">查看作文自动归档、NAS 路径和待同步状态。</p><div className="actions"><a className="button-link" href="/archive">进入 Archive</a></div></Card><Card title="学生成长档案" icon={<TrendingUp size={20} />}><p className="hint">查看学生分数趋势、能力变化、高频问题和训练计划。</p><div className="actions"><a className="button-link" href="/student-profiles">进入档案中心</a></div></Card><PasswordCard /><AssignmentPublish /><AssignmentManagement /><ClassManagement /><TeacherReviewCenter /><TeacherInsightPanel /></div>
+    <div className="grid"><TeacherDashboardCard /><PublicAccessPanel title="公网演示入口" intro="用于手机端访问、课堂展示和线上演示。复制后可直接发给听众。" /><TeacherRerunTaskCard /><Card title="系统测试中心" icon={<TestTube2 size={20} />}><p className="hint">统一查看测试班级、测试学生和清理 dry-run 结果。</p><div className="actions"><a className="button-link" href="/teacher/test-center">进入测试中心</a></div></Card><Card title="飞书班级群" icon={<MessageCircle size={20} />}><p className="hint">绑定班级主群、备用群，并发送系统测试消息。</p><div className="actions"><a className="button-link" href="/teacher/feishu/classes">进入群绑定</a></div></Card><Card title="Archive" icon={<PackageOpen size={20} />}><p className="hint">查看作文自动归档、NAS 路径和待同步状态。</p><div className="actions"><a className="button-link" href="/archive">进入 Archive</a></div></Card><Card title="学生成长档案" icon={<TrendingUp size={20} />}><p className="hint">查看学生分数趋势、能力变化、高频问题和训练计划。</p><div className="actions"><a className="button-link" href="/student-profiles">进入档案中心</a></div></Card><PasswordCard /><AssignmentPublish /><AssignmentManagement /><ClassManagement /><TeacherReviewCenter /><TeacherInsightPanel /></div>
   </Layout>;
 }
 
@@ -2781,89 +2907,15 @@ function RoleRoute({ roles, children }) {
 }
 
 function ClassManagement() {
-  const [classes, setClasses] = useState([]);
-  const [form, setForm] = useState({ name: '', grade: '高三' });
-  const [importClassId, setImportClassId] = useState('');
-  const [deleteClassId, setDeleteClassId] = useState('');
-  const [singleStudentForm, setSingleStudentForm] = useState({ name: '', student_no: '' });
-  const [rosterText, setRosterText] = useState('');
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  async function refreshClasses() {
-    const rows = await api('/classes');
-    setClasses(rows);
-    setImportClassId((current) => rows.some((row) => String(row.id) === current) ? current : String(rows[0]?.id || ''));
-    setDeleteClassId((current) => rows.some((row) => String(row.id) === current) ? current : String(rows[0]?.id || ''));
-  }
-  useEffect(() => { refreshClasses(); }, []);
-  async function create() {
-    if (!form.name.trim()) return setError('请填写班级名称');
-    setError('');
-    const klass = await api('/classes', { method: 'POST', body: form });
-    await refreshClasses();
-    setImportClassId(String(klass.id));
-    setDeleteClassId(String(klass.id));
-    setForm({ name: '', grade: '高三' });
-    setMessage(`已创建 ${klass.name}。请在下方添加学生或导入名单。`);
-  }
-  async function deleteClass() {
-    if (!deleteClassId) return setError('请先选择要删除的班级');
-    const klass = classes.find((item) => String(item.id) === String(deleteClassId));
-    if (!window.confirm(`确定删除 ${klass?.name || '这个班级'} 吗？只能删除没有学生和作文任务的空班级。`)) return;
-    setError('');
-    try {
-      await api(`/classes/${deleteClassId}`, { method: 'DELETE' });
-      await refreshClasses();
-      setMessage(`已删除 ${klass?.name || '班级'}。`);
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-  async function addSingleStudent() {
-    const name = singleStudentForm.name.trim();
-    const student_no = singleStudentForm.student_no.trim();
-    if (!importClassId) return setError('请先选择要新增学生的班级');
-    if (!name) return setError('请填写学生姓名');
-    setError('');
-    const result = await api(`/classes/${importClassId}/students`, { method: 'POST', body: { students: [{ name, student_no }] } });
-    await refreshClasses();
-    setSingleStudentForm({ name: '', student_no: '' });
-    setMessage(result.created.length ? `已新增学生 ${name}，初始密码 123456。` : `已把 ${name} 加入当前班级。`);
-  }
-  async function addStudents() {
-    const roster = rosterText.split('\n').map((line) => {
-      const [name = '', student_no = ''] = line.split(/[，,\t]/).map((value) => value.trim());
-      return { name, student_no };
-    }).filter((item) => item.name);
-    if (!importClassId) return setError('请先选择要导入的班级');
-    if (!roster.length) return setError('请填写学生名单');
-    setError('');
-    const result = await api(`/classes/${importClassId}/students`, { method: 'POST', body: { students: roster } });
-    await refreshClasses();
-    setRosterText('');
-    setMessage(result.created.length ? `已新增 ${result.created.length} 名学生，初始密码均为 123456。` : '名单已更新。');
-  }
+  const [message] = useState('');
   return <Card title="班级管理" icon={<Users size={20} />}>
-    <div className="row"><input placeholder="班级名称" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /><button onClick={create}>新增班级</button></div>
-    <div className="row class-delete-row">
-      <select value={deleteClassId} onChange={(e) => setDeleteClassId(e.target.value)}>{classes.map((klass) => <option key={klass.id} value={klass.id}>{klass.name}</option>)}</select>
-      <button type="button" className="danger-button" onClick={deleteClass}>删除班级</button>
+    <p className="hint">默认班级管理已迁移到“教师工作台 → 班级管理 / 学生管理 / 系统测试中心”。这个旧入口保留兼容，不再展示删除按钮和冗长名单。</p>
+    <div className="actions">
+      <a className="button-link" href="/teacher/classes?scope=system_test">打开班级管理</a>
+      <a className="button-link" href="/teacher/students?scope=system_test">打开学生管理</a>
+      <a className="button-link" href="/teacher/test-center">进入系统测试中心</a>
     </div>
-    <section className="roster-import-entry">
-      <div className="row">
-        <input placeholder="新增学生姓名" value={singleStudentForm.name} onChange={(e) => setSingleStudentForm({ ...singleStudentForm, name: e.target.value })} />
-        <input placeholder="学号" value={singleStudentForm.student_no} onChange={(e) => setSingleStudentForm({ ...singleStudentForm, student_no: e.target.value })} />
-        <button type="button" onClick={addSingleStudent}>新增学生</button>
-      </div>
-      <div className="row">
-        <select value={importClassId} onChange={(e) => setImportClassId(e.target.value)}>{classes.map((klass) => <option key={klass.id} value={klass.id}>{klass.name}</option>)}</select>
-        <button onClick={addStudents}>批量导入学生名单</button>
-      </div>
-      <textarea value={rosterText} onChange={(e) => setRosterText(e.target.value)} placeholder="学生姓名，学号；每行一名学生" rows="5" />
-    </section>
-    {error && <p className="error">{error}</p>}
     {message && <p className="hint">{message}</p>}
-    <div className="class-roster-grid">{classes.map((klass) => <ClassRosterPanel key={`${klass.id}-${klass.student_count || 0}`} klass={klass} availableClasses={classes} onChanged={refreshClasses} />)}</div>
   </Card>;
 }
 
@@ -3331,6 +3383,7 @@ function App() {
     <Route path="/teacher/classes/:classKey/join-requests" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
     <Route path="/teacher/classes/:classKey/members" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
     <Route path="/teacher/students" element={<RoleRoute roles={['teacher']}><TeacherStudentsPage /></RoleRoute>} />
+    <Route path="/teacher/test-center" element={<RoleRoute roles={['teacher']}><TeacherTestCenterPage /></RoleRoute>} />
     <Route path="/teacher/essays" element={<RoleRoute roles={['teacher']}><TeacherEssaysPage /></RoleRoute>} />
     <Route path="/teacher/tasks" element={<RoleRoute roles={['teacher']}><TeacherTasksPage /></RoleRoute>} />
     <Route path="/teacher/benchmark" element={<RoleRoute roles={['teacher']}><BenchmarkCenterPage /></RoleRoute>} />

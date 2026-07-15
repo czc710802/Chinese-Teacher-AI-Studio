@@ -515,25 +515,35 @@ test('teacher roster import panel lets teacher edit each student name', () => {
   assert.match(classRosterPanel, /`\/classes\/\$\{klass\.id\}\/students\/\$\{editingStudentId\}`/);
 });
 
-test('teacher class management merges repeated roster import controls into one entry', () => {
+test('teacher class management now points to safe management and test center entries', () => {
   const classManagement = functionBody('ClassManagement');
-  const classRosterPanel = functionBody('ClassRosterPanel');
-  assert.equal(countMatches(classManagement, /批量导入学生名单/g), 1);
-  assert.match(classManagement, /importClassId/);
-  assert.match(classManagement, /rosterText/);
-  assert.doesNotMatch(classRosterPanel, /批量导入学生名单|rosterText|addStudents/);
+  assert.match(classManagement, /默认班级管理已迁移/);
+  assert.match(classManagement, /打开班级管理/);
+  assert.match(classManagement, /打开学生管理/);
+  assert.match(classManagement, /进入系统测试中心/);
+  assert.doesNotMatch(classManagement, /删除班级/);
+  assert.doesNotMatch(classManagement, /新增班级/);
+  assert.doesNotMatch(classManagement, /批量导入学生名单/);
 });
 
-test('teacher class management exposes add and delete controls for classes and roster students', () => {
+test('teacher class and student management default to system test scope and avoid destructive controls', () => {
+  const teacherClassesPage = functionBody('TeacherClassesPage');
+  const teacherStudentsPage = functionBody('TeacherStudentsPage');
   const classManagement = functionBody('ClassManagement');
-  const classRosterPanel = functionBody('ClassRosterPanel');
-  assert.match(classManagement, /新增班级/);
-  assert.match(classManagement, /deleteClass/);
-  assert.match(classManagement, /`\/classes\/\$\{deleteClassId\}`/);
-  assert.match(classManagement, /新增学生/);
-  assert.match(classManagement, /addSingleStudent/);
-  assert.match(classRosterPanel, /移出班级/);
-  assert.match(classRosterPanel, /removeStudent\(student\.id\)/);
+  assert.match(teacherClassesPage, /scope: 'system_test'/);
+  assert.match(teacherClassesPage, /仅系统测试数据/);
+  assert.match(teacherStudentsPage, /scope: 'system_test'/);
+  assert.match(teacherStudentsPage, /仅系统测试数据/);
+  assert.doesNotMatch(classManagement, /deleteClass/);
+  assert.doesNotMatch(classManagement, /rosterText/);
+});
+
+test('teacher test center exposes reset and legacy cleanup dry-run actions', () => {
+  const testCenter = functionBody('TeacherTestCenterPage');
+  assert.match(testCenter, /系统测试中心/);
+  assert.match(testCenter, /重建系统测试入口/);
+  assert.match(testCenter, /重新生成 dry-run/);
+  assert.match(testCenter, /拟物理删除/);
 });
 
 test('student roster displays a deduplicated list while preserving workspace links', () => {

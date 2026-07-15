@@ -74,6 +74,12 @@ function pageRows(rows, filters = {}) {
   return { items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize };
 }
 
+function isTrue(value) {
+  if (typeof value === 'boolean') return value;
+  const text = String(value ?? '').trim().toLowerCase();
+  return ['1', 'true', 'yes', 'y', 'on', 'system_test'].includes(text);
+}
+
 function sortRows(rows, filters = {}, fallback = 'updatedAt') {
   const sortBy = filters.sortBy || fallback;
   const sortOrder = filters.sortOrder === 'asc' ? 1 : -1;
@@ -515,6 +521,7 @@ export function restoreStudent(appDir, studentKey, actor) {
 
 export function listClasses(appDir, filters = {}) {
   let rows = readStore(appDir, 'classes').items;
+  if (filters.scope === 'system_test' || isTrue(filters.isTestData)) rows = rows.filter((item) => isTrue(item.isTestData));
   if (filters.grade) rows = rows.filter((item) => item.grade === filters.grade);
   if (filters.schoolYear) rows = rows.filter((item) => item.schoolYear === filters.schoolYear);
   if (filters.teacherId) rows = rows.filter((item) => item.teacherId === filters.teacherId);
@@ -525,6 +532,7 @@ export function listClasses(appDir, filters = {}) {
 
 export function listStudents(appDir, filters = {}) {
   let rows = readStore(appDir, 'students').items;
+  if (filters.scope === 'system_test' || isTrue(filters.isTestData)) rows = rows.filter((item) => isTrue(item.isTestData));
   if (filters.classKey) rows = rows.filter((item) => item.classKey === filters.classKey);
   if (filters.grade) rows = rows.filter((item) => item.grade === filters.grade);
   if (filters.status) rows = rows.filter((item) => item.status === filters.status);
@@ -791,13 +799,28 @@ export function getTeacherDashboard({ appDir = process.cwd(), aiStatus = {}, nas
   const classes = readStore(appDir, 'classes').items;
   const students = readStore(appDir, 'students').items;
   const essays = readStore(appDir, 'essays').items;
+  const testClasses = classes.filter((item) => isTrue(item.isTestData));
+  const visibleClassRows = testClasses.length ? testClasses : classes.filter((item) => item.status === 'active');
+  const visibleStudentRows = testClasses.length
+    ? students.filter((item) => isTrue(item.isTestData) || visibleClassRows.some((klass) => klass.classKey === item.classKey))
+    : students.filter((item) => item.status === 'active');
   const today = new Date().toISOString().slice(0, 10);
   const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
   const recentScores = essays.filter((item) => new Date(item.submittedAt || 0).getTime() >= sevenDaysAgo).map((item) => asNumber(item.score)).filter((value) => value != null);
   const normalized = essays.map((item) => item.normalizedScore).filter((value) => value != null);
   return {
-    classes: { total: classes.length },
-    students: { total: students.length, active: students.filter((item) => item.status === 'active').length },
+    classes: {
+      total: classes.length,
+      active: classes.filter((item) => item.status === 'active').length,
+      visible: visibleClassRows.length,
+      test: testClasses.length
+    },
+    students: {
+      total: students.length,
+      active: students.filter((item) => item.status === 'active').length,
+      visible: visibleStudentRows.length,
+      test: students.filter((item) => isTrue(item.isTestData)).length
+    },
     essays: {
       total: essays.length,
       todaySubmitted: essays.filter((item) => String(item.submittedAt || '').startsWith(today)).length,

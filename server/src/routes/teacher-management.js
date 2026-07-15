@@ -40,6 +40,7 @@ import { sendCardMessage } from '../integrations/feishu/client.js';
 import { refreshStudentProfile } from '../services/profile.js';
 import { recordReviewArtifact } from '../services/storage-artifacts.js';
 import { archiveEssayToZSpaceAsync } from '../services/zspace-storage.js';
+import { buildLegacyCleanupDryRun, buildSystemTestCenterSnapshot, ensureSystemTestFixture, writeLegacyCleanupReport } from '../services/legacy-cleanup.js';
 
 function actor(req) {
   return { actorId: String(req.user?.id || ''), actorRole: req.user?.role || '' };
@@ -172,6 +173,39 @@ teacherManagementRouter.get('/dashboard', (req, res) => {
     aiStatus: getAiStatus(),
     nasStatus: nasStatus(req)
   }));
+});
+
+teacherManagementRouter.get('/test-center', (req, res) => {
+  const snapshot = buildSystemTestCenterSnapshot({
+    appDir: req.app.locals.appDir,
+    database: db
+  });
+  res.json(snapshot);
+});
+
+teacherManagementRouter.post('/test-center/reset-fixture', (req, res) => {
+  const result = ensureSystemTestFixture(req.app.locals.appDir, { logger: req.app.locals.logger || console });
+  res.json({
+    ok: true,
+    ...result,
+    snapshot: buildSystemTestCenterSnapshot({
+      appDir: req.app.locals.appDir,
+      database: db
+    })
+  });
+});
+
+teacherManagementRouter.get('/cleanup/legacy/dry-run', (req, res) => {
+  const report = buildLegacyCleanupDryRun({
+    appDir: req.app.locals.appDir,
+    database: db
+  });
+  const files = writeLegacyCleanupReport(req.app.locals.appDir, report);
+  res.json({
+    ok: true,
+    report,
+    files
+  });
 });
 
 teacherManagementRouter.get('/classes', (req, res) => res.json(listClasses(req.app.locals.appDir, req.query)));
