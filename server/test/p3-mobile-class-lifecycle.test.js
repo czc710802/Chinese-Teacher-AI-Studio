@@ -7,12 +7,19 @@ import { applyP3MobileClassLifecycleMigration, getP3MobileClassLifecycleMigratio
 import {
   archiveLifecycleClass,
   createJoinRequest,
+  createJoinRequestByCode,
   createLifecycleClass,
   getJoinPreview,
+  getJoinPreviewByCode,
+  getJoinRequestStatus,
   listStudentMobileAssignments,
   listStudentMobileClasses,
   approveJoinRequest,
-  restoreLifecycleClass
+  pauseClassMember,
+  removeClassMember,
+  restoreLifecycleClass,
+  restoreClassMember,
+  transferClassMember
 } from '../src/services/class-lifecycle.js';
 
 function createFixtureDb() {
@@ -150,4 +157,104 @@ test('closed classes reject new join requests and avoid duplicate member binding
 
   assert.equal(rejected.status, 409);
   assert.match(rejected.message, /不接受新成员|不可加入/);
+});
+
+test('invite code join keeps a single pending request, supports status lookup and can be approved', () => {
+  const fixture = createFixtureDb();
+  const created = createLifecycleClass(fixture.database, fixture.teacherUser, {
+    name: '高二5班',
+    grade: '高二',
+    join_mode: 'approval',
+    max_students: 45
+  });
+  const invite = fixture.database.prepare('SELECT * FROM class_invites WHERE class_id = ? ORDER BY id DESC LIMIT 1').get(created.class.id);
+
+  const preview = getJoinPreviewByCode(fixture.database, invite.invite_code);
+  assert.equal(preview.status, 200);
+  assert.equal(preview.class.name, '高二5班');
+
+  const request = createJoinRequestByCode(fixture.database, {
+    code: invite.invite_code,
+    studentName: '赵同学',
+    studentNo: '2026001',
+    source: 'student-mobile'
+  });
+  assert.equal(request.status, 200);
+  assert.equal(request.request.status, 'pending');
+
+  const duplicate = createJoinRequestByCode(fixture.database, {
+    code: invite.invite_code,
+    studentName: '赵同学',
+    studentNo: '2026001',
+    source: 'student-mobile'
+  });
+  assert.equal(duplicate.status, 409);
+
+  const status = getJoinRequestStatus(fixture.database, fixture.studentUser, request.request.id);
+  assert.equal(status.status, 200);
+  assert.equal(status.request.status, 'pending');
+
+  const approved = approveJoinRequest(fixture.database, fixture.teacherUser, created.class.id, request.request.id);
+  assert.equal(approved.status, 200);
+  assert.equal(approved.request.status, 'approved');
+  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM student_class_bindings WHERE class_id = ? AND student_id = ? AND status = ?').get(created.class.id, fixture.studentId, 'active').count, 1);
+});
+
+test('teacher can pause, restore, remove and transfer memberships without deleting historical bindings', () => {
+  const fixture = createFixtureDb();
+  const source = createLifecycleClass(fixture.database, fixture.teacherUser, {
+    name: '高二6班',
+    grade: '高二',
+    join_mode: 'approval',
+    max_students: 45
+  });
+  const target = createLifecycleClass(fixture.database, fixture.teacherUser, {
+    name: '高二7班',
+    grade: '高二',
+    join_mode: 'open',
+    max_students: 45
+  });
+  const sourceInvite = fixture.database.prepare('SELECT * FROM class_invites WHERE class_id = ? ORDER BY id DESC LIMIT 1').get(source.class.id);
+
+  createJoinRequestByCode(fixture.database, {
+    code: sourceInvite.invite_code,
+    studentName: '赵同学',
+    studentNo: '2026001',
+    source: 'student-mobile'
+  });
+  const sourceRequest = fixture.database.prepare('SELECT * FROM class_join_requests WHERE class_id = ? ORDER BY id DESC LIMIT 1').get(source.class.id);
+  approveJoinRequest(fixture.database, fixture.teacherUser, source.class.id, sourceRequest.id);
+  fixture.database.prepare(`
+    INSERT INTO assignments (class_id, public_id, title, prompt, requirements, essay_type, full_score, status, deadline)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(source.class.id, 'G2-20260715-010', '班级任务', '写作要求', '要求', '材料作文', 60, 'published', '2030-01-01T00:00:00');
+
+  assert.ok(listStudentMobileClasses(fixture.database, fixture.studentUser).rows.some((row) => Number(row.id) === Number(source.class.id)));
+
+  const paused = pauseClassMember(fixture.database, fixture.teacherUser, source.class.id, fixture.studentId, '临时停用');
+  assert.equal(paused.status, 200);
+  assert.equal(fixture.database.prepare('SELECT status FROM student_class_bindings WHERE class_id = ? AND student_id = ?').get(source.class.id, fixture.studentId).status, 'paused');
+  assert.ok(!listStudentMobileClasses(fixture.database, fixture.studentUser).rows.some((row) => Number(row.id) === Number(source.class.id)));
+
+  const restored = restoreClassMember(fixture.database, fixture.teacherUser, source.class.id, fixture.studentId, '恢复');
+  assert.equal(restored.status, 200);
+  assert.equal(fixture.database.prepare('SELECT status FROM student_class_bindings WHERE class_id = ? AND student_id = ?').get(source.class.id, fixture.studentId).status, 'active');
+  assert.ok(listStudentMobileClasses(fixture.database, fixture.studentUser).rows.some((row) => Number(row.id) === Number(source.class.id)));
+
+  const removed = removeClassMember(fixture.database, fixture.teacherUser, source.class.id, fixture.studentId, '移出班级');
+  assert.equal(removed.status, 200);
+  assert.equal(fixture.database.prepare('SELECT status FROM student_class_bindings WHERE class_id = ? AND student_id = ?').get(source.class.id, fixture.studentId).status, 'removed');
+  assert.ok(!listStudentMobileClasses(fixture.database, fixture.studentUser).rows.some((row) => Number(row.id) === Number(source.class.id)));
+
+  const transferred = transferClassMember(fixture.database, fixture.teacherUser, source.class.id, fixture.studentId, target.class.id, { reason: '转班', keepSourceMembership: false });
+  assert.equal(transferred.status, 200);
+  assert.equal(fixture.database.prepare('SELECT status FROM student_class_bindings WHERE class_id = ? AND student_id = ?').get(target.class.id, fixture.studentId).status, 'active');
+  assert.equal(fixture.database.prepare('SELECT status FROM student_class_bindings WHERE class_id = ? AND student_id = ?').get(source.class.id, fixture.studentId).status, 'transferred');
+  assert.ok(listStudentMobileClasses(fixture.database, fixture.studentUser).rows.some((row) => Number(row.id) === Number(target.class.id)));
+  assert.ok(!listStudentMobileClasses(fixture.database, fixture.studentUser).rows.some((row) => Number(row.id) === Number(source.class.id)));
+
+  const assignmentRows = listStudentMobileAssignments(fixture.database, fixture.studentUser).rows;
+  assert.ok(!assignmentRows.some((row) => Number(row.class_id) === Number(source.class.id)));
+  assert.ok(assignmentRows.every((row) => Number(row.class_id) !== Number(source.class.id)));
+  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM class_students WHERE class_id = ? AND student_id = ?').get(source.class.id, fixture.studentId).count, 1);
 });

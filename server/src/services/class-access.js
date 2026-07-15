@@ -12,17 +12,23 @@ export function getClassRosterForUser(database, user, classId) {
       SELECT 1
       FROM class_students cs
       JOIN students s ON s.id = cs.student_id
+      LEFT JOIN student_class_bindings b ON b.student_id = s.id AND b.class_id = cs.class_id
       WHERE cs.class_id = ? AND s.user_id = ?
+        AND COALESCE(b.status, 'active') = 'active'
     `).get(classId, user.id);
   }
   if (!canRead) return { status: 403, message: '没有查看该班级名单的权限', rows: [] };
 
   const rows = database.prepare(`
     SELECT s.id, s.student_no, u.name, u.username,
+           COALESCE(b.status, 'active') AS binding_status,
+           b.joined_at,
+           b.left_at,
            CASE WHEN s.user_id = ? THEN 1 ELSE 0 END AS is_current_user
     FROM class_students cs
     JOIN students s ON s.id = cs.student_id
     JOIN users u ON u.id = s.user_id
+    LEFT JOIN student_class_bindings b ON b.student_id = s.id AND b.class_id = cs.class_id
     WHERE cs.class_id = ?
     ORDER BY CAST(s.student_no AS INTEGER), s.student_no, u.name
   `).all(user.id, classId).map((row) => (

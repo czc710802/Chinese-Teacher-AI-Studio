@@ -49,7 +49,16 @@ function addColumnIfMissing(database, tableName, columnName, ddl) {
   const exists = database.prepare(`PRAGMA table_info('${tableName}')`).all()
     .some((column) => column.name === columnName);
   if (exists) return;
-  database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${ddl}`);
+  try {
+    database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${ddl}`);
+  } catch (error) {
+    const message = String(error?.message || '');
+    if (!message.includes('non-constant default')) throw error;
+    const fallbackDdl = String(ddl)
+      .replace(/\s+NOT\s+NULL/ig, '')
+      .replace(/\s+DEFAULT\s+(?:'[^']*'|"[^"]*"|[^\s,]+)/ig, '');
+    database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${fallbackDdl}`);
+  }
 }
 
 function migrateClassLifecycleWorkflow(database = db) {
@@ -60,6 +69,14 @@ function migrateClassLifecycleWorkflow(database = db) {
   addColumnIfMissing(database, 'classes', 'archived_at', 'TEXT');
   addColumnIfMissing(database, 'classes', 'deleted_at', 'TEXT');
   addColumnIfMissing(database, 'classes', 'updated_at', 'TEXT');
+  database.exec(`
+    UPDATE classes
+    SET join_mode = COALESCE(NULLIF(join_mode, ''), 'approval'),
+        status = COALESCE(NULLIF(status, ''), 'active'),
+        max_students = COALESCE(max_students, 0),
+        updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
+    WHERE join_mode IS NULL OR status IS NULL OR max_students IS NULL OR updated_at IS NULL
+  `);
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS student_class_bindings (

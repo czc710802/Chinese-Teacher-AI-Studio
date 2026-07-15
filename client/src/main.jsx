@@ -970,9 +970,71 @@ function StudentMobileJoinPage() {
       <input placeholder="学生姓名" value={form.studentName} onChange={(e) => setForm({ ...form, studentName: e.target.value })} />
       <input placeholder="学号（可选）" value={form.studentNo} onChange={(e) => setForm({ ...form, studentNo: e.target.value })} />
       <button onClick={submit}>提交入班申请</button>
+      <a className="hint" href="/student-mobile/join/code">手工输入邀请码加入</a>
     </div> : <p className="hint">请通过教师发来的二维码或链接进入。</p>}
     {message && <p className="success">{message}</p>}
     {error && <p className="error">{error}</p>}
+  </Card></Layout>;
+}
+
+function StudentMobileJoinCodePage() {
+  const [form, setForm] = useState({ code: '', studentName: '', studentNo: '' });
+  const [preview, setPreview] = useState(null);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [error, setError] = useState('');
+  const nav = useNavigate();
+
+  useEffect(() => {
+    const code = String(form.code || '').trim();
+    if (!code) {
+      setPreview(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setError('');
+      api(`/student-mobile/join/code/${encodeURIComponent(code)}`).then(setPreview).catch((err) => {
+        setPreview(null);
+        setError(err.message);
+      });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [form.code]);
+
+  async function submit() {
+    const code = String(form.code || '').trim();
+    if (!code) return setError('请填写邀请码');
+    if (!form.studentName.trim()) return setError('请填写学生姓名');
+    setError('');
+    try {
+      const result = await api('/student-mobile/join/code', {
+        method: 'POST',
+        body: { code, studentName: form.studentName.trim(), studentNo: form.studentNo.trim() }
+      });
+      nav(`/student-mobile/join/status?requestId=${encodeURIComponent(result.id || result.request_id || '')}&classId=${encodeURIComponent(result.class_id || '')}&status=${encodeURIComponent(result.status || 'pending')}`, { replace: true });
+    } catch (err) {
+      setStatusMessage('');
+      setError(err.message);
+    }
+  }
+
+  return <Layout><Card title="手工输入邀请码" icon={<Users size={20} />}>
+    <div className="form-stack">
+      <input placeholder="短邀请码，例如 JOIN-XXXXXX" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
+      {preview && <div className="assignment-submit-summary">
+        <h3>{preview.name}</h3>
+        <p>{preview.grade || '未填写年级'} · {preview.teacher_name || '任课教师未填'}</p>
+        <p>入班方式：{preview.join_mode || 'approval'} · 当前状态：{preview.status || 'active'} · 人数上限：{preview.max_students || '不限'}</p>
+        <p>邀请码：{preview.invite_code || '未配置'} · 有效期：{formatDateTime(preview.invite_expires_at)}</p>
+      </div>}
+      <input placeholder="学生姓名" value={form.studentName} onChange={(e) => setForm({ ...form, studentName: e.target.value })} />
+      <input placeholder="学号或识别信息（可选）" value={form.studentNo} onChange={(e) => setForm({ ...form, studentNo: e.target.value })} />
+      {statusMessage && <p className="success">{statusMessage}</p>}
+      {error && <p className="error">{error}</p>}
+      <div className="actions">
+        <a href="/student-mobile/join">返回二维码加入</a>
+        <button type="button" onClick={submit}>提交入班申请</button>
+      </div>
+    </div>
   </Card></Layout>;
 }
 
@@ -981,14 +1043,40 @@ function StudentMobileJoinStatusPage() {
   const status = params.get('status') || 'pending';
   const classId = params.get('classId') || '';
   const requestId = params.get('requestId') || '';
+  const [detail, setDetail] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!requestId) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const next = await api(`/student-mobile/join/requests/${encodeURIComponent(requestId)}`);
+        if (!cancelled) setDetail(next);
+      } catch (err) {
+        if (!cancelled) setError(err.message);
+      }
+    };
+    load();
+    const timer = setInterval(load, 2500);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [requestId]);
+  const resolvedStatus = detail?.status || status;
   return <Layout><Card title="入班结果" icon={<Check size={20} />}>
     <div className="form-stack">
-      <p><b>{status === 'approved' ? '已加入班级' : '入班申请已提交'}</b></p>
-      <p className="hint">班级编号：{classId || '未返回'} · 申请编号：{requestId || '未返回'}</p>
+      <p><b>{resolvedStatus === 'approved' ? '已加入班级' : resolvedStatus === 'rejected' ? '入班申请已被拒绝' : '入班申请已提交'}</b></p>
+      <p className="hint">班级编号：{detail?.class_id || classId || '未返回'} · 申请编号：{requestId || '未返回'}</p>
+      {detail && <div className="assignment-submit-summary">
+        <h3>{detail.class_name || '班级'}</h3>
+        <p>{detail.class_grade || '未填写年级'} · {detail.invite_code || '邀请码未返回'}</p>
+        <p>申请状态：{detail.status || resolvedStatus} · 入班方式：{detail.invite_join_mode || 'approval'} · 班级状态：{detail.class_status || 'active'}</p>
+        {detail.review_reason && <p>审核说明：{detail.review_reason}</p>}
+      </div>}
+      {error && <p className="error">{error}</p>}
       <p className="hint">如需继续，请返回任务首页或等待教师审核。</p>
       <div className="actions">
         <a href="/student-mobile/home">返回首页</a>
         <a href="/student-mobile/tasks">查看任务</a>
+        {resolvedStatus === 'rejected' && <a href="/student-mobile/join/code">修改信息并重新申请</a>}
       </div>
     </div>
   </Card></Layout>;
@@ -1010,6 +1098,7 @@ function StudentMobileHomePage() {
         <a href="/student">自由作文 AI 批改</a>
         <a href="/student-mobile/tasks">我的任务</a>
         <a href="/student-mobile/join">加入班级</a>
+        <a href="/student-mobile/join/code">输入邀请码</a>
         <a href="/student-mobile/profile">成长档案</a>
       </div>
     </Card>
@@ -1075,6 +1164,215 @@ function StudentMobileProfilePage() {
       <pre style={{whiteSpace:'pre-wrap'}}>{profile.score_trend || '[]'}</pre>
     </div> : <p className="hint">请先登录后查看。</p>}
   </Card></Layout>;
+}
+
+function TeacherLifecycleClassPage() {
+  const { classKey } = useParams();
+  const location = useLocation();
+  const nav = useNavigate();
+  const isNumeric = /^\d+$/.test(String(classKey || ''));
+  const initialTab = location.pathname.endsWith('/join-requests')
+    ? 'requests'
+    : location.pathname.endsWith('/members')
+      ? 'members'
+      : 'overview';
+  const [tab, setTab] = useState(initialTab);
+  const [detail, setDetail] = useState(null);
+  const [requests, setRequests] = useState([]);
+  const [members, setMembers] = useState([]);
+  const [allClasses, setAllClasses] = useState([]);
+  const [transferTargets, setTransferTargets] = useState({});
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState('');
+
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab]);
+
+  async function load() {
+    const [inviteData, memberRows, classRows] = await Promise.all([
+      api(`/classes/${encodeURIComponent(classKey)}/invite`),
+      api(`/classes/${encodeURIComponent(classKey)}/members`),
+      api('/classes')
+    ]);
+    setDetail(inviteData);
+    setRequests(inviteData.requests || []);
+    setMembers(memberRows || []);
+    setAllClasses(classRows || []);
+    setMessage('');
+  }
+
+  useEffect(() => {
+    if (!isNumeric) return;
+    load().catch((err) => setMessage(err.message));
+  }, [classKey]);
+
+  if (!isNumeric) {
+    return <TeacherClassDetailPage />;
+  }
+
+  if (!detail) {
+    return <Layout><Card title="班级工作台" icon={<Users size={20} />}>{message ? <p className="error">{message}</p> : <p className="hint">正在加载班级工作台...</p>}</Card></Layout>;
+  }
+
+  const klass = detail.class || {};
+  const currentInvite = detail.invite || null;
+  const otherClasses = allClasses.filter((item) => String(item.id) !== String(classKey));
+
+  async function rotateInvite() {
+    setBusy('rotate');
+    try {
+      await api(`/classes/${encodeURIComponent(classKey)}/invite/rotate`, { method: 'POST', body: { joinMode: klass.join_mode || 'approval' } });
+      await load();
+      setMessage('已重新生成班级邀请码。');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function approveRequest(requestId) {
+    setBusy(`approve-${requestId}`);
+    try {
+      await api(`/classes/${encodeURIComponent(classKey)}/join-requests/${encodeURIComponent(requestId)}/approve`, { method: 'POST', body: {} });
+      await load();
+      setMessage('已批准入班申请。');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function rejectRequest(requestId) {
+    const reason = window.prompt('拒绝原因（可选）', '');
+    if (reason === null) return;
+    setBusy(`reject-${requestId}`);
+    try {
+      await api(`/classes/${encodeURIComponent(classKey)}/join-requests/${encodeURIComponent(requestId)}/reject`, { method: 'POST', body: { reason } });
+      await load();
+      setMessage('已拒绝入班申请。');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function changeMemberStatus(studentId, action, payload = {}) {
+    setBusy(`${action}-${studentId}`);
+    try {
+      const targetMap = {
+        remove: { method: 'DELETE', path: `/classes/${encodeURIComponent(classKey)}/students/${encodeURIComponent(studentId)}` },
+        pause: { method: 'POST', path: `/classes/${encodeURIComponent(classKey)}/students/${encodeURIComponent(studentId)}/pause` },
+        restore: { method: 'POST', path: `/classes/${encodeURIComponent(classKey)}/students/${encodeURIComponent(studentId)}/restore` },
+        transfer: { method: 'POST', path: `/classes/${encodeURIComponent(classKey)}/students/${encodeURIComponent(studentId)}/transfer` }
+      };
+      const target = targetMap[action];
+      if (!target) return;
+      await api(target.path, { method: target.method, body: payload });
+      await load();
+      setMessage(action === 'transfer' ? '已完成转班。' : '已更新成员状态。');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  const requestsSection = (
+    <div className="management-table">
+      {requests.map((request) => <article className="management-row" key={request.id}>
+        <b>{request.student_name}<span>{request.student_no || '未填学号'}</span></b>
+        <span>{request.source || 'student-mobile'}</span>
+        <span>{request.status}</span>
+        <span>{formatDateTime(request.requested_at)}</span>
+        <span>{request.invite_code || '邀请码未显示'}</span>
+        <span>{request.membership_status || '未加入'}</span>
+        <span className="record-actions">
+          <button type="button" className="primary-button" disabled={busy === `approve-${request.id}`} onClick={() => approveRequest(request.id)}>{busy === `approve-${request.id}` ? '处理中' : '批准'}</button>
+          <button type="button" className="danger-button" disabled={busy === `reject-${request.id}`} onClick={() => rejectRequest(request.id)}>{busy === `reject-${request.id}` ? '处理中' : '拒绝'}</button>
+        </span>
+      </article>)}
+      {!requests.length && <p className="hint">当前没有待处理的入班申请。</p>}
+    </div>
+  );
+
+  const membersSection = (
+    <div className="management-table">
+      {members.map((member) => {
+        const targetClassId = transferTargets[member.id] || otherClasses[0]?.id || '';
+        return <article className="management-row" key={member.id}>
+          <b>{member.name}<span>{member.student_no || '未填学号'}</span></b>
+          <span>{member.username || '--'}</span>
+          <span>{member.binding_status || 'active'}</span>
+          <span>{formatDateTime(member.joined_at)}</span>
+          <span>{member.left_at ? `离开：${formatDateTime(member.left_at)}` : '当前有效'}</span>
+          <span className="record-actions">
+            <button type="button" onClick={() => changeMemberStatus(member.id, 'pause', { reason: '教师停用成员' })} disabled={busy === `pause-${member.id}` || member.binding_status !== 'active'}>停用</button>
+            <button type="button" onClick={() => changeMemberStatus(member.id, 'restore', { reason: '教师恢复成员' })} disabled={busy === `restore-${member.id}` || member.binding_status === 'active'}>恢复</button>
+            <button type="button" className="danger-button" onClick={() => changeMemberStatus(member.id, 'remove', { reason: '教师移出班级' })} disabled={busy === `remove-${member.id}`}>移出</button>
+          </span>
+          <div className="assignment-share-panel">
+            <div className="row">
+              <select value={String(targetClassId || '')} onChange={(e) => setTransferTargets((current) => ({ ...current, [member.id]: e.target.value }))}>
+                <option value="">选择目标班级</option>
+                {otherClasses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+              <button type="button" onClick={() => changeMemberStatus(member.id, 'transfer', { targetClassId: Number(targetClassId), keepSourceMembership: false, reason: '教师转班' })} disabled={!targetClassId || busy === `transfer-${member.id}`}>转班</button>
+            </div>
+          </div>
+        </article>;
+      })}
+      {!members.length && <p className="hint">当前班级还没有成员，或成员已全部停用。</p>}
+    </div>
+  );
+
+  return <Layout>
+    <section className="role-banner teacher-banner">
+      <div className="role-banner-mark"><School size={28} /></div>
+      <div>
+        <p>教师班级工作台</p>
+        <h2>{klass.name || '班级工作台'}</h2>
+      </div>
+    </section>
+    <div className="teacher-subnav">
+      <a href="/teacher">首页</a>
+      <a href="/teacher/classes">班级</a>
+      <a href={`/teacher/classes/${encodeURIComponent(classKey)}`}>总览</a>
+      <a href={`/teacher/classes/${encodeURIComponent(classKey)}/join-requests`}>入班申请</a>
+      <a href={`/teacher/classes/${encodeURIComponent(classKey)}/members`}>成员管理</a>
+    </div>
+    <div className="grid">
+      <Card title="班级总览" icon={<School size={20} />}>
+        <div className="stats">
+          <span><b>{klass.student_count ?? 0}</b>成员</span>
+          <span><b>{klass.binding_count ?? 0}</b>绑定</span>
+          <span><b>{klass.pending_join_requests ?? 0}</b>待审核</span>
+          <span><b>{klass.active_invites ?? 0}</b>有效邀请码</span>
+        </div>
+        <p>{klass.name || '未命名班级'} · {klass.grade || '未填写年级'} · {klass.join_mode || 'approval'} · {klass.status || 'active'}</p>
+        <p className="hint">邀请码：{currentInvite?.invite_code || klass.invite_code || '未配置'} · 有效期：{formatDateTime(currentInvite?.expires_at || klass.invite_code_expires_at)}</p>
+        <div className="actions">
+          <a className="button-link" href={detail.invite_url || '#'} target="_blank" rel="noreferrer">打开二维码链接</a>
+          <button type="button" onClick={rotateInvite} disabled={busy === 'rotate'}>{busy === 'rotate' ? '生成中' : '重新生成邀请码'}</button>
+        </div>
+        {detail.qr_svg && <div className="qr-preview" dangerouslySetInnerHTML={{ __html: detail.qr_svg }} />}
+        {message && <p className={message.includes('失败') ? 'error' : 'success'}>{message}</p>}
+      </Card>
+      <Card title="页面切换" icon={<Bookmark size={20} />}>
+        <div className="actions">
+          <button type="button" className={tab === 'overview' ? 'primary-button' : ''} onClick={() => setTab('overview')}>总览</button>
+          <button type="button" className={tab === 'requests' ? 'primary-button' : ''} onClick={() => setTab('requests')}>入班申请</button>
+          <button type="button" className={tab === 'members' ? 'primary-button' : ''} onClick={() => setTab('members')}>成员管理</button>
+        </div>
+        <p className="hint">同一班级的三类管理内容共用同一份成员数据，不再物理删除历史关系。</p>
+      </Card>
+      {(tab === 'overview' || tab === 'requests') && <Card title="入班申请" icon={<UserPlus size={20} />}>{requestsSection}</Card>}
+      {(tab === 'overview' || tab === 'members') && <Card title="成员管理" icon={<Users size={20} />}>{membersSection}</Card>}
+    </div>
+  </Layout>;
 }
 
 function LegacyReviewRoute() {
@@ -1898,7 +2196,11 @@ function TeacherClassesPage() {
         <span>均分 {klass.averageScore ?? '--'}</span>
         <span>优秀率 {klass.excellentRate == null ? '--' : `${Math.round(klass.excellentRate * 100)}%`}</span>
         <span>{klass.status}</span>
-        <span className="record-actions"><a href={`/teacher/classes/${encodeURIComponent(klass.classKey)}`}>详情</a><button type="button" onClick={() => archive(klass.classKey)}>归档</button></span>
+        <span className="record-actions">
+          <a href={`/teacher/classes/${encodeURIComponent(klass.classKey)}`}>详情</a>
+          <a href={`/teacher/classes/${encodeURIComponent(klass.classKey)}/members`}>成员管理</a>
+          <button type="button" onClick={() => archive(klass.classKey)}>归档</button>
+        </span>
       </article>)}
       {!rows.length && <p className="hint">暂无班级数据，请先运行 classes:rebuild 或创建班级。</p>}
     </div>
@@ -2527,11 +2829,11 @@ function ClassManagement() {
     </section>
     {error && <p className="error">{error}</p>}
     {message && <p className="hint">{message}</p>}
-    <div className="class-roster-grid">{classes.map((klass) => <ClassRosterPanel key={`${klass.id}-${klass.student_count || 0}`} klass={klass} onChanged={refreshClasses} />)}</div>
+    <div className="class-roster-grid">{classes.map((klass) => <ClassRosterPanel key={`${klass.id}-${klass.student_count || 0}`} klass={klass} availableClasses={classes} onChanged={refreshClasses} />)}</div>
   </Card>;
 }
 
-function ClassRosterPanel({ klass, onChanged }) {
+function ClassRosterPanel({ klass, availableClasses = [], onChanged }) {
   const [students, setStudents] = useState([]);
   const [editingStudentId, setEditingStudentId] = useState(null);
   const [editingName, setEditingName] = useState('');
@@ -2543,6 +2845,30 @@ function ClassRosterPanel({ klass, onChanged }) {
   useEffect(() => { loadStudents(); }, [klass.id]);
   async function removeStudent(studentId) {
     await api(`/classes/${klass.id}/students/${studentId}`, { method: 'DELETE' });
+    await loadStudents();
+    await onChanged();
+  }
+  async function pauseStudent(studentId) {
+    await api(`/classes/${klass.id}/students/${studentId}/pause`, { method: 'POST', body: { reason: '教师停用成员' } });
+    await loadStudents();
+    await onChanged();
+  }
+  async function restoreStudent(studentId) {
+    await api(`/classes/${klass.id}/students/${studentId}/restore`, { method: 'POST', body: { reason: '教师恢复成员' } });
+    await loadStudents();
+    await onChanged();
+  }
+  async function transferStudent(studentId) {
+    const choices = (availableClasses || [])
+      .filter((item) => String(item.id) !== String(klass.id))
+      .map((item) => `${item.id}:${item.name}`)
+      .join('，');
+    const targetClassId = window.prompt(`转班到哪个班级？可选：${choices || '暂无其他班级'}。请输入班级 ID（当前班级：${klass.id}）`, '');
+    if (!targetClassId) return;
+    await api(`/classes/${klass.id}/students/${studentId}/transfer`, {
+      method: 'POST',
+      body: { targetClassId: Number(targetClassId), keepSourceMembership: false, reason: '教师转班' }
+    });
     await loadStudents();
     await onChanged();
   }
@@ -2575,9 +2901,13 @@ function ClassRosterPanel({ klass, onChanged }) {
         </div>
       </> : <>
         <span>{student.name} · {student.student_no || '未填写学号'} · {student.username}</span>
+        <span className="hint">状态：{student.binding_status || 'active'} · 加入：{formatDateTime(student.joined_at)}</span>
         <div className="roster-actions">
           <button type="button" onClick={() => startEditStudent(student)}>修改姓名</button>
-          <button type="button" className="danger-button" onClick={() => removeStudent(student.id)}>删除学生</button>
+          <button type="button" onClick={() => pauseStudent(student.id)}>停用</button>
+          <button type="button" onClick={() => restoreStudent(student.id)}>恢复</button>
+          <button type="button" onClick={() => transferStudent(student.id)}>转班</button>
+          <button type="button" className="danger-button" onClick={() => removeStudent(student.id)}>移出班级</button>
         </div>
       </>}
     </li>)}</ul>
@@ -2947,6 +3277,7 @@ function App() {
     <Route path="/student-mobile" element={<Navigate to="/student-mobile/home" replace />} />
     <Route path="/student-mobile/login" element={<StudentMobileLoginPage />} />
     <Route path="/student-mobile/join" element={<StudentMobileJoinPage />} />
+    <Route path="/student-mobile/join/code" element={<StudentMobileJoinCodePage />} />
     <Route path="/student-mobile/join/status" element={<StudentMobileJoinStatusPage />} />
     <Route path="/student-mobile/home" element={<RoleRoute roles={['student']}><StudentMobileHomePage /></RoleRoute>} />
     <Route path="/student-mobile/tasks" element={<RoleRoute roles={['student']}><StudentMobileTasksPage /></RoleRoute>} />
@@ -2961,7 +3292,9 @@ function App() {
     <Route path="/profile" element={<RoleRoute roles={['student']}><StudentProfile /></RoleRoute>} />
     <Route path="/teacher" element={<RoleRoute roles={['teacher']}><TeacherHome /></RoleRoute>} />
     <Route path="/teacher/classes" element={<RoleRoute roles={['teacher']}><TeacherClassesPage /></RoleRoute>} />
-    <Route path="/teacher/classes/:classKey" element={<RoleRoute roles={['teacher']}><TeacherClassDetailPage /></RoleRoute>} />
+    <Route path="/teacher/classes/:classKey" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
+    <Route path="/teacher/classes/:classKey/join-requests" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
+    <Route path="/teacher/classes/:classKey/members" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
     <Route path="/teacher/students" element={<RoleRoute roles={['teacher']}><TeacherStudentsPage /></RoleRoute>} />
     <Route path="/teacher/essays" element={<RoleRoute roles={['teacher']}><TeacherEssaysPage /></RoleRoute>} />
     <Route path="/teacher/tasks" element={<RoleRoute roles={['teacher']}><TeacherTasksPage /></RoleRoute>} />

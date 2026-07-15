@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db/connection.js';
 import { requireUser } from '../middleware/auth.js';
-import { createJoinRequest, getJoinPreview, listStudentMobileAssignments, listStudentMobileClasses } from '../services/class-lifecycle.js';
+import { createJoinRequest, createJoinRequestByCode, getJoinPreview, getJoinPreviewByCode, getJoinRequestStatus, listStudentMobileAssignments, listStudentMobileClasses } from '../services/class-lifecycle.js';
 
 export const studentMobileRouter = Router();
 
@@ -17,7 +17,25 @@ studentMobileRouter.post('/join/:token', (req, res) => {
   res.json(result.request);
 });
 
+studentMobileRouter.get('/join/code/:code', (req, res) => {
+  const result = getJoinPreviewByCode(db, req.params.code);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.class);
+});
+
+studentMobileRouter.post('/join/code', (req, res) => {
+  const result = createJoinRequestByCode(db, { ...req.body, source: 'student-mobile' });
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.request);
+});
+
 studentMobileRouter.use(requireUser);
+
+studentMobileRouter.get('/join/requests/:requestId', (req, res) => {
+  const result = getJoinRequestStatus(db, req.user, req.params.requestId);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.request);
+});
 
 studentMobileRouter.get('/classes', (req, res) => {
   const result = listStudentMobileClasses(db, req.user);

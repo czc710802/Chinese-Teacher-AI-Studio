@@ -104,7 +104,12 @@ function ensureAudit(database, payload = {}) {
 
 function classCounts(database, classId) {
   return {
-    student_count: database.prepare('SELECT COUNT(*) AS count FROM class_students WHERE class_id = ?').get(classId).count,
+    student_count: database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM class_students cs
+      LEFT JOIN student_class_bindings b ON b.student_id = cs.student_id AND b.class_id = cs.class_id
+      WHERE cs.class_id = ? AND COALESCE(b.status, 'active') = 'active'
+    `).get(classId).count,
     binding_count: database.prepare('SELECT COUNT(*) AS count FROM student_class_bindings WHERE class_id = ?').get(classId).count,
     pending_join_requests: database.prepare('SELECT COUNT(*) AS count FROM class_join_requests WHERE class_id = ? AND status = ?').get(classId, 'pending').count,
     active_invites: database.prepare('SELECT COUNT(*) AS count FROM class_invites WHERE class_id = ? AND status = ?').get(classId, 'active').count
@@ -121,9 +126,64 @@ function latestInvite(database, classId) {
   `).get(classId) || null;
 }
 
+function activeInvite(database, classId) {
+  return database.prepare(`
+    SELECT *
+    FROM class_invites
+    WHERE class_id = ? AND status = ?
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(classId, 'active') || latestInvite(database, classId);
+}
+
+function resolveInviteFromJoinInput(database, input = {}) {
+  const token = String(input.token || input.inviteToken || '').trim();
+  if (token) {
+    return database.prepare('SELECT * FROM class_invites WHERE (invite_token = ? OR invite_token_hash = ?) AND status = ?').get(token, hashJoinToken(token), 'active') || null;
+  }
+  const code = String(input.code || input.inviteCode || '').trim();
+  if (code) {
+    return database.prepare('SELECT * FROM class_invites WHERE invite_code = ? AND status = ? ORDER BY id DESC LIMIT 1').get(code, 'active') || null;
+  }
+  return null;
+}
+
+function buildJoinPreview(database, invite) {
+  if (!invite) return { status: 404, message: '入班链接不存在或已失效' };
+  if (invite.expires_at && new Date(invite.expires_at).getTime() < Date.now()) {
+    return { status: 410, message: '入班链接已过期' };
+  }
+  const klass = database.prepare(`
+    SELECT c.*, t.id AS teacher_internal_id, u.name AS teacher_name
+    FROM classes c
+    JOIN teachers t ON t.id = c.teacher_id
+    JOIN users u ON u.id = t.user_id
+    WHERE c.id = ?
+  `).get(invite.class_id);
+  if (!klass) return { status: 404, message: '班级不存在' };
+  return {
+    status: 200,
+    class: {
+      ...attachLifecycle(database, klass),
+      teacher_name: klass.teacher_name || '',
+      teacher_id: klass.teacher_internal_id || '',
+      invite_code: invite.invite_code,
+      invite_status: invite.status,
+      invite_expires_at: invite.expires_at || '',
+      invite_join_mode: invite.join_mode || 'approval',
+      invite_url: `/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`
+    }
+  };
+}
+
+function membershipStatusLabel(status = '') {
+  const normalized = String(status || '').trim();
+  return normalized || 'active';
+}
+
 function attachLifecycle(database, row) {
   if (!row) return null;
-  const invite = latestInvite(database, row.id);
+  const invite = activeInvite(database, row.id);
   return {
     ...classBaseRow(row),
     ...classCounts(database, row.id),
@@ -337,31 +397,12 @@ export function rotateClassInvite(database = db, user, classId, body = {}) {
 
 export function getJoinPreview(database = db, token = '') {
   const invite = database.prepare('SELECT * FROM class_invites WHERE (invite_token = ? OR invite_token_hash = ?) AND status = ?').get(token, hashJoinToken(token), 'active');
-  if (!invite) return { status: 404, message: '入班链接不存在或已失效' };
-  if (invite.expires_at && new Date(invite.expires_at).getTime() < Date.now()) {
-    return { status: 410, message: '入班链接已过期' };
-  }
-  const klass = database.prepare(`
-    SELECT c.*, t.id AS teacher_internal_id, u.name AS teacher_name
-    FROM classes c
-    JOIN teachers t ON t.id = c.teacher_id
-    JOIN users u ON u.id = t.user_id
-    WHERE c.id = ?
-  `).get(invite.class_id);
-  if (!klass) return { status: 404, message: '班级不存在' };
-  return {
-    status: 200,
-    class: {
-      ...attachLifecycle(database, klass),
-      teacher_name: klass.teacher_name || '',
-    teacher_id: klass.teacher_internal_id || '',
-    invite_code: invite.invite_code,
-    invite_status: invite.status,
-    invite_expires_at: invite.expires_at || '',
-      invite_join_mode: invite.join_mode || 'approval',
-      invite_url: `/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`
-    }
-  };
+  return buildJoinPreview(database, invite);
+}
+
+export function getJoinPreviewByCode(database = db, code = '') {
+  const invite = database.prepare('SELECT * FROM class_invites WHERE invite_code = ? AND status = ? ORDER BY id DESC LIMIT 1').get(String(code || '').trim(), 'active');
+  return buildJoinPreview(database, invite);
 }
 
 function findStudentByIdentity(database, payload = {}) {
@@ -405,10 +446,47 @@ function addMembership(database, studentId, classId, joinMode = 'approval') {
   `).run(studentId, classId, joinMode);
 }
 
+function upsertJoinRequest(database, input, invite, student, studentName, status) {
+  const studentNo = String(input.studentNo || input.student_no || student?.student_no || '').trim();
+  const existing = database.prepare(`
+    SELECT id
+    FROM class_join_requests
+    WHERE class_id = ?
+      AND status = 'pending'
+      AND (
+        (student_id IS NOT NULL AND student_id = ?)
+        OR (student_id IS NULL AND student_name = ? AND student_no = ?)
+      )
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(invite.class_id, student?.id || -1, studentName, studentNo);
+  if (existing) return { status: 409, message: '该申请正在等待处理' };
+
+  const requestId = database.prepare(`
+    INSERT INTO class_join_requests (
+      class_id, student_id, student_name, student_no, source, status, invite_id, metadata, requested_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).run(
+    invite.class_id,
+    student?.id || null,
+    studentName,
+    studentNo,
+    String(input.source || 'student-mobile'),
+    status,
+    invite.id,
+    toJson({
+      userAgent: String(input.userAgent || ''),
+      referrer: String(input.referrer || ''),
+      inviteCode: String(invite?.invite_code || ''),
+      studentMatched: Boolean(student)
+    })
+  ).lastInsertRowid;
+
+  return { status: 200, requestId };
+}
+
 export function createJoinRequest(database = db, input = {}) {
-  const token = String(input.token || input.inviteToken || '').trim();
-  if (!token) return { status: 400, message: '缺少入班令牌' };
-  const invite = database.prepare('SELECT * FROM class_invites WHERE (invite_token = ? OR invite_token_hash = ?) AND status = ?').get(token, hashJoinToken(token), 'active');
+  const invite = resolveInviteFromJoinInput(database, input);
   if (!invite) return { status: 404, message: '入班链接不存在或已失效' };
   if (invite.expires_at && new Date(invite.expires_at).getTime() < Date.now()) {
     return { status: 410, message: '入班链接已过期' };
@@ -428,24 +506,20 @@ export function createJoinRequest(database = db, input = {}) {
   const student = input.studentId ? database.prepare('SELECT * FROM students WHERE id = ?').get(input.studentId) : findStudentByIdentity(database, input);
   const studentName = String(input.studentName || input.name || student?.user_name || '').trim();
   if (!studentName) return { status: 400, message: '请填写学生姓名' };
-  if (student && database.prepare('SELECT 1 FROM class_students WHERE class_id = ? AND student_id = ?').get(klass.id, student.id)) {
-    return { status: 409, message: '该学生已经在这个班级中' };
+  if (student) {
+    const existingBinding = database.prepare('SELECT status FROM student_class_bindings WHERE class_id = ? AND student_id = ?').get(klass.id, student.id);
+    if (existingBinding?.status === 'active') {
+      return { status: 409, message: '该学生已经在这个班级中' };
+    }
+    if (existingBinding && existingBinding.status !== 'active') {
+      return { status: 409, message: '该学生已被移出或停用，请联系教师处理' };
+    }
   }
 
-  const requestId = database.prepare(`
-    INSERT INTO class_join_requests (
-      class_id, student_id, student_name, student_no, source, status, invite_id, metadata, requested_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  `).run(
-    klass.id,
-    student?.id || null,
-    studentName,
-    String(input.studentNo || input.student_no || student?.student_no || ''),
-    String(input.source || 'student-mobile'),
-    klass.join_mode === 'open' && student ? 'approved' : 'pending',
-    invite.id,
-    toJson({ userAgent: String(input.userAgent || ''), referrer: String(input.referrer || '') })
-  ).lastInsertRowid;
+  const requestStatus = klass.join_mode === 'open' && student ? 'approved' : 'pending';
+  const inserted = upsertJoinRequest(database, input, invite, student, studentName, requestStatus);
+  if (inserted.status !== 200) return inserted;
+  const requestId = inserted.requestId;
 
   if (klass.join_mode === 'open' && student) {
     addMembership(database, student.id, klass.id, invite.join_mode || klass.join_mode || 'approval');
@@ -471,15 +545,26 @@ export function createJoinRequest(database = db, input = {}) {
   };
 }
 
+export function createJoinRequestByCode(database = db, input = {}) {
+  return createJoinRequest(database, { ...input, code: input.code || input.inviteCode || '' });
+}
+
 export function listJoinRequests(database = db, user, classId) {
   if (!teacherOwnsClass(database, user, classId)) return { status: 403, message: '没有管理该班级的权限', rows: [] };
   return {
     status: 200,
     rows: database.prepare(`
-      SELECT *
-      FROM class_join_requests
-      WHERE class_id = ?
-      ORDER BY requested_at DESC, id DESC
+      SELECT r.*, c.name AS class_name, c.grade AS class_grade, i.invite_code, i.join_mode AS invite_join_mode,
+             s.id AS linked_student_id, u.name AS linked_student_name, s.student_no AS linked_student_no,
+             COALESCE(b.status, '') AS membership_status
+      FROM class_join_requests r
+      LEFT JOIN classes c ON c.id = r.class_id
+      LEFT JOIN class_invites i ON i.id = r.invite_id
+      LEFT JOIN students s ON s.id = r.student_id
+      LEFT JOIN users u ON u.id = s.user_id
+      LEFT JOIN student_class_bindings b ON b.student_id = r.student_id AND b.class_id = r.class_id
+      WHERE r.class_id = ?
+      ORDER BY r.requested_at DESC, r.id DESC
     `).all(classId)
   };
 }
@@ -544,7 +629,12 @@ export function rejectJoinRequest(database = db, user, classId, requestId, reaso
 export function listClassMembers(database = db, user, classId) {
   if (!teacherOwnsClass(database, user, classId)) return { status: 403, message: '没有管理该班级的权限', rows: [] };
   const rows = database.prepare(`
-    SELECT s.id, s.student_no, u.name, u.username, b.status AS binding_status, b.joined_at, b.left_at
+    SELECT s.id, s.student_no, u.name, u.username,
+           COALESCE(b.status, 'active') AS binding_status,
+           b.join_mode AS binding_join_mode,
+           b.joined_at,
+           b.left_at,
+           CASE WHEN COALESCE(b.status, 'active') = 'active' THEN 1 ELSE 0 END AS is_active
     FROM class_students cs
     JOIN students s ON s.id = cs.student_id
     JOIN users u ON u.id = s.user_id
@@ -553,6 +643,149 @@ export function listClassMembers(database = db, user, classId) {
     ORDER BY CAST(s.student_no AS INTEGER), s.student_no, u.name
   `).all(classId);
   return { status: 200, rows };
+}
+
+export function getJoinRequestStatus(database = db, user, requestId) {
+  if (!user || user.role !== 'student') return { status: 403, message: '只有学生可以查看申请状态' };
+  const student = database.prepare('SELECT id, user_id FROM students WHERE user_id = ?').get(user.id);
+  if (!student) return { status: 404, message: '学生档案不存在' };
+  const request = database.prepare(`
+    SELECT r.*, c.name AS class_name, c.grade AS class_grade, c.status AS class_status,
+           i.invite_code, i.join_mode AS invite_join_mode, i.expires_at AS invite_expires_at
+    FROM class_join_requests r
+    JOIN classes c ON c.id = r.class_id
+    LEFT JOIN class_invites i ON i.id = r.invite_id
+    WHERE r.id = ?
+  `).get(requestId);
+  if (!request) return { status: 404, message: '入班申请不存在' };
+  if (request.student_id && Number(request.student_id) !== Number(student.id)) {
+    return { status: 403, message: '没有查看该申请的权限' };
+  }
+  return { status: 200, request };
+}
+
+export function updateClassMemberStatus(database = db, user, classId, studentId, status, input = {}) {
+  if (!teacherOwnsClass(database, user, classId)) return { status: 403, message: '没有管理该班级的权限' };
+  const klass = database.prepare('SELECT * FROM classes WHERE id = ?').get(classId);
+  if (!klass) return { status: 404, message: '班级不存在' };
+  const student = database.prepare(`
+    SELECT s.id, s.student_no, u.name, u.username, s.user_id
+    FROM class_students cs
+    JOIN students s ON s.id = cs.student_id
+    JOIN users u ON u.id = s.user_id
+    WHERE cs.class_id = ? AND s.id = ?
+  `).get(classId, studentId);
+  if (!student) return { status: 404, message: '学生不在当前班级中' };
+
+  const before = database.prepare('SELECT * FROM student_class_bindings WHERE class_id = ? AND student_id = ?').get(classId, studentId) || {
+    class_id: Number(classId),
+    student_id: Number(studentId),
+    status: 'active'
+  };
+  const nextStatus = membershipStatusLabel(status);
+  database.prepare(`
+    INSERT INTO student_class_bindings (student_id, class_id, join_mode, status, joined_at, left_at, updated_at)
+    VALUES (?, ?, ?, ?, COALESCE((SELECT joined_at FROM student_class_bindings WHERE class_id = ? AND student_id = ?), CURRENT_TIMESTAMP),
+            CASE WHEN ? = 'active' THEN NULL ELSE CURRENT_TIMESTAMP END, CURRENT_TIMESTAMP)
+    ON CONFLICT(student_id, class_id) DO UPDATE SET
+      join_mode = excluded.join_mode,
+      status = excluded.status,
+      left_at = excluded.left_at,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(
+    studentId,
+    classId,
+    String(input.joinMode || before.join_mode || klass.join_mode || 'approval'),
+    nextStatus,
+    classId,
+    studentId,
+    nextStatus
+  );
+
+  const after = database.prepare('SELECT * FROM student_class_bindings WHERE class_id = ? AND student_id = ?').get(classId, studentId);
+  ensureAudit(database, {
+    operatorId: user.id,
+    operatorRole: user.role,
+    targetType: 'membership',
+    targetId: `${classId}:${studentId}`,
+    action: `membership.${nextStatus}`,
+    before,
+    after,
+    reason: String(input.reason || '')
+  });
+
+  return {
+    status: 200,
+    member: database.prepare(`
+      SELECT s.id, s.student_no, u.name, u.username,
+             COALESCE(b.status, 'active') AS binding_status,
+             b.joined_at, b.left_at, b.join_mode
+      FROM students s
+      JOIN users u ON u.id = s.user_id
+      LEFT JOIN student_class_bindings b ON b.student_id = s.id AND b.class_id = ?
+      WHERE s.id = ?
+    `).get(classId, studentId)
+  };
+}
+
+export function removeClassMember(database = db, user, classId, studentId, reason = '') {
+  return updateClassMemberStatus(database, user, classId, studentId, 'removed', { reason });
+}
+
+export function pauseClassMember(database = db, user, classId, studentId, reason = '') {
+  return updateClassMemberStatus(database, user, classId, studentId, 'paused', { reason });
+}
+
+export function restoreClassMember(database = db, user, classId, studentId, reason = '') {
+  return updateClassMemberStatus(database, user, classId, studentId, 'active', { reason });
+}
+
+export function transferClassMember(database = db, user, classId, studentId, targetClassId, input = {}) {
+  if (!teacherOwnsClass(database, user, classId)) return { status: 403, message: '没有管理该班级的权限' };
+  if (!teacherOwnsClass(database, user, targetClassId)) return { status: 403, message: '没有管理目标班级的权限' };
+  const source = database.prepare(`
+    SELECT s.id, s.student_no, u.name, u.username, b.status AS binding_status, b.join_mode
+    FROM class_students cs
+    JOIN students s ON s.id = cs.student_id
+    JOIN users u ON u.id = s.user_id
+    LEFT JOIN student_class_bindings b ON b.student_id = s.id AND b.class_id = cs.class_id
+    WHERE cs.class_id = ? AND s.id = ?
+  `).get(classId, studentId);
+  if (!source) return { status: 404, message: '学生不在当前班级中' };
+  const keepSource = Boolean(input.keepSourceMembership);
+  const reason = String(input.reason || '');
+  const before = database.prepare('SELECT * FROM student_class_bindings WHERE class_id = ? AND student_id = ?').get(classId, studentId) || {};
+  if (!keepSource) {
+    database.prepare(`
+      INSERT INTO student_class_bindings (student_id, class_id, join_mode, status, joined_at, left_at, updated_at)
+      VALUES (?, ?, ?, 'transferred', COALESCE((SELECT joined_at FROM student_class_bindings WHERE class_id = ? AND student_id = ?), CURRENT_TIMESTAMP), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(student_id, class_id) DO UPDATE SET
+        join_mode = excluded.join_mode,
+        status = 'transferred',
+        left_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(studentId, classId, String(input.joinMode || before.join_mode || 'approval'), classId, studentId);
+  }
+  addMembership(database, studentId, targetClassId, String(input.joinMode || before.join_mode || 'approval'));
+  ensureAudit(database, {
+    operatorId: user.id,
+    operatorRole: user.role,
+    targetType: 'membership',
+    targetId: `${classId}:${studentId}`,
+    action: 'membership.transfer',
+    before,
+    after: {
+      sourceClassId: Number(classId),
+      targetClassId: Number(targetClassId),
+      keepSourceMembership: keepSource
+    },
+    reason
+  });
+  return {
+    status: 200,
+    source: database.prepare('SELECT * FROM student_class_bindings WHERE class_id = ? AND student_id = ?').get(classId, studentId),
+    target: database.prepare('SELECT * FROM student_class_bindings WHERE class_id = ? AND student_id = ?').get(targetClassId, studentId)
+  };
 }
 
 export function listStudentMobileClasses(database = db, user) {
@@ -568,6 +801,8 @@ export function listStudentMobileClasses(database = db, user) {
     JOIN users u ON u.id = t.user_id
     LEFT JOIN student_class_bindings b ON b.student_id = cs.student_id AND b.class_id = cs.class_id
     WHERE cs.student_id = ?
+      AND COALESCE(b.status, 'active') = 'active'
+      AND c.status != 'deleted'
     ORDER BY c.updated_at DESC, c.id DESC
   `).all(student.id).map((row) => ({
     id: row.id,
@@ -596,7 +831,9 @@ export function listStudentMobileAssignments(database = db, user, classId = null
     FROM assignments a
     JOIN classes c ON c.id = a.class_id
     JOIN class_students cs ON cs.class_id = c.id
+    LEFT JOIN student_class_bindings b ON b.student_id = cs.student_id AND b.class_id = c.id
     WHERE cs.student_id = ? AND c.status != 'deleted'
+      AND COALESCE(b.status, 'active') = 'active'
     ORDER BY a.created_at DESC, a.id DESC
   `).all(student.id);
   if (classId) rows = rows.filter((row) => String(row.class_id) === String(classId));

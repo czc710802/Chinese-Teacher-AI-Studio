@@ -162,6 +162,19 @@ test('teacher essay workspace exposes version rail, report actions, scoring pane
   assert.doesNotMatch(teacherWorkspace, /Word：\{links\.docxUrl/);
 });
 
+test('mobile student join flow and teacher class workbench expose code join, join requests and member operations', () => {
+  assert.match(mainSource, /function StudentMobileJoinCodePage/);
+  assert.match(mainSource, /\/student-mobile\/join\/code/);
+  assert.match(mainSource, /function TeacherLifecycleClassPage/);
+  assert.match(mainSource, /\/teacher\/classes\/\$\{encodeURIComponent\(classKey\)\}\/join-requests/);
+  assert.match(mainSource, /\/teacher\/classes\/\$\{encodeURIComponent\(classKey\)\}\/members/);
+  assert.match(mainSource, /\/student-mobile\/join\/requests\/\$\{encodeURIComponent\(requestId\)\}/);
+  assert.match(mainSource, /入班申请/);
+  assert.match(mainSource, /成员管理/);
+  assert.match(mainSource, /移出班级/);
+  assert.match(mainSource, /转班/);
+});
+
 test('student photo upload sends images directly for AI recognition and review', () => {
   const uploadPage = functionBody('UploadPage');
   assert.match(uploadPage, /api\('\/essays\/images'/);
@@ -491,7 +504,7 @@ test('teacher class management exposes add and delete controls for classes and r
   assert.match(classManagement, /`\/classes\/\$\{deleteClassId\}`/);
   assert.match(classManagement, /新增学生/);
   assert.match(classManagement, /addSingleStudent/);
-  assert.match(classRosterPanel, /删除学生/);
+  assert.match(classRosterPanel, /移出班级/);
   assert.match(classRosterPanel, /removeStudent\(student\.id\)/);
 });
 

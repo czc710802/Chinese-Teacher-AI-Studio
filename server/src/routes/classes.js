@@ -11,9 +11,13 @@ import {
   listClassMembers,
   listJoinRequests,
   listLifecycleClasses,
+  pauseClassMember,
   rejectJoinRequest,
   restoreLifecycleClass,
+  restoreClassMember,
   rotateClassInvite,
+  removeClassMember,
+  transferClassMember,
   updateLifecycleClass
 } from '../services/class-lifecycle.js';
 import {
@@ -89,6 +93,27 @@ classRouter.post('/:id/invite/rotate', roleGuard('teacher'), (req, res) => {
   res.json(result.class);
 });
 
+classRouter.get('/:id', roleGuard('teacher'), (req, res) => {
+  const klass = db.prepare('SELECT * FROM classes WHERE id = ?').get(req.params.id);
+  if (!klass) return res.status(404).json({ message: '班级不存在' });
+  if (!getManagedClass(req, req.params.id)) return res.status(403).json({ message: '没有管理该班级的权限' });
+  const invite = db.prepare('SELECT * FROM class_invites WHERE class_id = ? AND status = ? ORDER BY id DESC LIMIT 1').get(req.params.id, 'active');
+  res.json({
+    ...klass,
+    invite: invite ? {
+      id: invite.id,
+      invite_code: invite.invite_code,
+      join_mode: invite.join_mode,
+      max_uses: invite.max_uses,
+      used_count: invite.used_count,
+      expires_at: invite.expires_at || '',
+      status: invite.status,
+      created_at: invite.created_at,
+      updated_at: invite.updated_at
+    } : null
+  });
+});
+
 classRouter.patch('/:id/lifecycle', roleGuard('teacher'), (req, res) => {
   const result = updateLifecycleClass(db, req.user, req.params.id, req.body);
   if (result.status !== 200) return res.status(result.status).json({ message: result.message });
@@ -129,6 +154,30 @@ classRouter.get('/:id/members', roleGuard('teacher'), (req, res) => {
   const result = listClassMembers(db, req.user, req.params.id);
   if (result.status !== 200) return res.status(result.status).json({ message: result.message });
   res.json(result.rows);
+});
+
+classRouter.delete('/:id/students/:studentId', roleGuard('teacher'), (req, res) => {
+  const result = removeClassMember(db, req.user, req.params.id, req.params.studentId, req.body?.reason || '');
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.member);
+});
+
+classRouter.post('/:id/students/:studentId/pause', roleGuard('teacher'), (req, res) => {
+  const result = pauseClassMember(db, req.user, req.params.id, req.params.studentId, req.body?.reason || '');
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.member);
+});
+
+classRouter.post('/:id/students/:studentId/restore', roleGuard('teacher'), (req, res) => {
+  const result = restoreClassMember(db, req.user, req.params.id, req.params.studentId, req.body?.reason || '');
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.member);
+});
+
+classRouter.post('/:id/students/:studentId/transfer', roleGuard('teacher'), (req, res) => {
+  const result = transferClassMember(db, req.user, req.params.id, req.params.studentId, req.body?.targetClassId || req.body?.target_class_id, req.body || {});
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result);
 });
 
 classRouter.post('/:id/feishu-binding', roleGuard('teacher'), (req, res) => {
@@ -256,17 +305,6 @@ classRouter.post('/:id/students', roleGuard('teacher'), (req, res) => {
     addBinding.run(student.id, Number(req.params.id));
   }
   res.json({ ok: true, created });
-});
-
-classRouter.delete('/:classId/students/:studentId', roleGuard('teacher'), (req, res) => {
-  if (!getManagedClass(req, req.params.classId)) return res.status(403).json({ message: '没有管理该班级的权限' });
-  db.prepare('DELETE FROM class_students WHERE class_id = ? AND student_id = ?').run(req.params.classId, req.params.studentId);
-  db.prepare(`
-    UPDATE student_class_bindings
-    SET status = ?, left_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-    WHERE class_id = ? AND student_id = ?
-  `).run('left', req.params.classId, req.params.studentId);
-  res.json({ ok: true });
 });
 
 classRouter.patch('/:classId/students/:studentId', roleGuard('teacher'), (req, res) => {
