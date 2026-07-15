@@ -278,5 +278,10 @@ test('system test center snapshot reads the live invite from the database', () =
   assert.match(snapshot.fixture.class.inviteUrl, /^https?:\/\/.+\/student-mobile\/join\?token=/);
   assert.match(snapshot.fixture.class.qrSvg, /<svg/);
   assert.doesNotMatch(snapshot.fixture.class.qrSvg, /\/student-mobile\/join\?token=/);
+  const classId = snapshot.fixture.class.classId;
+  assert.ok(classId);
+  assert.match(snapshot.links.testClassDetail, new RegExp(`/teacher/classes/${classId}$`));
+  assert.match(snapshot.links.testClassMembers, new RegExp(`/teacher/classes/${classId}/members$`));
+  assert.match(snapshot.links.testClassRequests, new RegExp(`/teacher/classes/${classId}/join-requests$`));
   database.close();
 });

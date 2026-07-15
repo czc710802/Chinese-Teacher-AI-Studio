@@ -736,6 +736,7 @@ export function buildSystemTestCenterSnapshot({ appDir = process.cwd(), database
     }
   }
   const classKey = fixture.class?.classKey || generateClassKey({ schoolYear: currentYear(), grade: '测试', className: '系统测试班' });
+  const classId = fixture.class?.classId || '';
   const studentKey = fixture.student?.studentKey || '';
   return {
     generatedAt: report.generatedAt,
@@ -755,9 +756,9 @@ export function buildSystemTestCenterSnapshot({ appDir = process.cwd(), database
       studentJoin: fixture.class?.inviteUrl || buildPublicUrl('/student-mobile/join/code'),
       studentTasks: '/student-mobile/tasks',
       studentProfile: '/student-mobile/profile',
-      testClassDetail: `/teacher/classes/${encodeURIComponent(classKey)}`,
-      testClassMembers: `/teacher/classes/${encodeURIComponent(classKey)}/members`,
-      testClassRequests: `/teacher/classes/${encodeURIComponent(classKey)}/join-requests`,
+      testClassDetail: classId ? `/teacher/classes/${encodeURIComponent(classId)}` : `/teacher/classes/${encodeURIComponent(classKey)}`,
+      testClassMembers: classId ? `/teacher/classes/${encodeURIComponent(classId)}/members` : `/teacher/classes/${encodeURIComponent(classKey)}/members`,
+      testClassRequests: classId ? `/teacher/classes/${encodeURIComponent(classId)}/join-requests` : `/teacher/classes/${encodeURIComponent(classKey)}/join-requests`,
       testStudentProfile: studentKey ? `/student-profiles/${encodeURIComponent(studentKey)}` : ''
     }
   };

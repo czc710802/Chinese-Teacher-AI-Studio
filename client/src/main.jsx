@@ -2656,8 +2656,8 @@ function TeacherJoinRequestsPage() {
         <span>待审核 {klass.pendingJoinRequests ?? klass.pending_join_requests ?? 0}</span>
         <span>主群 {klass.inviteStatus || klass.status || 'active'}</span>
         <span className="record-actions">
-          <a href={`/teacher/classes/${encodeURIComponent(klass.classKey || klass.id)}/join-requests`}>打开申请</a>
-          <a href={`/teacher/classes/${encodeURIComponent(klass.classKey || klass.id)}/members`}>成员管理</a>
+          <a href={`/teacher/classes/${encodeURIComponent(klass.classId || klass.id || klass.classKey)}/join-requests`}>打开申请</a>
+          <a href={`/teacher/classes/${encodeURIComponent(klass.classId || klass.id || klass.classKey)}/members`}>成员管理</a>
         </span>
       </article>)}
       {!rows.length && <p className="hint">暂无班级或暂无待审核申请。</p>}

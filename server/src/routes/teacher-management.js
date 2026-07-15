@@ -246,9 +246,9 @@ teacherManagementRouter.get('/test-center', (req, res) => {
       snapshot.links = {
         ...snapshot.links,
         studentJoin: snapshot.fixture.class.inviteUrl || snapshot.links?.studentJoin || buildPublicUrl('/student-mobile/join/code'),
-        testClassDetail: `/teacher/classes/${encodeURIComponent(classKey)}`,
-        testClassMembers: `/teacher/classes/${encodeURIComponent(classKey)}/members`,
-        testClassRequests: `/teacher/classes/${encodeURIComponent(classKey)}/join-requests`
+        testClassDetail: `/teacher/classes/${encodeURIComponent(klass.id)}`,
+        testClassMembers: `/teacher/classes/${encodeURIComponent(klass.id)}/members`,
+        testClassRequests: `/teacher/classes/${encodeURIComponent(klass.id)}/join-requests`
       };
     }
   } catch (error) {

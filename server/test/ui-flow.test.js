@@ -163,6 +163,7 @@ test('mobile student join flow and teacher class workbench expose code join, joi
   assert.match(mainSource, /function TeacherLifecycleClassPage/);
   assert.match(mainSource, /\/teacher\/classes\/\$\{encodeURIComponent\(classKey\)\}\/join-requests/);
   assert.match(mainSource, /\/teacher\/classes\/\$\{encodeURIComponent\(classKey\)\}\/members/);
+  assert.match(mainSource, /\/teacher\/classes\/\$\{encodeURIComponent\(klass\.classId \|\| klass\.id \|\| klass\.classKey\)\}\/join-requests/);
   assert.match(mainSource, /\/student-mobile\/join\/requests\/\$\{encodeURIComponent\(requestId\)\}/);
   assert.match(mainSource, /入班申请/);
   assert.match(mainSource, /成员管理/);
