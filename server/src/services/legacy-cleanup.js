@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { generateClassKey } from './teacher-management/teacher-management-service.js';
+import { TEACHER_MANAGEMENT_VERSION } from './teacher-management/teacher-management-service.js';
 
 function readJson(file, fallback) {
   try {
@@ -85,44 +86,184 @@ function getTestFixtureFromStore(appDir) {
   return { klass, student };
 }
 
-function ensureSystemTestFixtureRecord(appDir, items, kind) {
+function getLiveSystemTestFixture(database) {
+  if (!database) return { klass: null, student: null };
+  try {
+    const klass = tableExists(database, 'classes')
+      ? database.prepare(`
+        SELECT c.*, t.user_id AS teacher_user_id, u.name AS teacher_name
+        FROM classes c
+        LEFT JOIN teachers t ON t.id = c.teacher_id
+        LEFT JOIN users u ON u.id = t.user_id
+        WHERE LOWER(COALESCE(c.data_scope, 'production')) = 'system_test'
+        ORDER BY c.updated_at DESC, c.id DESC
+        LIMIT 1
+      `).get() || null
+      : null;
+    const student = klass && tableExists(database, 'students')
+      ? database.prepare(`
+        SELECT s.id, s.student_no, u.name AS student_name, u.username
+        FROM students s
+        LEFT JOIN users u ON u.id = s.user_id
+        WHERE LOWER(COALESCE(s.data_scope, 'production')) = 'system_test'
+        ORDER BY s.id DESC
+        LIMIT 1
+      `).get() || null
+      : null;
+    if (!klass) return { klass: null, student: student ? {
+      studentKey: student.username || `student_${student.id}`,
+      studentId: student.student_no || String(student.id),
+      studentName: student.student_name || '',
+      classKey: '',
+      className: '',
+      grade: '',
+      schoolYear: currentYear(),
+      status: 'active',
+      essayCount: 0,
+      averageScore: null,
+      latestScore: null,
+      scoreTrend: '',
+      weakestAbility: '',
+      latestEssayAt: '',
+      profileUpdatedAt: '',
+      createdAt: '',
+      updatedAt: '',
+      transferHistory: [],
+      isTestData: true,
+      dataScope: 'system_test'
+    } : null };
+    const classKey = generateClassKey({ schoolYear: currentYear(), grade: klass.grade || '测试', className: klass.name || '系统测试班' });
+    const activeInvite = tableExists(database, 'class_invites')
+      ? database.prepare(`
+        SELECT *
+        FROM class_invites
+        WHERE class_id = ? AND status = 'active'
+        ORDER BY id DESC
+        LIMIT 1
+      `).get(klass.id) || null
+      : null;
+    const studentCount = tableExists(database, 'class_students')
+      ? Number(database.prepare(`
+        SELECT COUNT(*) AS count
+        FROM class_students cs
+        LEFT JOIN student_class_bindings b ON b.student_id = cs.student_id AND b.class_id = cs.class_id
+        WHERE cs.class_id = ? AND COALESCE(b.status, 'active') = 'active'
+      `).get(klass.id)?.count || 0)
+      : 0;
+    const essayCount = tableExists(database, 'assignments') && tableExists(database, 'essays')
+      ? Number(database.prepare(`
+        SELECT COUNT(*) AS count
+        FROM essays e
+        JOIN assignments a ON a.id = e.assignment_id
+        WHERE a.class_id = ?
+      `).get(klass.id)?.count || 0)
+      : 0;
+    return {
+      klass: {
+        classKey,
+        className: klass.name || '系统测试班',
+        grade: klass.grade || '测试',
+        schoolYear: currentYear(),
+        teacherId: String(klass.teacher_id || ''),
+        teacherName: klass.teacher_name || '',
+        schoolName: '',
+        studentCount,
+        essayCount,
+        averageScore: null,
+        excellentRate: null,
+        passingRate: null,
+        latestSubmittedAt: '',
+        feishuChatId: '',
+        joinMode: klass.join_mode || 'approval',
+        inviteCode: activeInvite?.invite_code || klass.invite_code || 'SYSTEM-TEST-001',
+        inviteCodeExpiresAt: activeInvite?.expires_at || klass.invite_code_expires_at || '',
+        inviteUrl: activeInvite?.invite_token ? `/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}` : '',
+        qrSvg: activeInvite?.invite_token ? buildQrSvg(`/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}`, klass.name || '系统测试班') : '',
+        maxStudents: Number(klass.max_students || 60),
+        status: klass.status || 'active',
+        isTestData: isTrue(klass.is_test_data) || true,
+        dataScope: 'system_test',
+        testScope: 'system',
+        createdAt: klass.created_at || new Date().toISOString(),
+        updatedAt: klass.updated_at || new Date().toISOString()
+      },
+      student: student ? {
+        studentKey: student.username || `student_${student.id}`,
+        studentId: student.student_no || String(student.id),
+        studentName: student.student_name || '',
+        classKey,
+        className: klass.name || '',
+        grade: klass.grade || '',
+        schoolYear: currentYear(),
+        status: 'active',
+        essayCount: 0,
+        averageScore: null,
+        latestScore: null,
+        scoreTrend: '',
+        weakestAbility: '',
+        latestEssayAt: '',
+        profileUpdatedAt: '',
+        createdAt: '',
+        updatedAt: '',
+        transferHistory: [],
+        isTestData: true,
+        dataScope: 'system_test'
+      } : null
+    };
+  } catch {
+    return { klass: null, student: null };
+  }
+}
+
+function ensureSystemTestFixtureRecord(appDir, items, kind, overrides = {}) {
   const now = new Date().toISOString();
   if (kind === 'class') {
     const classKey = generateClassKey({ schoolYear: currentYear(), grade: '测试', className: '系统测试班' });
     const existing = items.find((item) => item.classKey === classKey || item.className === '系统测试班' || isTrue(item.isTestData));
     if (existing) {
       existing.classKey = existing.classKey || classKey;
-      existing.className = '系统测试班';
-      existing.grade = '测试';
-      existing.schoolYear = existing.schoolYear || currentYear();
-      existing.status = 'active';
+      existing.className = overrides.className || '系统测试班';
+      existing.grade = overrides.grade || '测试';
+      existing.schoolYear = overrides.schoolYear || existing.schoolYear || currentYear();
+      existing.status = overrides.status || 'active';
       existing.isTestData = true;
+      existing.dataScope = overrides.dataScope || 'system_test';
       existing.testScope = 'system';
-      existing.joinMode = existing.joinMode || 'approval';
+      existing.joinMode = overrides.joinMode || existing.joinMode || 'approval';
+      existing.inviteCode = overrides.inviteCode || existing.inviteCode || 'SYSTEM-TEST-001';
+      existing.inviteUrl = overrides.inviteUrl || existing.inviteUrl || '';
+      existing.qrSvg = overrides.qrSvg || existing.qrSvg || '';
+      existing.studentCount = Number(overrides.studentCount ?? 0);
+      existing.essayCount = Number(overrides.essayCount ?? (existing.essayCount || 0));
+      existing.teacherId = overrides.teacherId ?? existing.teacherId ?? '';
+      existing.teacherName = overrides.teacherName ?? existing.teacherName ?? '';
       existing.updatedAt = now;
       return { item: existing, created: false };
     }
     const item = {
       classKey,
-      className: '系统测试班',
-      grade: '测试',
-      schoolYear: currentYear(),
-      teacherId: '',
-      teacherName: '',
+      className: overrides.className || '系统测试班',
+      grade: overrides.grade || '测试',
+      schoolYear: overrides.schoolYear || currentYear(),
+      teacherId: overrides.teacherId || '',
+      teacherName: overrides.teacherName || '',
       schoolName: '',
-      studentCount: 1,
-      essayCount: 0,
+      studentCount: Number(overrides.studentCount ?? 0),
+      essayCount: Number(overrides.essayCount ?? 0),
       averageScore: null,
       excellentRate: null,
       passingRate: null,
       latestSubmittedAt: '',
       feishuChatId: '',
-      joinMode: 'approval',
-      inviteCode: 'SYSTEM-TEST-001',
+      joinMode: overrides.joinMode || 'approval',
+      inviteCode: overrides.inviteCode || 'SYSTEM-TEST-001',
       inviteCodeExpiresAt: '',
-      maxStudents: 60,
-      status: 'active',
+      inviteUrl: overrides.inviteUrl || '',
+      qrSvg: overrides.qrSvg || '',
+      maxStudents: Number(overrides.maxStudents ?? 60),
+      status: overrides.status || 'active',
       isTestData: true,
+      dataScope: overrides.dataScope || 'system_test',
       testScope: 'system',
       createdAt: now,
       updatedAt: now
@@ -130,79 +271,35 @@ function ensureSystemTestFixtureRecord(appDir, items, kind) {
     items.push(item);
     return { item, created: true };
   }
-
-  const classKey = generateClassKey({ schoolYear: currentYear(), grade: '测试', className: '系统测试班' });
-  const existing = items.find((item) => item.studentKey === 'TEST001_测试学生' || item.studentId === 'TEST001' || item.studentName === '测试学生' || isTrue(item.isTestData));
-  if (existing) {
-    existing.studentKey = existing.studentKey || 'TEST001_测试学生';
-    existing.studentId = 'TEST001';
-    existing.studentName = '测试学生';
-    existing.classKey = classKey;
-    existing.className = '系统测试班';
-    existing.grade = '测试';
-    existing.schoolYear = existing.schoolYear || currentYear();
-    existing.status = 'active';
-    existing.isTestData = true;
-    existing.testScope = 'system';
-    existing.updatedAt = now;
-    return { item: existing, created: false };
-  }
-  const item = {
-    studentKey: 'TEST001_测试学生',
-    studentId: 'TEST001',
-    studentName: '测试学生',
-    classKey,
-    className: '系统测试班',
-    grade: '测试',
-    schoolYear: currentYear(),
-    gender: '',
-    status: 'active',
-    essayCount: 0,
-    averageScore: null,
-    latestScore: null,
-    scoreTrend: '',
-    weakestAbility: '',
-    latestEssayAt: '',
-    profileUpdatedAt: '',
-    feishuUserId: '',
-    isTestData: true,
-    testScope: 'system',
-    createdAt: now,
-    updatedAt: now,
-    transferHistory: []
-  };
-  items.push(item);
-  return { item, created: true };
+  return { item: null, created: false };
 }
 
-export function ensureSystemTestFixture(appDir, { logger = console } = {}) {
+export function ensureSystemTestFixture(appDir, { logger = console, classOverrides = {} } = {}) {
   const classesStore = readStore(appDir, 'classes');
-  const studentsStore = readStore(appDir, 'students');
-  const classResult = ensureSystemTestFixtureRecord(appDir, classesStore.items, 'class');
-  const studentResult = ensureSystemTestFixtureRecord(appDir, studentsStore.items, 'student');
+  const classResult = ensureSystemTestFixtureRecord(appDir, classesStore.items, 'class', classOverrides);
   if (classResult.item) {
-    classResult.item.studentCount = 1;
+    classResult.item.studentCount = Number(classResult.item.studentCount || 0);
     classResult.item.essayCount = Number(classResult.item.essayCount || 0);
     classResult.item.updatedAt = new Date().toISOString();
   }
 
   writeJson(storePath(appDir, 'classes'), classesStore);
-  writeJson(storePath(appDir, 'students'), studentsStore);
+  writeJson(storePath(appDir, 'students'), { version: TEACHER_MANAGEMENT_VERSION, items: [] });
 
   logger?.info?.('系统测试入口已确认', {
     classKey: classResult.item.classKey,
-    studentKey: studentResult.item.studentKey
+    studentKey: ''
   });
 
   return {
     ok: true,
     created: {
       class: classResult.created,
-      student: studentResult.created
+      student: false
     },
     fixture: {
       class: classResult.item,
-      student: studentResult.item
+      student: null
     },
     updatedAt: new Date().toISOString()
   };
@@ -537,9 +634,107 @@ export function writeLegacyCleanupReport(appDir, report) {
 
 export function buildSystemTestCenterSnapshot({ appDir = process.cwd(), database = null, backupPath = '' } = {}) {
   const report = buildLegacyCleanupDryRun({ appDir, database, backupPath });
-  const fixture = report.fixture || {};
+  const storeFixture = report.fixture || {};
+  let fixture = storeFixture;
+  if (database) {
+    try {
+      const klass = database.prepare(`
+        SELECT c.*, t.user_id AS teacher_user_id, u.name AS teacher_name
+        FROM classes c
+        LEFT JOIN teachers t ON t.id = c.teacher_id
+        LEFT JOIN users u ON u.id = t.user_id
+        WHERE LOWER(COALESCE(c.data_scope, 'production')) = 'system_test'
+        ORDER BY c.updated_at DESC, c.id DESC
+        LIMIT 1
+      `).get() || null;
+      if (klass) {
+        const activeInvite = database.prepare(`
+          SELECT *
+          FROM class_invites
+          WHERE class_id = ? AND status = 'active'
+          ORDER BY id DESC
+          LIMIT 1
+        `).get(klass.id) || null;
+        const student = database.prepare(`
+          SELECT s.id, s.student_no, u.name AS student_name, u.username
+          FROM students s
+          LEFT JOIN users u ON u.id = s.user_id
+          WHERE LOWER(COALESCE(s.data_scope, 'production')) = 'system_test'
+          ORDER BY s.id DESC
+          LIMIT 1
+        `).get() || null;
+        const classKey = generateClassKey({ schoolYear: currentYear(), grade: klass.grade || '测试', className: klass.name || '系统测试班' });
+        fixture = {
+          class: {
+            classId: String(klass.id || ''),
+            classKey,
+            className: klass.name || '系统测试班',
+            grade: klass.grade || '测试',
+            schoolYear: currentYear(),
+            teacherId: String(klass.teacher_id || ''),
+            teacherName: klass.teacher_name || '',
+            schoolName: '',
+            studentCount: Number(database.prepare(`
+              SELECT COUNT(*) AS count
+              FROM class_students cs
+              LEFT JOIN student_class_bindings b ON b.student_id = cs.student_id AND b.class_id = cs.class_id
+              WHERE cs.class_id = ? AND COALESCE(b.status, 'active') = 'active'
+            `).get(klass.id)?.count || 0),
+            essayCount: Number(database.prepare(`
+              SELECT COUNT(*) AS count
+              FROM essays e
+              JOIN assignments a ON a.id = e.assignment_id
+              WHERE a.class_id = ?
+            `).get(klass.id)?.count || 0),
+            averageScore: null,
+            excellentRate: null,
+            passingRate: null,
+            latestSubmittedAt: '',
+            feishuChatId: '',
+            joinMode: klass.join_mode || 'approval',
+            inviteCode: activeInvite?.invite_code || klass.invite_code || 'SYSTEM-TEST-001',
+            inviteCodeExpiresAt: activeInvite?.expires_at || klass.invite_code_expires_at || '',
+            inviteStatus: activeInvite?.status || klass.status || 'active',
+            inviteUrl: activeInvite?.invite_token ? `/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}` : '',
+            qrSvg: activeInvite?.invite_token ? buildQrSvg(`/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}`, klass.name || '系统测试班') : '',
+            maxStudents: Number(klass.max_students || 60),
+            status: klass.status || 'active',
+            isTestData: true,
+            dataScope: 'system_test',
+            testScope: 'system',
+            createdAt: klass.created_at || new Date().toISOString(),
+            updatedAt: klass.updated_at || new Date().toISOString()
+          },
+      student: student ? {
+            studentKey: student.username || `student_${student.id}`,
+            studentId: student.student_no || String(student.id),
+            studentName: student.student_name || '',
+            classKey,
+            className: klass.name || '',
+            grade: klass.grade || '',
+            schoolYear: currentYear(),
+            status: 'active',
+            essayCount: 0,
+            averageScore: null,
+            latestScore: null,
+            scoreTrend: '',
+            weakestAbility: '',
+            latestEssayAt: '',
+            profileUpdatedAt: '',
+            createdAt: '',
+            updatedAt: '',
+            transferHistory: [],
+            isTestData: true,
+            dataScope: 'system_test'
+          } : null
+        };
+      }
+    } catch {
+      fixture = storeFixture;
+    }
+  }
   const classKey = fixture.class?.classKey || generateClassKey({ schoolYear: currentYear(), grade: '测试', className: '系统测试班' });
-  const studentKey = fixture.student?.studentKey || 'TEST001_测试学生';
+  const studentKey = fixture.student?.studentKey || '';
   return {
     generatedAt: report.generatedAt,
     backupPath: report.backupPath,
@@ -555,12 +750,13 @@ export function buildSystemTestCenterSnapshot({ appDir = process.cwd(), database
       teacherTasks: '/teacher/tasks',
       teacherTestCenter: '/teacher/test-center',
       studentHome: '/student-mobile/home',
-      studentJoin: '/student-mobile/join/code',
+      studentJoin: fixture.class?.inviteUrl || '/student-mobile/join/code',
       studentTasks: '/student-mobile/tasks',
       studentProfile: '/student-mobile/profile',
       testClassDetail: `/teacher/classes/${encodeURIComponent(classKey)}`,
       testClassMembers: `/teacher/classes/${encodeURIComponent(classKey)}/members`,
-      testStudentProfile: `/student-profiles/${encodeURIComponent(studentKey)}`
+      testClassRequests: `/teacher/classes/${encodeURIComponent(classKey)}/join-requests`,
+      testStudentProfile: studentKey ? `/student-profiles/${encodeURIComponent(studentKey)}` : ''
     }
   };
 }

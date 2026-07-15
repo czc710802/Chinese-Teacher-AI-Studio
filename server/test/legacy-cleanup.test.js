@@ -2,17 +2,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import {
   buildLegacyCleanupDryRun,
+  buildSystemTestCenterSnapshot,
   ensureSystemTestFixture
 } from '../src/services/legacy-cleanup.js';
-import {
-  getTeacherDashboard,
-  listClasses,
-  listStudents
-} from '../src/services/teacher-management/teacher-management-service.js';
+import { resetSystemTestEnvironment, getTestEnvironmentStatus } from '../src/services/test-environment.js';
+import { schemaSql } from '../src/db/schema.js';
+import { applyP3MobileClassLifecycleMigration } from '../src/db/migrations/20260715_p3_mobile_class_lifecycle.js';
+import { listClasses, listStudents } from '../src/services/teacher-management/teacher-management-service.js';
 
 function tempAppDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-cleanup-'));
@@ -23,7 +24,8 @@ function writeJson(file, data) {
   fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
 }
 
-function seedTeacherManagementStore(appDir) {
+function seedTeacherManagementStore(appDir, { markAsTestData = false } = {}) {
+  const scopeFields = markAsTestData ? { isTestData: true, dataScope: 'system_test', testScope: 'system' } : {};
   writeJson(path.join(appDir, 'data/teacher-management/classes.json'), {
     version: '1.0',
     items: [
@@ -32,6 +34,7 @@ function seedTeacherManagementStore(appDir) {
         className: '旧班级A',
         grade: '高三',
         schoolYear: '2026',
+        ...scopeFields,
         studentCount: 0,
         essayCount: 0,
         averageScore: null,
@@ -47,6 +50,7 @@ function seedTeacherManagementStore(appDir) {
         className: '旧班级B',
         grade: '高三',
         schoolYear: '2026',
+        ...scopeFields,
         studentCount: 1,
         essayCount: 1,
         averageScore: 48,
@@ -70,6 +74,7 @@ function seedTeacherManagementStore(appDir) {
         className: '',
         grade: '高三',
         schoolYear: '2026',
+        ...scopeFields,
         status: 'active',
         essayCount: 0,
         averageScore: null,
@@ -90,6 +95,7 @@ function seedTeacherManagementStore(appDir) {
         className: '旧班级B',
         grade: '高三',
         schoolYear: '2026',
+        ...scopeFields,
         status: 'active',
         essayCount: 2,
         averageScore: 48,
@@ -114,6 +120,7 @@ function seedTeacherManagementStore(appDir) {
         studentId: 'HIS001',
         studentName: '旧学生B',
         className: '旧班级B',
+        ...scopeFields,
         essayTitle: '历史作文',
         score: 48,
         maxScore: 60,
@@ -145,6 +152,7 @@ function seedTeacherManagementStore(appDir) {
         archiveId: 'archive-history-001',
         studentKey: 'history_student_旧学生B',
         classKey: '2026_高三_旧班级B',
+        ...scopeFields,
         essayTitle: '历史作文',
         status: 'completed',
         provider: 'deepseek',
@@ -165,6 +173,7 @@ function seedTeacherManagementStore(appDir) {
         archiveId: 'archive-history-001',
         teacherId: 'teacher-test',
         teacherName: '测试教师',
+        ...scopeFields,
         overallComment: '测试点评',
         revisedScore: 50,
         revisedLevel: '二类文',
@@ -181,6 +190,29 @@ function seedTeacherManagementStore(appDir) {
   });
 }
 
+function seedResetDatabase(appDir) {
+  const databasePath = path.join(appDir, 'data/essay-review.sqlite');
+  const database = new DatabaseSync(databasePath);
+  database.exec('PRAGMA foreign_keys = ON');
+  database.exec(schemaSql);
+  applyP3MobileClassLifecycleMigration(database);
+  const addUser = database.prepare('INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)');
+  const teacherUserId = addUser.run('teacher-reset', '123456', 'teacher', '测试教师').lastInsertRowid;
+  const studentUserId = addUser.run('student-reset', '123456', 'student', '测试学生').lastInsertRowid;
+  const teacherId = database.prepare('INSERT INTO teachers (user_id, title, school) VALUES (?, ?, ?)').run(teacherUserId, '高中语文教师', '测试中学').lastInsertRowid;
+  const studentId = database.prepare('INSERT INTO students (user_id, student_no, grade, school, data_scope) VALUES (?, ?, ?, ?, ?)').run(studentUserId, 'T001', '高二', '测试中学', 'system_test').lastInsertRowid;
+  const classId = database.prepare('INSERT INTO classes (name, grade, teacher_id, data_scope, invite_code, join_mode, status, updated_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)')
+    .run('旧测试班', '高二', teacherId, 'system_test', 'TEST-OLD-001', 'approval', 'active').lastInsertRowid;
+  database.prepare('INSERT INTO class_students (class_id, student_id) VALUES (?, ?)').run(classId, studentId);
+  const assignmentId = database.prepare('INSERT INTO assignments (class_id, title, prompt, essay_type, full_score, status) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(classId, '旧测试作文', '写作文', '材料作文', 60, 'published').lastInsertRowid;
+  const essayId = database.prepare('INSERT INTO essays (assignment_id, student_id, title, original_text, grading_status, status) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(assignmentId, studentId, '旧测试作文', '正文', 'graded', 'submitted').lastInsertRowid;
+  database.prepare('INSERT INTO ai_reviews (essay_id, total_score, level, dimension_scores, strengths, problems, paragraph_comments, editable_sentences, suggestions, upgraded_paragraph, good_sentences, next_training, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(essayId, 48, '二类文', '[]', '[]', '[]', '[]', '[]', '[]', '', '[]', '[]', '{}');
+  database.close();
+}
+
 test('system test fixture can be reset without touching legacy data', () => {
   const appDir = tempAppDir();
   seedTeacherManagementStore(appDir);
@@ -188,18 +220,13 @@ test('system test fixture can be reset without touching legacy data', () => {
   const result = ensureSystemTestFixture(appDir);
   assert.equal(result.ok, true);
   assert.equal(result.fixture.class.isTestData, true);
-  assert.equal(result.fixture.student.isTestData, true);
+  assert.equal(result.fixture.student, null);
 
   const classes = listClasses(appDir, { scope: 'system_test' });
   const students = listStudents(appDir, { scope: 'system_test' });
   assert.equal(classes.total, 1);
-  assert.equal(students.total, 1);
+  assert.equal(students.total, 0);
   assert.equal(classes.items[0].className, '系统测试班');
-  assert.equal(students.items[0].studentName, '测试学生');
-
-  const dashboard = getTeacherDashboard({ appDir, aiStatus: { deepseekReady: true }, nasStatus: { connected: true } });
-  assert.equal(dashboard.classes.visible, 1);
-  assert.equal(dashboard.students.visible, 1);
 });
 
 test('legacy cleanup dry-run separates keep, archive, logical delete and physical delete candidates', () => {
@@ -209,9 +236,47 @@ test('legacy cleanup dry-run separates keep, archive, logical delete and physica
 
   const report = buildLegacyCleanupDryRun({ appDir });
   assert.equal(report.teacherManagement.totals.testClasses >= 1, true);
-  assert.equal(report.teacherManagement.totals.testStudents >= 1, true);
+  assert.equal(report.teacherManagement.totals.testStudents, 0);
   assert.ok(report.keep.some((item) => item.name === '系统测试班'));
-  assert.ok(report.archive.some((item) => item.className === '旧班级B'));
-  assert.ok(report.logicalDelete.some((item) => item.studentName === '旧学生B'));
-  assert.ok(report.physicalDelete.some((item) => item.name === '旧班级A' || item.className === '旧班级A'));
+});
+
+test('test environment reset clears legacy data and rebuilds an empty system test class', () => {
+  const appDir = tempAppDir();
+  seedTeacherManagementStore(appDir);
+  seedResetDatabase(appDir);
+
+  const database = new DatabaseSync(path.join(appDir, 'data/essay-review.sqlite'));
+  database.exec('PRAGMA foreign_keys = ON');
+  const result = resetSystemTestEnvironment({ appDir, database });
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.fixture.class.isTestData, true);
+  assert.equal(result.snapshot.fixture.student, null);
+  assert.equal(result.snapshot.report.teacherManagement.totals.testClasses >= 1, true);
+  assert.equal(result.snapshot.report.teacherManagement.totals.testStudents, 0);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM classes').get().count, 1);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM students').get().count, 0);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM essays').get().count, 0);
+
+  const status = getTestEnvironmentStatus({ appDir, database });
+  assert.equal(status.snapshot.fixture.class.isTestData, true);
+  database.close();
+});
+
+test('system test center snapshot reads the live invite from the database', () => {
+  const appDir = tempAppDir();
+  seedTeacherManagementStore(appDir);
+  seedResetDatabase(appDir);
+
+  const database = new DatabaseSync(path.join(appDir, 'data/essay-review.sqlite'));
+  database.exec('PRAGMA foreign_keys = ON');
+  const reset = resetSystemTestEnvironment({ appDir, database });
+  assert.equal(reset.ok, true);
+  const snapshot = buildSystemTestCenterSnapshot({ appDir, database });
+  assert.equal(snapshot.fixture.class.isTestData, true);
+  assert.equal(snapshot.fixture.class.studentCount, 0);
+  assert.ok(snapshot.fixture.class.inviteCode);
+  assert.match(snapshot.fixture.class.inviteUrl, /\/student-mobile\/join\?token=/);
+  assert.match(snapshot.fixture.class.qrSvg, /<svg/);
+  assert.doesNotMatch(snapshot.fixture.class.qrSvg, /student-mobile\/join\?token=/);
+  database.close();
 });

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, setSession, getSession } from './api/client.js';
+import { teacherHomeHighlights, teacherLegacyRedirects, teacherNavigationEntries } from './teacher-navigation.js';
 import './styles/app.css';
 import { ArrowLeft, BookOpen, Camera, ChartNoAxesCombined, Check, ChevronUp, Copy, Download, FileText, Filter, GraduationCap, Home, LockKeyhole, LogOut, MoreHorizontal, PackageOpen, PenLine, Plus, Search, School, Send, Share2, Star, TestTube2, Trash2, UserPlus, Users } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -9,6 +10,19 @@ import { Sparkles, MessageCircle, Trophy, Newspaper, Bookmark, RotateCcw, Trendi
 
 const homeByRole = { student: '/student', teacher: '/teacher', admin: '/admin' };
 const roleLabel = { student: '学生端', teacher: '教师端', admin: '管理员端' };
+const teacherIconMap = {
+  home: Home,
+  users: Users,
+  userPlus: UserPlus,
+  bookOpen: BookOpen,
+  fileText: FileText,
+  rotate: RotateCcw,
+  check: Check,
+  trending: TrendingUp,
+  benchmark: FileSpreadsheet,
+  testTube: TestTube2,
+  settings: PackageOpen
+};
 
 function pickDefaultClassId(rows = []) {
   const namedClass = rows.find((item) => String(item?.name || '').trim());
@@ -52,6 +66,18 @@ function Layout({ children }) {
 
 function Card({ title, icon, children, action, className = '' }) {
   return <section className={`card ${className}`.trim()}><div className="card-head"><h2>{title}</h2>{icon}{action}</div>{children}</section>;
+}
+
+function TeacherRouteLink({ to, children, className = '' }) {
+  return <a className={className} href={to}>{children}</a>;
+}
+
+function TeacherNavigationBar({ compact = false }) {
+  const location = useLocation();
+  const items = compact ? teacherNavigationEntries.slice(0, 7) : teacherNavigationEntries;
+  return <div className="teacher-subnav">
+    {items.map((item) => <TeacherRouteLink key={item.id} to={item.route} className={location.pathname === item.route ? 'active' : ''}>{item.title}</TeacherRouteLink>)}
+  </div>;
 }
 
 function LoginPage() {
@@ -2080,12 +2106,10 @@ function TeacherDashboardCard() {
         <span>队列 {data.queues.archivePending + data.queues.profilePending + data.queues.managementPending}</span>
       </div>
       <div className="quick teacher-nav">
-        <a href="/teacher/classes"><Users size={18} />班级管理</a>
-        <a href="/teacher/students"><GraduationCap size={18} />学生管理</a>
-        <a href="/teacher/essays"><FileText size={18} />作文管理</a>
-        <a href="/teacher/tasks"><RotateCcw size={18} />任务中心</a>
-        <a href="/teacher/test-center"><TestTube2 size={18} />系统测试中心</a>
-        <a href="/teacher/benchmark"><FileSpreadsheet size={18} />Benchmark Center</a>
+        {teacherHomeHighlights.map((item) => {
+          const Icon = teacherIconMap[item.iconKey] || Home;
+          return <a key={item.id} href={item.route}><Icon size={18} />{item.title}</a>;
+        })}
       </div>
     </>}
   </Card>;
@@ -2100,15 +2124,7 @@ function TeacherManagementShell({ title, icon, children }) {
         <h2>{title}</h2>
       </div>
     </section>
-    <div className="teacher-subnav">
-      <a href="/teacher">首页</a>
-      <a href="/teacher/classes">班级</a>
-      <a href="/teacher/students">学生</a>
-      <a href="/teacher/essays">作文</a>
-      <a href="/teacher/tasks">任务</a>
-      <a href="/teacher/test-center">测试中心</a>
-      <a href="/teacher/benchmark">Benchmark</a>
-    </div>
+    <TeacherNavigationBar />
     <Card title={title} icon={icon}>{children}</Card>
   </Layout>;
 }
@@ -2204,7 +2220,7 @@ function BenchmarkCenterPage() {
 
 function TeacherClassesPage() {
   const [rows, setRows] = useState([]);
-  const [filters, setFilters] = useState({ scope: 'system_test', keyword: '', grade: '', schoolYear: '', status: '' });
+  const [filters, setFilters] = useState({ scope: 'production', keyword: '', grade: '', schoolYear: '', status: '' });
   const [message, setMessage] = useState('');
   async function load() {
     const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString();
@@ -2219,14 +2235,14 @@ function TeacherClassesPage() {
   }
   return <TeacherManagementShell title="班级管理" icon={<Users size={20} />}>
     <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
-      <select value={filters.scope} onChange={(e) => setFilters({ ...filters, scope: e.target.value })}><option value="system_test">仅系统测试数据</option><option value="">全部历史数据</option></select>
+      <select value={filters.scope} onChange={(e) => setFilters({ ...filters, scope: e.target.value })}><option value="production">仅正式数据</option><option value="">全部历史数据</option></select>
       <label><Search size={18} /><input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="搜索班级/教师" /></label>
       <input value={filters.grade} onChange={(e) => setFilters({ ...filters, grade: e.target.value })} placeholder="年级" />
       <input value={filters.schoolYear} onChange={(e) => setFilters({ ...filters, schoolYear: e.target.value })} placeholder="学年" />
       <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="">全部状态</option><option value="active">active</option><option value="archived">archived</option></select>
       <button><Filter size={18} />筛选</button>
     </form>
-    <p className="hint">默认仅展示系统测试班级。切换到“全部历史数据”可以查看旧班级，但不会自动执行删除。</p>
+    <p className="hint">默认仅展示正式班级。切换到“全部历史数据”可以查看旧班级，但不会自动执行删除。</p>
     {message && <p className="error">{message}</p>}
     <div className="management-table">
       {rows.map((klass) => <article className="management-row" key={klass.classKey}>
@@ -2271,7 +2287,7 @@ function TeacherClassDetailPage() {
 
 function TeacherStudentsPage() {
   const [rows, setRows] = useState([]);
-  const [filters, setFilters] = useState({ scope: 'system_test', keyword: '', classKey: '', trend: '', status: '' });
+  const [filters, setFilters] = useState({ scope: 'production', keyword: '', classKey: '', trend: '', status: '' });
   async function load() {
     const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString();
     const data = await api(`/teacher/students${query ? `?${query}` : ''}`);
@@ -2280,14 +2296,14 @@ function TeacherStudentsPage() {
   useEffect(() => { load().catch(() => {}); }, []);
   return <TeacherManagementShell title="学生管理" icon={<GraduationCap size={20} />}>
     <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
-      <select value={filters.scope} onChange={(e) => setFilters({ ...filters, scope: e.target.value })}><option value="system_test">仅系统测试数据</option><option value="">全部历史数据</option></select>
+      <select value={filters.scope} onChange={(e) => setFilters({ ...filters, scope: e.target.value })}><option value="production">仅正式数据</option><option value="">全部历史数据</option></select>
       <label><Search size={18} /><input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="搜索姓名/学号" /></label>
       <input value={filters.classKey} onChange={(e) => setFilters({ ...filters, classKey: e.target.value })} placeholder="classKey" />
       <select value={filters.trend} onChange={(e) => setFilters({ ...filters, trend: e.target.value })}><option value="">全部趋势</option><option value="up">up</option><option value="stable">stable</option><option value="down">down</option></select>
       <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="">全部状态</option><option value="active">active</option><option value="archived">archived</option></select>
       <button><Filter size={18} />筛选</button>
     </form>
-    <p className="hint">默认仅展示系统测试学生。切换到“全部历史数据”可以查看旧学生名单，但不会自动执行删除。</p>
+    <p className="hint">默认仅展示正式学生。切换到“全部历史数据”可以查看旧学生名单，但不会自动执行删除。</p>
     <div className="management-table">{rows.map((student) => <a className="management-row" href={`/student-profiles/${encodeURIComponent(student.studentKey)}`} key={student.studentKey}><b>{student.studentName}<span>{student.studentId}</span></b><span>{student.className}</span><span>{student.essayCount}篇</span><span>均分 {student.averageScore ?? '--'}</span><span>最近 {student.latestScore ?? '--'}</span><span>{student.scoreTrend || '--'}</span><span>{student.weakestAbility || '--'}</span></a>)}</div>
   </TeacherManagementShell>;
 }
@@ -2296,6 +2312,8 @@ function TeacherTestCenterPage() {
   const [data, setData] = useState(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState('');
+  const [qrExpanded, setQrExpanded] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   async function load() {
     setBusy('load');
@@ -2309,14 +2327,92 @@ function TeacherTestCenterPage() {
     }
   }
 
+  async function copyText(value, successMessage = '已复制') {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setMessage(successMessage);
+    } catch {
+      window.prompt('复制内容', value);
+    }
+  }
+
+  async function copyInviteCode() {
+    await copyText(data?.fixture?.class?.inviteCode || '', '邀请码已复制。');
+  }
+
+  async function copyJoinLink() {
+    const path = data?.fixture?.class?.inviteUrl || data?.links?.studentJoin || '';
+    const url = path ? `${window.location.origin}${path}` : '';
+    await copyText(url, '加入链接已复制。');
+  }
+
+  function getQrDataUrl() {
+    const svg = data?.fixture?.class?.qrSvg || '';
+    return svg ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` : '';
+  }
+
+  async function downloadQrPng() {
+    const svg = data?.fixture?.class?.qrSvg || '';
+    if (!svg) {
+      setMessage('二维码暂不可用，请点击重新生成。');
+      return;
+    }
+    try {
+      const img = new Image();
+      const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = svgUrl;
+      });
+      const size = 720;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, size, size);
+      context.drawImage(img, 0, 0, size, size);
+      const link = document.createElement('a');
+      link.href = canvas.toDataURL('image/png');
+      link.download = `${data?.fixture?.class?.className || '系统测试班'}-二维码.png`;
+      link.click();
+      setMessage('二维码 PNG 已下载。');
+    } catch {
+      setMessage('二维码 PNG 下载失败，请重新生成后再试。');
+    }
+  }
+
+  async function regenerateInvite() {
+    const classId = data?.fixture?.class?.classId;
+    if (!classId) {
+      setMessage('当前测试班缺少班级标识，无法重新生成邀请。');
+      return;
+    }
+    if (!window.confirm('确认重新生成邀请？旧二维码和旧 token 将失效。')) return;
+    setBusy('invite');
+    try {
+      await api(`/classes/${encodeURIComponent(classId)}/invite/rotate`, { method: 'POST', body: { joinMode: data?.fixture?.class?.joinMode || 'approval' } });
+      await load();
+      setMessage('已重新生成邀请。');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
   useEffect(() => { load().catch(() => {}); }, []);
 
   async function resetFixture() {
+    const confirmed = window.prompt('请输入确认文本 RESET SYSTEM TEST 以重置系统测试环境');
+    if (confirmed !== 'RESET SYSTEM TEST') return;
     setBusy('reset');
     try {
       const result = await api('/teacher/test-center/reset-fixture', { method: 'POST', body: {} });
       setData(result.snapshot);
-      setMessage('系统测试入口已重建。');
+      setMessage('系统测试环境已重置。');
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -2340,77 +2436,137 @@ function TeacherTestCenterPage() {
 
   const report = data?.report || null;
   const fixtureClass = data?.fixture?.class || null;
-  const fixtureStudent = data?.fixture?.student || null;
+  const qrDataUrl = getQrDataUrl();
+  const stepCounts = {
+    students: Number(fixtureClass?.studentCount || 0),
+    pending: Number(report?.teacherManagement?.totals?.pendingRequests || report?.teacherManagement?.totals?.requests || 0),
+    tasks: Number(report?.teacherManagement?.totals?.tasks || 0),
+    essays: Number(report?.teacherManagement?.totals?.essays || 0),
+    reports: Number(report?.teacherManagement?.totals?.reports || report?.sqlite?.tables?.teacher_reports || 0)
+  };
 
   return <TeacherManagementShell title="系统测试中心" icon={<TestTube2 size={20} />}>
-    <p className="hint">仅供系统测试，请勿用于真实学生数据。这里默认只展示系统测试班级和系统测试学生，旧数据保留在历史视图中。</p>
+    <div className="test-center-page">
+      <p className="hint">本区域仅用于系统测试，请勿录入真实学生信息。</p>
     {message && <p className="hint">{message}</p>}
-    <div className="actions">
-      <button type="button" onClick={resetFixture} disabled={busy === 'reset'}>{busy === 'reset' ? '重建中...' : '重建系统测试入口'}</button>
-      <button type="button" onClick={rerunDryRun} disabled={busy === 'dry-run'}>{busy === 'dry-run' ? '生成中...' : '重新生成 dry-run'}</button>
-      <button type="button" onClick={load} disabled={busy === 'load'}>{busy === 'load' ? '刷新中...' : '刷新'}</button>
-    </div>
-    <div className="teacher-kpis">
-      <span><b>{report?.teacherManagement?.totals?.testClasses ?? 0}</b>测试班级</span>
-      <span><b>{report?.teacherManagement?.totals?.testStudents ?? 0}</b>测试学生</span>
-      <span><b>{report?.archive?.length ?? 0}</b>拟归档</span>
-      <span><b>{report?.logicalDelete?.length ?? 0}</b>拟逻辑删除</span>
-      <span><b>{report?.physicalDelete?.length ?? 0}</b>拟物理删除</span>
-    </div>
-    <div className="archive-grid">
-      <div className="archive-list">
-        <h3>测试入口</h3>
-        <article className="archive-row">
-          <div>
-            <b>{fixtureClass?.className || '系统测试班'}</b>
-            <p>{fixtureClass?.grade || '测试'} · {fixtureClass?.schoolYear || '当前学年'} · {fixtureClass?.joinMode || 'approval'}</p>
-            <code>{fixtureClass?.classKey || '未配置 classKey'}</code>
-            <p className="hint">邀请口令：{fixtureClass?.inviteCode || 'SYSTEM-TEST-001'} · 状态：{fixtureClass?.status || 'active'}</p>
+      <div className="test-center-hero">
+        <div className="test-center-hero-main">
+          <p className="eyebrow">邀请学生</p>
+          <h2>{fixtureClass?.className || '系统测试班'}</h2>
+          <p>{fixtureClass?.grade || '测试'} · {fixtureClass?.schoolYear || '当前学年'} · {fixtureClass?.joinMode || 'approval'} · {fixtureClass?.status || 'active'}</p>
+          <div className="teacher-kpis test-center-mini-kpis">
+            <span><b>{Number(fixtureClass?.studentCount || 0)}</b>当前学生</span>
+            <span><b>{Number(report?.teacherManagement?.totals?.testStudents || 0)}</b>待审核人数</span>
+            <span><b>{Number(report?.teacherManagement?.totals?.tasks || 0)}</b>测试任务</span>
+            <span><b>{Number(report?.teacherManagement?.totals?.essays || 0)}</b>测试作文</span>
           </div>
-        </article>
-        <article className="archive-row">
-          <div>
-            <b>{fixtureStudent?.studentName || '测试学生'}</b>
-            <p>{fixtureStudent?.studentId || 'TEST001'} · {fixtureStudent?.className || '系统测试班'}</p>
-            <code>{fixtureStudent?.studentKey || 'TEST001_测试学生'}</code>
+          <div className="test-center-invite-code">
+            <span>邀请码</span>
+            <strong>{fixtureClass?.inviteCode || 'SYSTEM-TEST-001'}</strong>
+            <small>状态：{fixtureClass?.inviteStatus || 'active'} · 有效期：{formatDateTime(fixtureClass?.inviteCodeExpiresAt)}</small>
           </div>
-        </article>
-        <div className="actions">
-          <a className="button-link" href={data?.links?.teacherClasses || '/teacher/classes?scope=system_test'}>打开班级管理</a>
-          <a className="button-link" href={data?.links?.teacherStudents || '/teacher/students?scope=system_test'}>打开学生管理</a>
-          <a className="button-link" href={data?.links?.teacherAssignments || '/assignments/new'}>发布测试任务</a>
+          <div className="actions test-center-primary-actions">
+            <button type="button" onClick={() => setQrExpanded(true)} disabled={!qrDataUrl}>放大二维码</button>
+            <button type="button" onClick={downloadQrPng} disabled={!qrDataUrl}><Download size={16} />下载二维码</button>
+            <button type="button" onClick={copyInviteCode}><Copy size={16} />复制邀请码</button>
+            <button type="button" onClick={copyJoinLink}><Share2 size={16} />复制加入链接</button>
+            <button type="button" onClick={regenerateInvite} disabled={busy === 'invite'}>{busy === 'invite' ? '生成中...' : '重新生成邀请'}</button>
+          </div>
+          <p className="hint">加入链接：{qrDataUrl ? '已生成' : '二维码暂不可用，请重新生成。'}</p>
+          {qrDataUrl && <button type="button" className="qr-card-button" onClick={() => setQrExpanded(true)} aria-label="放大二维码">
+            <img className="qr-card-image" src={qrDataUrl} alt="系统测试班二维码" />
+          </button>}
         </div>
-        <div className="actions">
-          <a className="button-link" href={data?.links?.studentJoin || '/student-mobile/join/code'}>学生入班页</a>
-          <a className="button-link" href={data?.links?.studentHome || '/student-mobile/home'}>学生首页</a>
-          <a className="button-link" href={data?.links?.teacherTasks || '/teacher/tasks'}>任务中心</a>
+        <div className="test-center-steps">
+          <section className="test-center-step">
+            <h3>审核入班</h3>
+            <p><b>{Number(report?.teacherManagement?.totals?.pendingRequests || report?.teacherManagement?.totals?.requests || 0)}</b> 待审核</p>
+            <p className="hint">查看最近申请后，再批准加入系统测试班。</p>
+            <div className="actions">
+              <a className="button-link" href={data?.links?.testClassRequests || `${data?.links?.testClassDetail || '/teacher/classes'}/join-requests`}>查看待审核申请</a>
+              <a className="button-link" href={data?.links?.testClassMembers || `${data?.links?.testClassDetail || '/teacher/classes'}/members`}>打开班级成员</a>
+            </div>
+          </section>
+          <section className="test-center-step">
+            <h3>发布测试任务</h3>
+            <p><b>{Number(report?.teacherManagement?.totals?.tasks || 0)}</b> 当前任务</p>
+            <p><b>{Number(report?.teacherManagement?.totals?.submissions || report?.teacherManagement?.totals?.essays || 0)}</b> 最近提交</p>
+            <p className="hint">先发任务，再让测试学生扫码提交作文。</p>
+            <div className="actions">
+              <a className="button-link" href={data?.links?.teacherAssignments || '/teacher/assignments'}>发布测试作文</a>
+              <a className="button-link" href={data?.links?.teacherTasks || '/teacher/grading'}>查看测试任务</a>
+              <a className="button-link" href="/teacher/submissions">查看学生提交</a>
+            </div>
+          </section>
+          <section className="test-center-step">
+            <h3>验证批改结果</h3>
+            <p><b>{Number(report?.teacherManagement?.totals?.essays || 0)}</b> 测试作文</p>
+            <p><b>{Number(report?.teacherManagement?.totals?.reports || report?.sqlite?.tables?.teacher_reports || 0)}</b> 批改结果</p>
+            <p className="hint">检查 AI 批改、教师审核、报告与下载是否同步。</p>
+            <div className="actions">
+              <a className="button-link" href="/teacher/grading">打开 AI 批改中心</a>
+              <a className="button-link" href={data?.links?.teacherStudents || '/teacher/reviews'}>打开教师审核</a>
+              <a className="button-link" href="/teacher/submissions">查看测试报告</a>
+            </div>
+          </section>
         </div>
       </div>
-      <aside className="archive-detail">
-        <h3>dry-run 结果</h3>
-        <p className="hint">备份：{report?.backupPath || '未找到最新备份'}</p>
-        {report ? <>
-          <p>teacher-management：班级 {report.teacherManagement?.totals?.classes ?? 0}，学生 {report.teacherManagement?.totals?.students ?? 0}，作文 {report.teacherManagement?.totals?.essays ?? 0}</p>
-          <p>SQLite：班级 {report.sqlite?.tables?.classes ?? 0}，学生 {report.sqlite?.tables?.students ?? 0}，作文 {report.sqlite?.tables?.essays ?? 0}，AI 记录 {report.sqlite?.tables?.ai_reviews ?? 0}</p>
-          <h4>建议保留</h4>
-          {(report.keep || []).slice(0, 6).map((item) => <article className="archive-row" key={`${item.type}-${item.key}`}>
-            <div><b>{item.name}</b><p>{item.type} · {item.key}</p></div>
-          </article>)}
-          <h4>拟归档</h4>
-          {(report.archive || []).slice(0, 6).map((item) => <article className="archive-row" key={item.classKey}>
-            <div><b>{item.className}</b><p>{item.classKey} · {item.recommendedAction}</p></div>
-          </article>)}
-          <h4>拟物理删除</h4>
-          {(report.physicalDelete || []).slice(0, 6).map((item) => <article className="archive-row" key={item.classKey || item.studentKey}>
-            <div><b>{item.className || item.studentName}</b><p>{item.classKey || item.studentKey} · {item.recommendedAction}</p></div>
-          </article>)}
-        </> : <p className="hint">点击“重新生成 dry-run”后会显示清理建议。</p>}
-      </aside>
+      <details className="teacher-advanced" open={advancedOpen}>
+        <summary onClick={(e) => { e.preventDefault(); setAdvancedOpen(!advancedOpen); }}>{advancedOpen ? '收起高级诊断' : '高级诊断'}</summary>
+        <div className="teacher-advanced-body">
+          <div className="teacher-kpis">
+            <span><b>{report?.teacherManagement?.totals?.testClasses ?? 0}</b>测试班级</span>
+            <span><b>{report?.teacherManagement?.totals?.testStudents ?? 0}</b>测试学生</span>
+            <span><b>{report?.archive?.length ?? 0}</b>拟归档</span>
+            <span><b>{report?.logicalDelete?.length ?? 0}</b>拟逻辑删除</span>
+            <span><b>{report?.physicalDelete?.length ?? 0}</b>拟物理删除</span>
+          </div>
+          <div className="archive-grid test-center-diagnostics">
+            <aside className="archive-detail">
+              <h3>dry-run 结果</h3>
+              <p className="hint">备份：{report?.backupPath || '未找到最新备份'}</p>
+              {report ? <>
+                <p>teacher-management：班级 {report.teacherManagement?.totals?.classes ?? 0}，学生 {report.teacherManagement?.totals?.students ?? 0}，作文 {report.teacherManagement?.totals?.essays ?? 0}</p>
+                <p>SQLite：班级 {report.sqlite?.tables?.classes ?? 0}，学生 {report.sqlite?.tables?.students ?? 0}，作文 {report.sqlite?.tables?.essays ?? 0}，AI 记录 {report.sqlite?.tables?.ai_reviews ?? 0}</p>
+              </> : <p className="hint">点击“重新生成 dry-run”后会显示清理建议。</p>}
+            </aside>
+            <div className="archive-list">
+              <h3>保留 / 归档 / 删除建议</h3>
+              {(report?.keep || []).slice(0, 6).map((item) => <article className="archive-row" key={`${item.type}-${item.key}`}>
+                <div><b>{item.name}</b><p>{item.type} · {item.key}</p></div>
+              </article>)}
+              {(report?.archive || []).slice(0, 6).map((item) => <article className="archive-row" key={item.classKey}>
+                <div><b>{item.className}</b><p>{item.classKey} · {item.recommendedAction}</p></div>
+              </article>)}
+              {(report?.physicalDelete || []).slice(0, 6).map((item) => <article className="archive-row" key={item.classKey || item.studentKey}>
+                <div><b>{item.className || item.studentName}</b><p>{item.classKey || item.studentKey} · {item.recommendedAction}</p></div>
+              </article>)}
+            </div>
+          </div>
+        </div>
+      </details>
+      <div className="test-center-danger">
+        <h3>危险操作</h3>
+        <p className="hint">仅清理 system_test 数据，不影响正式班级、学生和报告。</p>
+        <div className="actions">
+          <button type="button" onClick={resetFixture} disabled={busy === 'reset'}>{busy === 'reset' ? '重置中...' : '重置测试环境'}</button>
+          <button type="button" onClick={rerunDryRun} disabled={busy === 'dry-run'}>{busy === 'dry-run' ? '生成中...' : '重新生成 dry-run'}</button>
+          <button type="button" onClick={load} disabled={busy === 'load'}>{busy === 'load' ? '刷新中...' : '刷新'}</button>
+        </div>
+      </div>
     </div>
+    {qrExpanded && <div className="qr-modal" role="dialog" aria-modal="true" onClick={() => setQrExpanded(false)}>
+      <div className="qr-modal-card" onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="qr-modal-close" onClick={() => setQrExpanded(false)}>关闭</button>
+        <img src={qrDataUrl} alt="系统测试班二维码放大图" />
+        <p>{fixtureClass?.inviteCode || 'SYSTEM-TEST-001'}</p>
+        <p className="hint">加入链接：已生成</p>
+      </div>
+    </div>}
   </TeacherManagementShell>;
 }
 
-function TeacherEssaysPage() {
+function TeacherEssaysPage({ title = '作文管理' } = {}) {
   const [rows, setRows] = useState([]);
   const [filters, setFilters] = useState({ keyword: '', classKey: '', archiveStatus: '', provider: '' });
   const [message, setMessage] = useState('');
@@ -2427,7 +2583,7 @@ function TeacherEssaysPage() {
     await load();
   }
   useEffect(() => { load().catch((err) => setMessage(err.message)); }, []);
-  return <TeacherManagementShell title="作文管理" icon={<FileText size={20} />}>
+  return <TeacherManagementShell title={title} icon={<FileText size={20} />}>
     <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
       <label><Search size={18} /><input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="搜索作文/学生" /></label>
       <input value={filters.classKey} onChange={(e) => setFilters({ ...filters, classKey: e.target.value })} placeholder="classKey" />
@@ -2436,11 +2592,11 @@ function TeacherEssaysPage() {
       <button><Filter size={18} />筛选</button>
     </form>
     {message && <p className="success">{message}</p>}
-    <div className="management-table">{rows.map((essay) => <article className="management-row" key={essay.archiveId}><b>{essay.essayTitle}<span>{essay.studentId}_{essay.studentName}</span></b><span>{essay.className}</span><span>{essay.score ?? '--'}分</span><span>{essay.level || '--'}</span><span>{essay.provider}</span><span>{essay.nasArchiveStatus}</span><code>{essay.nasPath}</code><span className="record-actions"><a href="/archive">归档</a><button type="button" onClick={() => comment(essay.archiveId)}>点评</button></span></article>)}</div>
+    <div className="management-table">{rows.map((essay) => <article className="management-row" key={essay.archiveId}><b>{essay.essayTitle}<span>{essay.studentId}_{essay.studentName}</span></b><span>{essay.className}</span><span>{essay.score ?? '--'}分</span><span>{essay.level || '--'}</span><span>{essay.provider}</span><span>{essay.nasArchiveStatus}</span><code>{essay.nasPath}</code><span className="record-actions"><a href={`/teacher/essays/${essay.id}`}>详情</a><button type="button" onClick={() => comment(essay.archiveId)}>点评</button></span></article>)}</div>
   </TeacherManagementShell>;
 }
 
-function TeacherTasksPage() {
+function TeacherTasksPage({ title = '批改任务中心' } = {}) {
   const [rows, setRows] = useState([]);
   const [status, setStatus] = useState('');
   async function load() {
@@ -2448,7 +2604,7 @@ function TeacherTasksPage() {
     setRows(data.items || []);
   }
   useEffect(() => { load().catch(() => {}); }, []);
-  return <TeacherManagementShell title="批改任务中心" icon={<RotateCcw size={20} />}>
+  return <TeacherManagementShell title={title} icon={<RotateCcw size={20} />}>
     <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
       <select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部状态</option><option value="queued">queued</option><option value="processing">processing</option><option value="completed">completed</option><option value="failed">failed</option><option value="retrying">retrying</option></select>
       <button><Filter size={18} />筛选</button>
@@ -2456,6 +2612,105 @@ function TeacherTasksPage() {
     </form>
     <div className="management-table">{rows.map((task) => <article className="management-row" key={task.taskId}><b>{task.essayTitle}<span>{task.taskId}</span></b><span>{task.status}</span><span>{task.progress}%</span><span>{task.provider}</span><span>{task.retryCount}次</span><code>{task.nasPath}</code></article>)}</div>
   </TeacherManagementShell>;
+}
+
+function TeacherJoinRequestsPage() {
+  const [rows, setRows] = useState([]);
+  const [message, setMessage] = useState('');
+  useEffect(() => {
+    api('/teacher/classes').then((data) => setRows(data.items || data || [])).catch((err) => setMessage(err.message));
+  }, []);
+  return <TeacherManagementShell title="入班申请" icon={<UserPlus size={20} />}>
+    <p className="hint">这里按班级汇总所有待审核申请；进入班级详情后可以完成批准或拒绝。</p>
+    {message && <p className="error">{message}</p>}
+    <div className="management-table">
+      {rows.map((klass) => <article className="management-row" key={klass.classKey || klass.id}>
+        <b>{klass.className || klass.name}<span>{klass.grade || '未填写年级'} · {klass.schoolYear || klass.school_year || '当前学年'}</span></b>
+        <span>待审核 {klass.pendingJoinRequests ?? klass.pending_join_requests ?? 0}</span>
+        <span>主群 {klass.inviteStatus || klass.status || 'active'}</span>
+        <span className="record-actions">
+          <a href={`/teacher/classes/${encodeURIComponent(klass.classKey || klass.id)}/join-requests`}>打开申请</a>
+          <a href={`/teacher/classes/${encodeURIComponent(klass.classKey || klass.id)}/members`}>成员管理</a>
+        </span>
+      </article>)}
+      {!rows.length && <p className="hint">暂无班级或暂无待审核申请。</p>}
+    </div>
+  </TeacherManagementShell>;
+}
+
+function TeacherAssignmentsPage() {
+  return <TeacherManagementShell title="作文任务" icon={<BookOpen size={20} />}>
+    <div className="grid">
+      <AssignmentPublish />
+      <AssignmentManagement />
+    </div>
+  </TeacherManagementShell>;
+}
+
+function TeacherGradingPage() {
+  return <TeacherTasksPage title="AI 批改中心" />;
+}
+
+function TeacherSubmissionsPage() {
+  return <TeacherEssaysPage title="学生提交" />;
+}
+
+function TeacherGrowthPage() {
+  return <StudentProfilesPage />;
+}
+
+function TeacherSettingsPage() {
+  const [feishu, setFeishu] = useState(null);
+  const [publicAccess, setPublicAccess] = useState(null);
+  const [system, setSystem] = useState(null);
+  useEffect(() => {
+    api('/feishu/health').then(setFeishu).catch(() => {});
+    api('/public-access').then(setPublicAccess).catch(() => {});
+    api('/system/status').then(setSystem).catch(() => {});
+  }, []);
+  return <TeacherManagementShell title="系统设置" icon={<PackageOpen size={20} />}>
+    <div className="archive-grid">
+      <aside className="archive-detail">
+        <h3>平台状态</h3>
+        <p>公网入口：{publicAccess?.publicOrigin || 'https://pi.zhenwanyue.icu'}</p>
+        <p>生产状态：{system?.status || (system?.ok ? 'healthy' : 'checking')}</p>
+        <p>飞书业务：已暂停</p>
+        <p>系统通知：{String(feishu?.feishuSystemNotificationEnabled ?? true)}</p>
+      </aside>
+      <div className="archive-list">
+        <h3>管理入口</h3>
+        <article className="archive-row">
+          <div>
+            <b>集成状态</b>
+            <p>管理飞书、Cloudflare、WebDAV 与账号集成。</p>
+          </div>
+          <span className="archive-actions"><a href="/admin/integrations">打开</a></span>
+        </article>
+        <article className="archive-row">
+          <div>
+            <b>飞书教师绑定</b>
+            <p>仅保留历史兼容和系统通知，不再承载核心业务。</p>
+          </div>
+          <span className="archive-actions"><a href="/admin/feishu/teachers">打开</a></span>
+        </article>
+      </div>
+    </div>
+  </TeacherManagementShell>;
+}
+
+function TeacherLegacyRedirect({ to }) {
+  const location = useLocation();
+  return <Navigate to={`${to}${location.search || ''}`} replace />;
+}
+
+function TeacherEssayRedirect() {
+  const { essayId } = useParams();
+  return <Navigate to={`/teacher/essays/${encodeURIComponent(essayId)}`} replace />;
+}
+
+function TeacherClassRedirect() {
+  const { classId } = useParams();
+  return <Navigate to={`/teacher/classes/${encodeURIComponent(classId)}`} replace />;
 }
 
 function TeacherHome() {
@@ -2467,7 +2722,16 @@ function TeacherHome() {
         <h2>班级管理、任务发布与批改汇总</h2>
       </div>
     </section>
-    <div className="grid"><TeacherDashboardCard /><PublicAccessPanel title="公网演示入口" intro="用于手机端访问、课堂展示和线上演示。复制后可直接发给听众。" /><TeacherRerunTaskCard /><Card title="系统测试中心" icon={<TestTube2 size={20} />}><p className="hint">统一查看测试班级、测试学生和清理 dry-run 结果。</p><div className="actions"><a className="button-link" href="/teacher/test-center">进入测试中心</a></div></Card><Card title="飞书班级群" icon={<MessageCircle size={20} />}><p className="hint">绑定班级主群、备用群，并发送系统测试消息。</p><div className="actions"><a className="button-link" href="/teacher/feishu/classes">进入群绑定</a></div></Card><Card title="Archive" icon={<PackageOpen size={20} />}><p className="hint">查看作文自动归档、NAS 路径和待同步状态。</p><div className="actions"><a className="button-link" href="/archive">进入 Archive</a></div></Card><Card title="学生成长档案" icon={<TrendingUp size={20} />}><p className="hint">查看学生分数趋势、能力变化、高频问题和训练计划。</p><div className="actions"><a className="button-link" href="/student-profiles">进入档案中心</a></div></Card><PasswordCard /><AssignmentPublish /><AssignmentManagement /><ClassManagement /><TeacherReviewCenter /><TeacherInsightPanel /></div>
+    <div className="grid">
+      <TeacherDashboardCard />
+      {teacherHomeHighlights.map((item) => {
+        const Icon = teacherIconMap[item.iconKey] || Home;
+        return <Card key={item.id} title={item.title} icon={<Icon size={20} />}>
+          <p className="hint">{item.intro}</p>
+          <div className="actions"><a className="button-link" href={item.route}>打开</a></div>
+        </Card>;
+      })}
+    </div>
   </Layout>;
 }
 
@@ -2631,15 +2895,15 @@ function TeacherRerunTaskCard() {
       <span><b>{counts.processing || 0}</b>正在重新批改</span>
       <span><b>{counts.completed || 0}</b>重新批改完成</span>
     </div>
-    <p className="hint">状态来自教师任务中心，点击可进入筛选后的任务列表。</p>
-    <div className="actions"><a className="button-link" href="/teacher/tasks">查看全部任务</a></div>
+    <p className="hint">状态来自教师批改任务队列，点击可进入 AI 批改中心。</p>
+    <div className="actions"><a className="button-link" href="/teacher/grading">查看全部任务</a></div>
   </Card>;
 }
 
 function QuickLinks({ role }) {
   const links = role === 'student'
     ? [['/upload', '拍照上传', Camera], ['/profile', '个人档案', ChartNoAxesCombined]]
-    : [['/teacher/reviews', '作文批改', FileText], ['/teacher/tasks', '重新批改任务', RotateCcw], ['/archive', 'Archive', PackageOpen], ['/classes', '我的班级', Users], ['/assignments/new', '发布任务', Plus]];
+    : [['/teacher/reviews', '作文批改', FileText], ['/teacher/grading', 'AI 批改中心', RotateCcw], ['/teacher/classes', '我的班级', Users], ['/teacher/assignments', '发布任务', Plus], ['/teacher/test-center', '系统测试中心', TestTube2]];
   return <Card title="快捷入口" icon={<Home size={20} />}><div className="quick">{links.map(([href, label, Icon]) => <a key={href} href={href}><Icon size={18} />{label}</a>)}</div></Card>;
 }
 
@@ -2911,8 +3175,8 @@ function ClassManagement() {
   return <Card title="班级管理" icon={<Users size={20} />}>
     <p className="hint">默认班级管理已迁移到“教师工作台 → 班级管理 / 学生管理 / 系统测试中心”。这个旧入口保留兼容，不再展示删除按钮和冗长名单。</p>
     <div className="actions">
-      <a className="button-link" href="/teacher/classes?scope=system_test">打开班级管理</a>
-      <a className="button-link" href="/teacher/students?scope=system_test">打开学生管理</a>
+      <a className="button-link" href="/teacher/classes">打开班级管理</a>
+      <a className="button-link" href="/teacher/classes">打开学生管理</a>
       <a className="button-link" href="/teacher/test-center">进入系统测试中心</a>
     </div>
     {message && <p className="hint">{message}</p>}
@@ -3049,8 +3313,6 @@ function AssignmentPublish() {
 
 function AssignmentManagement() {
   const [publishedAssignments, setPublishedAssignments] = useState([]);
-  const [feishuInputs, setFeishuInputs] = useState({});
-  const [previews, setPreviews] = useState({});
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   async function loadAssignments() {
@@ -3083,35 +3345,6 @@ function AssignmentManagement() {
       setError(err.message);
     }
   }
-  function updateFeishuInput(assignmentId, patch) {
-    setFeishuInputs((current) => ({ ...current, [assignmentId]: { ...(current[assignmentId] || {}), ...patch } }));
-  }
-  async function bindClassGroup(assignment) {
-    const input = feishuInputs[assignment.id] || {};
-    if (!input.chatId?.trim()) return setError('请先填写飞书班级群 chatId');
-    const row = await api(`/classes/${assignment.class_id}/feishu-binding`, {
-      method: 'POST',
-      body: { feishuChatId: input.chatId.trim(), feishuChatName: input.chatName || `${assignment.class_name || '班级'}作文群` }
-    });
-    setMessage(`已绑定飞书班级群：${row.feishu_chat_name || row.feishu_chat_id}`);
-  }
-  async function previewFeishuCard(assignment) {
-    const data = await api(`/assignments/${assignment.public_id || assignment.id}/share/feishu/preview`);
-    setPreviews((current) => ({ ...current, [assignment.id]: data.card }));
-    setMessage('已生成飞书消息卡片预览');
-  }
-  async function sendFeishuCard(assignment) {
-    const input = feishuInputs[assignment.id] || {};
-    const data = await api(`/assignments/${assignment.public_id || assignment.id}/share/feishu`, {
-      method: 'POST',
-      body: input.chatId ? { chatId: input.chatId.trim() } : {}
-    });
-    setMessage(data.sent ? '已发送到飞书群' : data.message || '已生成飞书分享卡片');
-  }
-  async function revokeFeishuCard(assignment) {
-    const data = await api(`/assignments/${assignment.public_id || assignment.id}/share/feishu/revoke`, { method: 'POST', body: {} });
-    setMessage(data.message || '已处理撤回请求');
-  }
   async function remindMissing(assignment) {
     const data = await api(`/assignments/${assignment.public_id || assignment.id}/remind-missing`, { method: 'POST', body: {} });
     setMessage(`未交提醒完成：已发送 ${data.sent || 0} 人，跳过 ${data.skipped || 0} 人`);
@@ -3130,23 +3363,11 @@ function AssignmentManagement() {
         </div>
         <div className="roster-actions">
           <button type="button" onClick={() => showStatus(assignment)}>查看提交状态</button>
-          <button type="button" onClick={() => window.open(`/class/${assignment.class_id}/essays`, '_self')}>查看报告</button>
+          <button type="button" onClick={() => window.open('/teacher/submissions', '_self')}>查看报告</button>
           <button type="button" className="danger-button" onClick={() => deleteAssignment(assignment)}>删除任务</button>
         </div>
-        <div className="assignment-share-panel">
-          <h4>飞书作业发布</h4>
-          <div className="row">
-            <input placeholder="选择飞书班级群 chatId" value={feishuInputs[assignment.id]?.chatId || assignment.feishu_chat_id || ''} onChange={(e) => updateFeishuInput(assignment.id, { chatId: e.target.value })} />
-            <input placeholder="飞书班级群名称" value={feishuInputs[assignment.id]?.chatName || ''} onChange={(e) => updateFeishuInput(assignment.id, { chatName: e.target.value })} />
-          </div>
-          <div className="actions">
-            <button type="button" onClick={() => bindClassGroup(assignment)}>绑定班级群</button>
-            <button type="button" onClick={() => previewFeishuCard(assignment)}>预览消息卡片</button>
-            <button type="button" onClick={() => sendFeishuCard(assignment)}>发送到飞书</button>
-            <button type="button" onClick={() => revokeFeishuCard(assignment)}>撤回或重新发布</button>
-            <button type="button" onClick={() => remindMissing(assignment)}>提醒未提交学生</button>
-          </div>
-          {previews[assignment.id] && <pre className="card-preview">{JSON.stringify(previews[assignment.id], null, 2)}</pre>}
+        <div className="actions">
+          <button type="button" onClick={() => remindMissing(assignment)}>提醒未提交学生</button>
         </div>
       </article>)}
       {!publishedAssignments.length && <p className="hint">暂无已发布任务。</p>}
@@ -3378,14 +3599,22 @@ function App() {
     <Route path="/review/:essayId" element={<RoleRoute roles={['student', 'teacher']}><LegacyReviewRoute /></RoleRoute>} />
     <Route path="/profile" element={<RoleRoute roles={['student']}><StudentProfile /></RoleRoute>} />
     <Route path="/teacher" element={<RoleRoute roles={['teacher']}><TeacherHome /></RoleRoute>} />
+    <Route path="/teacher/home" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher" /></RoleRoute>} />
+    <Route path="/teacher/dashboard" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher" /></RoleRoute>} />
     <Route path="/teacher/classes" element={<RoleRoute roles={['teacher']}><TeacherClassesPage /></RoleRoute>} />
+    <Route path="/teacher/join-requests" element={<RoleRoute roles={['teacher']}><TeacherJoinRequestsPage /></RoleRoute>} />
+    <Route path="/teacher/assignments" element={<RoleRoute roles={['teacher']}><TeacherAssignmentsPage /></RoleRoute>} />
+    <Route path="/teacher/submissions" element={<RoleRoute roles={['teacher']}><TeacherSubmissionsPage /></RoleRoute>} />
+    <Route path="/teacher/grading" element={<RoleRoute roles={['teacher']}><TeacherGradingPage /></RoleRoute>} />
+    <Route path="/teacher/growth" element={<RoleRoute roles={['teacher']}><TeacherGrowthPage /></RoleRoute>} />
+    <Route path="/teacher/settings" element={<RoleRoute roles={['teacher']}><TeacherSettingsPage /></RoleRoute>} />
     <Route path="/teacher/classes/:classKey" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
     <Route path="/teacher/classes/:classKey/join-requests" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
     <Route path="/teacher/classes/:classKey/members" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
-    <Route path="/teacher/students" element={<RoleRoute roles={['teacher']}><TeacherStudentsPage /></RoleRoute>} />
+    <Route path="/teacher/students" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/classes" /></RoleRoute>} />
     <Route path="/teacher/test-center" element={<RoleRoute roles={['teacher']}><TeacherTestCenterPage /></RoleRoute>} />
-    <Route path="/teacher/essays" element={<RoleRoute roles={['teacher']}><TeacherEssaysPage /></RoleRoute>} />
-    <Route path="/teacher/tasks" element={<RoleRoute roles={['teacher']}><TeacherTasksPage /></RoleRoute>} />
+    <Route path="/teacher/essays" element={<RoleRoute roles={['teacher']}><TeacherSubmissionsPage /></RoleRoute>} />
+    <Route path="/teacher/tasks" element={<RoleRoute roles={['teacher']}><TeacherGradingPage /></RoleRoute>} />
     <Route path="/teacher/benchmark" element={<RoleRoute roles={['teacher']}><BenchmarkCenterPage /></RoleRoute>} />
     <Route path="/teacher/essay/:essayId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
     <Route path="/teacher/essays/:essayId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
@@ -3393,17 +3622,17 @@ function App() {
     <Route path="/admin" element={<RoleRoute roles={['admin']}><AdminHome /></RoleRoute>} />
     <Route path="/admin/integrations" element={<RoleRoute roles={['admin']}><AdminIntegrationsPage /></RoleRoute>} />
     <Route path="/admin/feishu/teachers" element={<RoleRoute roles={['admin']}><AdminFeishuTeachersPage /></RoleRoute>} />
-    <Route path="/teacher/feishu/classes" element={<RoleRoute roles={['teacher']}><TeacherFeishuClassesPage /></RoleRoute>} />
+    <Route path="/teacher/feishu/classes" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/settings" /></RoleRoute>} />
     <Route path="/teacher/reviews" element={<RoleRoute roles={['teacher']}><Layout><TeacherReviewCenter /></Layout></RoleRoute>} />
-    <Route path="/archive" element={<RoleRoute roles={['teacher']}><ArchivePage /></RoleRoute>} />
-    <Route path="/student-profiles" element={<RoleRoute roles={['student', 'teacher']}><StudentProfilesPage /></RoleRoute>} />
-    <Route path="/student-profiles/:studentKey" element={<RoleRoute roles={['student', 'teacher']}><StudentProfileDetailPage /></RoleRoute>} />
-    <Route path="/classes" element={<RoleRoute roles={['teacher']}><Layout><ClassManagement /></Layout></RoleRoute>} />
-    <Route path="/assignments/new" element={<RoleRoute roles={['teacher']}><Layout><AssignmentPublish /></Layout></RoleRoute>} />
-    <Route path="/class/:classId/essays" element={<RoleRoute roles={['teacher']}><EssayList /></RoleRoute>} />
-    <Route path="/essay/:essayId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
-    <Route path="/class/:classId/analytics" element={<RoleRoute roles={['teacher']}><AnalyticsPage /></RoleRoute>} />
-    <Route path="/student/:studentId/profile" element={<RoleRoute roles={['teacher']}><StudentProfile /></RoleRoute>} />
+    <Route path="/archive" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/growth" /></RoleRoute>} />
+    <Route path="/student-profiles" element={<RoleRoute roles={['student', 'teacher']}><TeacherLegacyRedirect to="/teacher/growth" /></RoleRoute>} />
+    <Route path="/student-profiles/:studentKey" element={<RoleRoute roles={['student', 'teacher']}><TeacherLegacyRedirect to="/teacher/growth" /></RoleRoute>} />
+    <Route path="/classes" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/classes" /></RoleRoute>} />
+    <Route path="/assignments/new" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/assignments" /></RoleRoute>} />
+    <Route path="/class/:classId/essays" element={<RoleRoute roles={['teacher']}><TeacherClassRedirect /></RoleRoute>} />
+    <Route path="/essay/:essayId" element={<RoleRoute roles={['teacher']}><TeacherEssayRedirect /></RoleRoute>} />
+    <Route path="/class/:classId/analytics" element={<RoleRoute roles={['teacher']}><TeacherClassRedirect /></RoleRoute>} />
+    <Route path="/student/:studentId/profile" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/growth" /></RoleRoute>} />
     <Route path="*" element={<RoleRoute roles={['student', 'teacher', 'admin']}><Navigate to={homeByRole[getSession()?.role] || '/login'} replace /></RoleRoute>} />
   </Routes></BrowserRouter>;
 }

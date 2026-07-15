@@ -80,6 +80,12 @@ function isTrue(value) {
   return ['1', 'true', 'yes', 'y', 'on', 'system_test'].includes(text);
 }
 
+function normalizeDataScope(value, fallback = 'production') {
+  const scope = String(value ?? '').trim().toLowerCase();
+  if (['system_test', 'production', 'migrated_legacy'].includes(scope)) return scope;
+  return fallback;
+}
+
 function sortRows(rows, filters = {}, fallback = 'updatedAt') {
   const sortBy = filters.sortBy || fallback;
   const sortOrder = filters.sortOrder === 'asc' ? 1 : -1;
@@ -377,6 +383,7 @@ export function createClass(appDir, input = {}, actor = {}) {
     teacherId: input.teacherId || '',
     teacherName: input.teacherName || '',
     schoolName: input.schoolName || '',
+    dataScope: normalizeDataScope(input.dataScope || input.scope || 'production'),
     studentCount: 0,
     essayCount: 0,
     averageScore: null,
@@ -446,6 +453,7 @@ export function createStudent(appDir, input = {}, actor = {}) {
     grade: normalizeGrade(input.grade),
     schoolYear: input.schoolYear || currentYear(),
     gender: input.gender || '',
+    dataScope: normalizeDataScope(input.dataScope || input.scope || 'production'),
     status: 'active',
     essayCount: 0,
     averageScore: null,
@@ -521,7 +529,8 @@ export function restoreStudent(appDir, studentKey, actor) {
 
 export function listClasses(appDir, filters = {}) {
   let rows = readStore(appDir, 'classes').items;
-  if (filters.scope === 'system_test' || isTrue(filters.isTestData)) rows = rows.filter((item) => isTrue(item.isTestData));
+  if (filters.scope === 'system_test' || isTrue(filters.isTestData)) rows = rows.filter((item) => isTrue(item.isTestData) || normalizeDataScope(item.dataScope, 'production') === 'system_test');
+  else if (filters.scope === 'production') rows = rows.filter((item) => !isTrue(item.isTestData) && normalizeDataScope(item.dataScope, 'production') === 'production');
   if (filters.grade) rows = rows.filter((item) => item.grade === filters.grade);
   if (filters.schoolYear) rows = rows.filter((item) => item.schoolYear === filters.schoolYear);
   if (filters.teacherId) rows = rows.filter((item) => item.teacherId === filters.teacherId);
@@ -532,7 +541,8 @@ export function listClasses(appDir, filters = {}) {
 
 export function listStudents(appDir, filters = {}) {
   let rows = readStore(appDir, 'students').items;
-  if (filters.scope === 'system_test' || isTrue(filters.isTestData)) rows = rows.filter((item) => isTrue(item.isTestData));
+  if (filters.scope === 'system_test' || isTrue(filters.isTestData)) rows = rows.filter((item) => isTrue(item.isTestData) || normalizeDataScope(item.dataScope, 'production') === 'system_test');
+  else if (filters.scope === 'production') rows = rows.filter((item) => !isTrue(item.isTestData) && normalizeDataScope(item.dataScope, 'production') === 'production');
   if (filters.classKey) rows = rows.filter((item) => item.classKey === filters.classKey);
   if (filters.grade) rows = rows.filter((item) => item.grade === filters.grade);
   if (filters.status) rows = rows.filter((item) => item.status === filters.status);
@@ -799,11 +809,9 @@ export function getTeacherDashboard({ appDir = process.cwd(), aiStatus = {}, nas
   const classes = readStore(appDir, 'classes').items;
   const students = readStore(appDir, 'students').items;
   const essays = readStore(appDir, 'essays').items;
-  const testClasses = classes.filter((item) => isTrue(item.isTestData));
-  const visibleClassRows = testClasses.length ? testClasses : classes.filter((item) => item.status === 'active');
-  const visibleStudentRows = testClasses.length
-    ? students.filter((item) => isTrue(item.isTestData) || visibleClassRows.some((klass) => klass.classKey === item.classKey))
-    : students.filter((item) => item.status === 'active');
+  const testClasses = classes.filter((item) => isTrue(item.isTestData) || normalizeDataScope(item.dataScope, 'production') === 'system_test');
+  const visibleClassRows = classes.filter((item) => normalizeDataScope(item.dataScope, 'production') === 'production' && item.status === 'active');
+  const visibleStudentRows = students.filter((item) => normalizeDataScope(item.dataScope, 'production') === 'production' && item.status === 'active');
   const today = new Date().toISOString().slice(0, 10);
   const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
   const recentScores = essays.filter((item) => new Date(item.submittedAt || 0).getTime() >= sevenDaysAgo).map((item) => asNumber(item.score)).filter((value) => value != null);
@@ -819,7 +827,7 @@ export function getTeacherDashboard({ appDir = process.cwd(), aiStatus = {}, nas
       total: students.length,
       active: students.filter((item) => item.status === 'active').length,
       visible: visibleStudentRows.length,
-      test: students.filter((item) => isTrue(item.isTestData)).length
+      test: students.filter((item) => isTrue(item.isTestData) || normalizeDataScope(item.dataScope, 'production') === 'system_test').length
     },
     essays: {
       total: essays.length,

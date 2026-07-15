@@ -45,6 +45,8 @@ function markRolledBack(database) {
 }
 
 function applyClassLifecycleSchema(database) {
+  addColumnIfMissing(database, 'classes', 'data_scope', "TEXT NOT NULL DEFAULT 'production'");
+  addColumnIfMissing(database, 'students', 'data_scope', "TEXT NOT NULL DEFAULT 'production'");
   addColumnIfMissing(database, 'classes', 'invite_code_expires_at', 'TEXT');
   addColumnIfMissing(database, 'classes', 'join_mode', "TEXT NOT NULL DEFAULT 'approval'");
   addColumnIfMissing(database, 'classes', 'status', "TEXT NOT NULL DEFAULT 'active'");

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { db } from '../db/connection.js';
 
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -39,19 +40,37 @@ export function buildInviteCode(prefix = 'JOIN') {
 }
 
 export function buildQrSvg(url, title = '班级邀请链接') {
-  const safeUrl = String(url || '').replace(/[<>&"]/g, (char) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[char]));
-  const safeTitle = String(title || '').replace(/[<>&"]/g, (char) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[char]));
-  return [
-    '<svg xmlns="http://www.w3.org/2000/svg" width="280" height="280" viewBox="0 0 280 280" role="img">',
-    '<rect width="280" height="280" rx="18" fill="#ffffff"/>',
-    '<rect x="20" y="20" width="68" height="68" rx="10" fill="#1f2937"/><rect x="36" y="36" width="36" height="36" rx="4" fill="#ffffff"/>',
-    '<rect x="192" y="20" width="68" height="68" rx="10" fill="#1f2937"/><rect x="208" y="36" width="36" height="36" rx="4" fill="#ffffff"/>',
-    '<rect x="20" y="192" width="68" height="68" rx="10" fill="#1f2937"/><rect x="36" y="208" width="36" height="36" rx="4" fill="#ffffff"/>',
-    '<path d="M114 38h16v16h-16zm24 0h16v16h-16zm24 0h16v16h-16zm-48 24h16v16h-16zm48 0h16v16h-16zm-24 24h16v16h-16zm56 0h16v16h-16zm-104 24h16v16h-16zm32 0h16v16h-16zm24 0h16v16h-16zm32 0h16v16h-16zm-88 24h16v16h-16zm40 0h16v16h-16zm24 0h16v16h-16zm40 0h16v16h-16zm-56 24h16v16h-16zm40 0h16v16h-16zm-88 24h16v16h-16zm48 0h16v16h-16zm24 0h16v16h-16zm32 0h16v16h-16zm-96 24h16v16h-16zm48 0h16v16h-16zm56 0h16v16h-16z" fill="#1f2937"/>',
-    `<text x="140" y="150" text-anchor="middle" font-size="14" fill="#111827">${safeTitle}</text>`,
-    `<text x="140" y="172" text-anchor="middle" font-size="10" fill="#4b5563">${safeUrl.slice(0, 48)}</text>`,
-    '</svg>'
-  ].join('');
+  const inviteUrl = String(url || '').trim();
+  if (!inviteUrl) return '';
+  const pythonCandidates = [
+    process.env.CODEX_PYTHON,
+    '/Users/chenxiansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3',
+    '/Users/chenxiansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python',
+    '/usr/bin/python3'
+  ].filter(Boolean);
+  const script = String.raw`
+import sys
+from reportlab.graphics.barcode import qr
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics import renderSVG
+
+url = sys.argv[1]
+widget = qr.QrCodeWidget(url)
+b = widget.getBounds()
+size = 280
+side = max(b[2] - b[0], b[3] - b[1]) or 1
+scale = size / side
+drawing = Drawing(size, size, transform=[scale, 0, 0, scale, 0, 0])
+drawing.add(widget)
+sys.stdout.write(renderSVG.drawToString(drawing))
+`;
+  for (const python of pythonCandidates) {
+    const result = spawnSync(python, ['-c', script, inviteUrl, String(title || '')], { encoding: 'utf8' });
+    if (!result.error && result.status === 0 && result.stdout) {
+      return result.stdout.replace(/<\?xml[^>]*>\s*/i, '').replace(/<!DOCTYPE[^>]*>\s*/i, '');
+    }
+  }
+  return '';
 }
 
 function getTeacherId(database, user) {
@@ -72,6 +91,7 @@ function classBaseRow(row = {}) {
     name: row.name,
     grade: row.grade || '',
     teacher_id: row.teacher_id,
+    data_scope: row.data_scope || 'production',
     invite_code: row.invite_code || '',
     invite_code_expires_at: row.invite_code_expires_at || '',
     join_mode: row.join_mode || 'approval',
@@ -212,6 +232,8 @@ export function listLifecycleClasses(database = db, user, filters = {}) {
     WHERE teacher_id = ?
     ORDER BY updated_at DESC, id DESC
   `).all(teacherId).map((row) => attachLifecycle(database, row));
+  if (filters.scope === 'system_test') rows = rows.filter((row) => String(row.data_scope || '').toLowerCase() === 'system_test');
+  else if (filters.scope === 'production') rows = rows.filter((row) => String(row.data_scope || 'production').toLowerCase() === 'production');
   if (filters.status) rows = rows.filter((row) => row.status === filters.status);
   if (filters.joinMode) rows = rows.filter((row) => row.join_mode === filters.joinMode);
   if (filters.keyword) rows = rows.filter((row) => `${row.name}${row.grade}${row.invite_code}`.includes(String(filters.keyword)));
@@ -228,14 +250,15 @@ export function createLifecycleClass(database = db, user, body = {}) {
   const joinMode = String(body.join_mode || body.joinMode || 'approval').trim() || 'approval';
   const status = String(body.status || 'active').trim() || 'active';
   const maxStudents = Math.max(0, Number(body.max_students || body.maxStudents || 0));
+  const dataScope = String(body.data_scope || body.dataScope || 'production').trim() || 'production';
   const inviteCode = buildInviteCode(grade || 'JOIN');
   const inviteToken = buildClassJoinToken();
   const now = nowIso();
 
   const result = database.prepare(`
-    INSERT INTO classes (name, grade, teacher_id, invite_code, join_mode, status, max_students, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(name, grade, teacherId, inviteCode, joinMode, status, maxStudents, now, now);
+    INSERT INTO classes (name, grade, teacher_id, data_scope, invite_code, join_mode, status, max_students, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name, grade, teacherId, dataScope, inviteCode, joinMode, status, maxStudents, now, now);
   const classId = result.lastInsertRowid;
   const klass = database.prepare('SELECT * FROM classes WHERE id = ?').get(classId);
 
@@ -430,6 +453,43 @@ function findStudentByIdentity(database, payload = {}) {
   return null;
 }
 
+function uniqueStudentUsername(database, studentNo, studentName) {
+  const baseRaw = studentNo || studentName || `student_${Date.now()}`;
+  const base = `student_${String(baseRaw).replace(/[^a-zA-Z0-9]/g, '').slice(0, 18) || Date.now()}`;
+  let username = base;
+  let index = 1;
+  while (database.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) {
+    username = `${base}${index++}`;
+  }
+  return username;
+}
+
+function createStudentIdentity(database, klass, payload = {}) {
+  const studentName = String(payload.studentName || payload.student_name || payload.name || '').trim();
+  if (!studentName) return null;
+  const studentNo = String(payload.studentNo || payload.student_no || '').trim();
+  const existing = findStudentByIdentity(database, payload);
+  if (existing) return existing;
+  const username = uniqueStudentUsername(database, studentNo, studentName);
+  const password = studentNo || '123456';
+  const addUser = database.prepare('INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)');
+  const addStudent = database.prepare('INSERT INTO students (user_id, student_no, grade, school, data_scope) VALUES (?, ?, ?, ?, ?)');
+  const userId = addUser.run(username, password, 'student', studentName).lastInsertRowid;
+  const studentId = addStudent.run(
+    userId,
+    studentNo || null,
+    String(payload.grade || klass?.grade || ''),
+    String(payload.school || klass?.school || ''),
+    String(payload.dataScope || klass?.data_scope || klass?.dataScope || 'production')
+  ).lastInsertRowid;
+  return database.prepare(`
+    SELECT s.*, u.name AS user_name
+    FROM students s
+    JOIN users u ON u.id = s.user_id
+    WHERE s.id = ?
+  `).get(studentId);
+}
+
 function addMembership(database, studentId, classId, joinMode = 'approval') {
   database.prepare(`
     INSERT OR IGNORE INTO class_students (class_id, student_id, joined_at)
@@ -573,10 +633,19 @@ export function approveJoinRequest(database = db, user, classId, requestId) {
   if (!teacherOwnsClass(database, user, classId)) return { status: 403, message: '没有管理该班级的权限' };
   const request = database.prepare('SELECT * FROM class_join_requests WHERE id = ? AND class_id = ?').get(requestId, classId);
   if (!request) return { status: 404, message: '入班申请不存在' };
-  const student = request.student_id ? database.prepare('SELECT * FROM students WHERE id = ?').get(request.student_id) : null;
-  if (!student) return { status: 404, message: '学生档案不存在' };
   const klass = database.prepare('SELECT * FROM classes WHERE id = ?').get(classId);
   if (!klass) return { status: 404, message: '班级不存在' };
+  const student = request.student_id
+    ? database.prepare('SELECT * FROM students WHERE id = ?').get(request.student_id)
+    : createStudentIdentity(database, klass, {
+        studentName: request.student_name,
+        studentNo: request.student_no,
+        dataScope: klass.data_scope || 'production'
+      });
+  if (!student) return { status: 404, message: '学生档案不存在' };
+  if (!request.student_id) {
+    database.prepare('UPDATE class_join_requests SET student_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(student.id, requestId);
+  }
   const memberCount = database.prepare('SELECT COUNT(*) AS count FROM class_students WHERE class_id = ?').get(classId).count;
   if (Number(klass.max_students || 0) > 0 && Number(memberCount || 0) >= Number(klass.max_students || 0)) {
     return { status: 409, message: '班级人数已满' };

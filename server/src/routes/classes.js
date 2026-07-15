@@ -268,7 +268,7 @@ classRouter.post('/:id/students', roleGuard('teacher'), (req, res) => {
   if (!students.length) return res.status(400).json({ message: '请至少填写一名学生' });
 
   const addUser = db.prepare('INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)');
-  const addStudent = db.prepare('INSERT INTO students (user_id, student_no, grade, school) VALUES (?, ?, ?, ?)');
+  const addStudent = db.prepare('INSERT INTO students (user_id, student_no, grade, school, data_scope) VALUES (?, ?, ?, ?, ?)');
   const addRelation = db.prepare('INSERT OR IGNORE INTO class_students (class_id, student_id) VALUES (?, ?)');
   const addBinding = db.prepare(`
     INSERT INTO student_class_bindings (student_id, class_id, join_mode, status, joined_at, updated_at)
@@ -297,7 +297,7 @@ classRouter.post('/:id/students', roleGuard('teacher'), (req, res) => {
         username = `${base}${suffix++}`;
       }
       const userId = addUser.run(username, '123456', 'student', name).lastInsertRowid;
-      const studentId = addStudent.run(userId, studentNo || null, item.grade || null, item.school || null).lastInsertRowid;
+      const studentId = addStudent.run(userId, studentNo || null, item.grade || null, item.school || null, String(item.dataScope || item.data_scope || 'production')).lastInsertRowid;
       student = { id: studentId, student_no: studentNo, name, username };
       created.push({ ...student, initial_password: '123456' });
     }

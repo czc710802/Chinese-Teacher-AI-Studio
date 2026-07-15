@@ -129,17 +129,12 @@ test('student submit page keeps the selected assignment when switching to photo 
   assert.match(submitPage, /正式提交并批改/);
 });
 
-test('teacher assignment management exposes Feishu group publish preview revoke and missing reminders', () => {
+test('teacher assignment management keeps task reminders and removes paused Feishu publish widgets', () => {
   const assignmentManagement = functionBody('AssignmentManagement');
-  assert.match(assignmentManagement, /飞书作业发布/);
-  assert.match(assignmentManagement, /选择飞书班级群 chatId/);
-  assert.match(assignmentManagement, /绑定班级群/);
-  assert.match(assignmentManagement, /预览消息卡片/);
-  assert.match(assignmentManagement, /发送到飞书/);
-  assert.match(assignmentManagement, /撤回或重新发布/);
   assert.match(assignmentManagement, /提醒未提交学生/);
-  assert.match(assignmentRoutesSource, /share\/feishu\/preview/);
-  assert.match(assignmentRoutesSource, /share\/feishu\/revoke/);
+  assert.match(assignmentManagement, /查看报告/);
+  assert.match(assignmentManagement, /删除任务/);
+  assert.doesNotMatch(assignmentManagement, /飞书作业发布|选择飞书班级群 chatId|绑定班级群|预览消息卡片|发送到飞书|撤回或重新发布/);
   assert.match(assignmentRoutesSource, /remind-missing/);
 });
 
@@ -300,20 +295,15 @@ test('student home no longer renders the writing resource library module', () =>
   assert.doesNotMatch(studentHome, /写作训练库/);
 });
 
-test('teacher home only keeps assignment publishing class setup roster import review and results', () => {
+test('teacher home keeps only the canonical high-frequency entry cards', () => {
   const teacherHome = functionBody('TeacherHome');
-  assert.match(teacherHome, /AssignmentPublish/);
-  assert.match(teacherHome, /AssignmentManagement/);
-  assert.match(teacherHome, /ClassManagement/);
-  assert.match(teacherHome, /TeacherReviewCenter/);
-  assert.match(teacherHome, /TeacherInsightPanel/);
-  assert.match(teacherHome, /PublicAccessPanel/);
-  assert.match(teacherHome, /PasswordCard/);
+  assert.match(teacherHome, /TeacherDashboardCard/);
+  assert.match(teacherHome, /teacherHomeHighlights/);
   assert.match(teacherHome, /teacher-banner/);
   assert.match(teacherHome, /GraduationCap/);
-  assert.doesNotMatch(teacherHome, /QuickLinks|TeacherReportsPanel|MaterialLibrary/);
-  assert.match(mainSource, /班级作业/);
-  assert.match(mainSource, /批改记录/);
+  assert.doesNotMatch(teacherHome, /PublicAccessPanel|TeacherRerunTaskCard|ClassManagement|TeacherInsightPanel|AssignmentPublish|AssignmentManagement|TeacherReviewCenter/);
+  assert.match(mainSource, /teacherHomeHighlights/);
+  assert.match(mainSource, /teacherNavigationEntries/);
 });
 
 test('login page exposes public demo entry for mobile and external presentation', () => {
@@ -526,14 +516,14 @@ test('teacher class management now points to safe management and test center ent
   assert.doesNotMatch(classManagement, /批量导入学生名单/);
 });
 
-test('teacher class and student management default to system test scope and avoid destructive controls', () => {
+test('teacher class and student management default to production scope and avoid destructive controls', () => {
   const teacherClassesPage = functionBody('TeacherClassesPage');
   const teacherStudentsPage = functionBody('TeacherStudentsPage');
   const classManagement = functionBody('ClassManagement');
-  assert.match(teacherClassesPage, /scope: 'system_test'/);
-  assert.match(teacherClassesPage, /仅系统测试数据/);
-  assert.match(teacherStudentsPage, /scope: 'system_test'/);
-  assert.match(teacherStudentsPage, /仅系统测试数据/);
+  assert.match(teacherClassesPage, /scope: 'production'/);
+  assert.match(teacherClassesPage, /仅正式数据/);
+  assert.match(teacherStudentsPage, /scope: 'production'/);
+  assert.match(teacherStudentsPage, /仅正式数据/);
   assert.doesNotMatch(classManagement, /deleteClass/);
   assert.doesNotMatch(classManagement, /rosterText/);
 });
@@ -541,7 +531,7 @@ test('teacher class and student management default to system test scope and avoi
 test('teacher test center exposes reset and legacy cleanup dry-run actions', () => {
   const testCenter = functionBody('TeacherTestCenterPage');
   assert.match(testCenter, /系统测试中心/);
-  assert.match(testCenter, /重建系统测试入口/);
+  assert.match(testCenter, /重置测试环境/);
   assert.match(testCenter, /重新生成 dry-run/);
   assert.match(testCenter, /拟物理删除/);
 });

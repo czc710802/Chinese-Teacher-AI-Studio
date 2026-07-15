@@ -40,7 +40,9 @@ import { sendCardMessage } from '../integrations/feishu/client.js';
 import { refreshStudentProfile } from '../services/profile.js';
 import { recordReviewArtifact } from '../services/storage-artifacts.js';
 import { archiveEssayToZSpaceAsync } from '../services/zspace-storage.js';
-import { buildLegacyCleanupDryRun, buildSystemTestCenterSnapshot, ensureSystemTestFixture, writeLegacyCleanupReport } from '../services/legacy-cleanup.js';
+import { buildLegacyCleanupDryRun, buildSystemTestCenterSnapshot, writeLegacyCleanupReport } from '../services/legacy-cleanup.js';
+import { resetSystemTestEnvironment } from '../services/test-environment.js';
+import { buildQrSvg } from '../services/class-lifecycle.js';
 
 function actor(req) {
   return { actorId: String(req.user?.id || ''), actorRole: req.user?.role || '' };
@@ -180,19 +182,75 @@ teacherManagementRouter.get('/test-center', (req, res) => {
     appDir: req.app.locals.appDir,
     database: db
   });
+  try {
+    const klass = db.prepare(`
+      SELECT c.*, t.user_id AS teacher_user_id, u.name AS teacher_name
+      FROM classes c
+      LEFT JOIN teachers t ON t.id = c.teacher_id
+      LEFT JOIN users u ON u.id = t.user_id
+      WHERE LOWER(COALESCE(c.data_scope, 'production')) = 'system_test'
+      ORDER BY c.updated_at DESC, c.id DESC
+      LIMIT 1
+    `).get() || null;
+    if (klass) {
+      const invite = db.prepare(`
+        SELECT *
+        FROM class_invites
+        WHERE class_id = ? AND status = 'active'
+        ORDER BY id DESC
+        LIMIT 1
+      `).get(klass.id) || null;
+      const studentCount = Number(db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM class_students cs
+        LEFT JOIN student_class_bindings b ON b.student_id = cs.student_id AND b.class_id = cs.class_id
+        WHERE cs.class_id = ? AND COALESCE(b.status, 'active') = 'active'
+      `).get(klass.id)?.count || 0);
+      const classKey = `${new Date().getFullYear()}_测试_系统测试班`;
+        snapshot.fixture = {
+        class: {
+          ...snapshot.fixture?.class,
+          classId: String(klass.id || snapshot.fixture?.class?.classId || ''),
+          classKey,
+          className: klass.name || '系统测试班',
+          grade: klass.grade || '测试',
+          teacherId: String(klass.teacher_id || ''),
+          teacherName: klass.teacher_name || '',
+          studentCount,
+          joinMode: klass.join_mode || 'approval',
+          inviteCode: invite?.invite_code || klass.invite_code || snapshot.fixture?.class?.inviteCode || 'SYSTEM-TEST-001',
+          inviteCodeExpiresAt: invite?.expires_at || klass.invite_code_expires_at || '',
+          inviteStatus: invite?.status || klass.status || snapshot.fixture?.class?.inviteStatus || 'active',
+          inviteUrl: invite?.invite_token ? `/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}` : snapshot.fixture?.class?.inviteUrl || '',
+          qrSvg: invite?.invite_token ? buildQrSvg(`/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`, klass.name || '系统测试班') : snapshot.fixture?.class?.qrSvg || '',
+          maxStudents: Number(klass.max_students || snapshot.fixture?.class?.maxStudents || 60),
+          status: klass.status || snapshot.fixture?.class?.status || 'active',
+          dataScope: 'system_test',
+          isTestData: true
+        },
+        student: snapshot.fixture?.student || null
+      };
+      snapshot.links = {
+        ...snapshot.links,
+        studentJoin: snapshot.fixture.class.inviteUrl || snapshot.links?.studentJoin || '/student-mobile/join/code',
+        testClassDetail: `/teacher/classes/${encodeURIComponent(classKey)}`,
+        testClassMembers: `/teacher/classes/${encodeURIComponent(classKey)}/members`,
+        testClassRequests: `/teacher/classes/${encodeURIComponent(classKey)}/join-requests`
+      };
+    }
+  } catch (error) {
+    req.app.locals.logger?.warn?.('test-center live snapshot merge failed', { message: error?.message || String(error) });
+  }
   res.json(snapshot);
 });
 
 teacherManagementRouter.post('/test-center/reset-fixture', (req, res) => {
-  const result = ensureSystemTestFixture(req.app.locals.appDir, { logger: req.app.locals.logger || console });
-  res.json({
-    ok: true,
-    ...result,
-    snapshot: buildSystemTestCenterSnapshot({
-      appDir: req.app.locals.appDir,
-      database: db
-    })
+  const result = resetSystemTestEnvironment({
+    appDir: req.app.locals.appDir,
+    database: db,
+    logger: req.app.locals.logger || console
   });
+  res.json(result);
 });
 
 teacherManagementRouter.get('/cleanup/legacy/dry-run', (req, res) => {

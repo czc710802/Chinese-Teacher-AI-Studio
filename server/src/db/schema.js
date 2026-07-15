@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS students (
   student_no TEXT,
   grade TEXT,
   school TEXT,
+  data_scope TEXT NOT NULL DEFAULT 'production',
   FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS classes (
   name TEXT NOT NULL,
   grade TEXT,
   teacher_id INTEGER NOT NULL,
+  data_scope TEXT NOT NULL DEFAULT 'production',
   invite_code TEXT UNIQUE,
   invite_code_expires_at TEXT,
   join_mode TEXT NOT NULL DEFAULT 'approval',

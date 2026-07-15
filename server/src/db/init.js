@@ -63,9 +63,9 @@ function addColumnIfMissing(database, tableName, columnName, ddl) {
 
 function migrateClassLifecycleWorkflow(database = db) {
   addColumnIfMissing(database, 'classes', 'invite_code_expires_at', 'TEXT');
-  addColumnIfMissing(database, 'classes', 'join_mode', "TEXT NOT NULL DEFAULT 'approval'");
-  addColumnIfMissing(database, 'classes', 'status', "TEXT NOT NULL DEFAULT 'active'");
-  addColumnIfMissing(database, 'classes', 'max_students', 'INTEGER DEFAULT 0');
+  addColumnIfMissing(database, 'classes', 'join_mode', 'TEXT');
+  addColumnIfMissing(database, 'classes', 'status', 'TEXT');
+  addColumnIfMissing(database, 'classes', 'max_students', 'INTEGER');
   addColumnIfMissing(database, 'classes', 'archived_at', 'TEXT');
   addColumnIfMissing(database, 'classes', 'deleted_at', 'TEXT');
   addColumnIfMissing(database, 'classes', 'updated_at', 'TEXT');
@@ -293,6 +293,12 @@ export function migrateAssignmentWorkflow(database = db) {
       FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE
     );
   `);
+  try { db.exec("ALTER TABLE classes ADD COLUMN data_scope TEXT NOT NULL DEFAULT 'production'"); } catch (error) {
+    if (!String(error?.message || '').includes('duplicate column name')) throw error;
+  }
+  try { db.exec("ALTER TABLE students ADD COLUMN data_scope TEXT NOT NULL DEFAULT 'production'"); } catch (error) {
+    if (!String(error?.message || '').includes('duplicate column name')) throw error;
+  }
 }
 
 export function initDatabase() {
@@ -309,15 +315,10 @@ export function initDatabase() {
 
   const insertUser = db.prepare('INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)');
   const teacherUser = insertUser.run('teacher', '123456', 'teacher', '陈老师').lastInsertRowid;
-  const studentUser = insertUser.run('student', '123456', 'student', '林同学').lastInsertRowid;
 
   const teacherId = db.prepare('INSERT INTO teachers (user_id, title, school) VALUES (?, ?, ?)').run(teacherUser, '高中语文教师', '示范高中').lastInsertRowid;
-  const studentId = db.prepare('INSERT INTO students (user_id, student_no, grade, school) VALUES (?, ?, ?, ?)').run(studentUser, '2026001', '高三', '示范高中').lastInsertRowid;
-  const classId = db.prepare('INSERT INTO classes (name, grade, teacher_id) VALUES (?, ?, ?)').run('高三语文示范班', '高三', teacherId).lastInsertRowid;
-  db.prepare('INSERT INTO class_students (class_id, student_id) VALUES (?, ?)').run(classId, studentId);
-  db.prepare('INSERT INTO assignments (class_id, title, prompt, essay_type, full_score, deadline) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(classId, '时代青年与精神成长', '阅读材料后，请围绕“时代浪潮中的青年选择”写一篇不少于800字的文章。', '材料作文', 60, '2026-07-01');
-  db.prepare('INSERT INTO student_profiles (student_id, growth_report) VALUES (?, ?)').run(studentId, '已建立作文成长档案，等待更多写作记录形成趋势。');
+  db.prepare('INSERT INTO classes (name, grade, teacher_id, data_scope) VALUES (?, ?, ?, ?)')
+    .run('高三语文示范班', '高三', teacherId, 'system_test');
 }
 
 if (process.argv[1]?.endsWith('init.js')) {

@@ -78,13 +78,15 @@ test('teacher class lifecycle creates an invite token that join preview and join
 
   assert.equal(created.status, 200);
   assert.match(created.class.invite_url, /\/student-mobile\/join\?token=/);
-  assert.match(created.class.qr_svg, /student-mobile\/join\?token=/);
+  assert.match(created.class.qr_svg, /<svg/);
+  assert.doesNotMatch(created.class.qr_svg, /student-mobile\/join\?token=/);
   assert.ok(created.inviteToken.startsWith('join_'));
 
   const preview = getJoinPreview(fixture.database, created.inviteToken);
   assert.equal(preview.status, 200);
   assert.equal(preview.class.name, '高二2班');
   assert.match(preview.class.invite_url, /\/student-mobile\/join\?token=/);
+  assert.match(preview.class.qr_svg, /<svg/);
 
   const request = createJoinRequest(fixture.database, {
     token: created.inviteToken,
@@ -198,6 +200,35 @@ test('invite code join keeps a single pending request, supports status lookup an
   assert.equal(approved.status, 200);
   assert.equal(approved.request.status, 'approved');
   assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM student_class_bindings WHERE class_id = ? AND student_id = ? AND status = ?').get(created.class.id, fixture.studentId, 'active').count, 1);
+});
+
+test('approval can create a student identity for legacy join requests without student_id', () => {
+  const fixture = createFixtureDb();
+  const created = createLifecycleClass(fixture.database, fixture.teacherUser, {
+    name: '高二8班',
+    grade: '高二',
+    join_mode: 'approval',
+    max_students: 45
+  });
+
+  const request = createJoinRequest(fixture.database, {
+    token: created.inviteToken,
+    studentName: '测试学生一',
+    studentNo: 'TEST001',
+    source: 'student-mobile'
+  });
+
+  assert.equal(request.status, 200);
+  assert.equal(request.request.student_id, null);
+
+  const approved = approveJoinRequest(fixture.database, fixture.teacherUser, created.class.id, request.request.id);
+  assert.equal(approved.status, 200);
+  assert.equal(approved.request.status, 'approved');
+  const savedRequest = fixture.database.prepare('SELECT * FROM class_join_requests WHERE id = ?').get(request.request.id);
+  assert.ok(savedRequest.student_id);
+  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM class_students WHERE class_id = ? AND student_id = ?').get(created.class.id, savedRequest.student_id).count, 1);
+  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM student_class_bindings WHERE class_id = ? AND student_id = ? AND status = ?').get(created.class.id, savedRequest.student_id, 'active').count, 1);
+  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM users WHERE name = ?').get('测试学生一').count, 1);
 });
 
 test('teacher can pause, restore, remove and transfer memberships without deleting historical bindings', () => {
