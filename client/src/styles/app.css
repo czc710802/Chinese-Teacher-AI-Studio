@@ -905,6 +905,33 @@ li { line-height: 1.8; }
   color: #60706a;
   padding: 12px;
 }
+.teacher-kpis button,
+.teacher-kpis a {
+  appearance: none;
+  background: #f8fbf9;
+  border: 1px solid #dfe7e3;
+  border-radius: 8px;
+  color: #60706a;
+  cursor: pointer;
+  padding: 12px;
+  text-align: left;
+}
+.teacher-kpis button b,
+.teacher-kpis a b {
+  color: #17211f;
+  display: block;
+  font-size: 22px;
+}
+.teacher-kpis button small,
+.teacher-kpis a small {
+  color: #60706a;
+  display: block;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.kpi-link {
+  min-height: 100%;
+}
 .teacher-kpis b {
   color: #17211f;
   display: block;
@@ -933,6 +960,10 @@ li { line-height: 1.8; }
 }
 .test-center-hero-main h2 { margin: 0 0 6px; }
 .test-center-mini-kpis { margin: 14px 0 0; }
+.test-center-mini-kpis .kpi-link {
+  min-height: 100%;
+  width: 100%;
+}
 .test-center-invite-code {
   background: #f6faf7;
   border: 1px solid #dfe7e3;
@@ -1088,6 +1119,11 @@ li { line-height: 1.8; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.teacher-task-context {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
 
 /* ===== 手机端适配 ===== */
 @media (max-width: 640px) {
@@ -1113,5 +1149,7 @@ li { line-height: 1.8; }
   .test-center-primary-actions { gap: 8px; }
   .test-center-primary-actions button,
   .test-center-primary-actions .button-link { flex: 1 1 calc(50% - 8px); }
+  .teacher-kpis button,
+  .teacher-kpis a { min-height: 58px; }
   .test-center-danger { margin-bottom: calc(18px + env(safe-area-inset-bottom)); }
 }

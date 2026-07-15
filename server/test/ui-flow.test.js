@@ -161,14 +161,29 @@ test('mobile student join flow and teacher class workbench expose code join, joi
   assert.match(mainSource, /function StudentMobileJoinCodePage/);
   assert.match(mainSource, /\/student-mobile\/join\/code/);
   assert.match(mainSource, /function TeacherLifecycleClassPage/);
-  assert.match(mainSource, /\/teacher\/classes\/\$\{encodeURIComponent\(classKey\)\}\/join-requests/);
+  assert.match(mainSource, /function buildTeacherJoinRequestsUrl/);
+  assert.match(mainSource, /\/teacher\/join-requests\?classId=/);
   assert.match(mainSource, /\/teacher\/classes\/\$\{encodeURIComponent\(classKey\)\}\/members/);
-  assert.match(mainSource, /\/teacher\/classes\/\$\{encodeURIComponent\(klass\.classId \|\| klass\.id \|\| klass\.classKey\)\}\/join-requests/);
+  assert.match(mainSource, /joinRequestsUrl = buildTeacherJoinRequestsUrl\(classKey\)/);
+  assert.match(mainSource, /className="kpi-link"/);
   assert.match(mainSource, /\/student-mobile\/join\/requests\/\$\{encodeURIComponent\(requestId\)\}/);
   assert.match(mainSource, /入班申请/);
   assert.match(mainSource, /成员管理/);
   assert.match(mainSource, /移出班级/);
   assert.match(mainSource, /转班/);
+});
+
+test('teacher assignment management exposes task detail and class-scoped task filters', () => {
+  assert.match(mainSource, /function buildTeacherAssignmentsUrl/);
+  assert.match(mainSource, /function buildTeacherAssignmentDetailUrl/);
+  assert.match(mainSource, /function TeacherAssignmentDetailPage/);
+  assert.match(mainSource, /buildTeacherAssignmentDetailUrl\(assignment\.id\)/);
+  assert.match(mainSource, /\/teacher\/assignments\/:assignmentId/);
+  assert.match(mainSource, /classIdFilter/);
+  assert.match(mainSource, /dataScopeFilter/);
+  assert.match(mainSource, /查看详情/);
+  assert.match(mainSource, /写作材料/);
+  assert.match(mainSource, /写作要求/);
 });
 
 test('student mobile home exposes six core entries plus legacy direct grading entry', () => {

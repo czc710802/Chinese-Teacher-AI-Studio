@@ -749,8 +749,8 @@ export function buildSystemTestCenterSnapshot({ appDir = process.cwd(), database
     links: {
       teacherClasses: '/teacher/classes?scope=system_test',
       teacherStudents: '/teacher/students?scope=system_test',
-      teacherAssignments: '/teacher/assignments',
-      teacherTasks: '/teacher/assignments',
+      teacherAssignments: classId ? `/teacher/assignments?classId=${encodeURIComponent(classId)}&dataScope=system_test` : '/teacher/assignments',
+      teacherTasks: classId ? `/teacher/assignments?classId=${encodeURIComponent(classId)}&dataScope=system_test` : '/teacher/assignments',
       teacherTestCenter: '/teacher/test-center',
       studentHome: '/student-mobile/home',
       studentJoin: fixture.class?.inviteUrl || buildPublicUrl('/student-mobile/join/code'),
@@ -758,7 +758,7 @@ export function buildSystemTestCenterSnapshot({ appDir = process.cwd(), database
       studentProfile: '/student-mobile/profile',
       testClassDetail: classId ? `/teacher/classes/${encodeURIComponent(classId)}` : `/teacher/classes/${encodeURIComponent(classKey)}`,
       testClassMembers: classId ? `/teacher/classes/${encodeURIComponent(classId)}/members` : `/teacher/classes/${encodeURIComponent(classKey)}/members`,
-      testClassRequests: classId ? `/teacher/classes/${encodeURIComponent(classId)}/join-requests` : `/teacher/classes/${encodeURIComponent(classKey)}/join-requests`,
+      testClassRequests: classId ? `/teacher/join-requests?classId=${encodeURIComponent(classId)}` : `/teacher/join-requests`,
       testStudentProfile: studentKey ? `/student-profiles/${encodeURIComponent(studentKey)}` : ''
     }
   };

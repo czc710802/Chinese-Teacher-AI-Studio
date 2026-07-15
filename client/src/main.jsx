@@ -29,6 +29,26 @@ function pickDefaultClassId(rows = []) {
   return String((namedClass || rows[0])?.id || '');
 }
 
+function buildTeacherJoinRequestsUrl(classId = '') {
+  const id = String(classId || '').trim();
+  return id ? `/teacher/join-requests?classId=${encodeURIComponent(id)}` : '/teacher/join-requests';
+}
+
+function buildTeacherAssignmentsUrl(classId = '', dataScope = '') {
+  const params = new URLSearchParams();
+  const id = String(classId || '').trim();
+  if (id) params.set('classId', id);
+  const scope = String(dataScope || '').trim();
+  if (scope) params.set('dataScope', scope);
+  const query = params.toString();
+  return query ? `/teacher/assignments?${query}` : '/teacher/assignments';
+}
+
+function buildTeacherAssignmentDetailUrl(assignmentId = '') {
+  const id = String(assignmentId || '').trim();
+  return id ? `/teacher/assignments/${encodeURIComponent(id)}` : '/teacher/assignments';
+}
+
 function getClassDisplayName(klass) {
   const trimmed = String(klass?.name || '').trim();
   if (trimmed) return trimmed;
@@ -1087,9 +1107,11 @@ function StudentMobileJoinStatusPage() {
     return () => { cancelled = true; clearInterval(timer); };
   }, [requestId]);
   const resolvedStatus = detail?.status || status;
+  const approved = resolvedStatus === 'approved';
+  const nextClassId = detail?.class_id || classId || '';
   return <Layout><Card title="入班结果" icon={<Check size={20} />}>
     <div className="form-stack">
-      <p><b>{resolvedStatus === 'approved' ? '已加入班级' : resolvedStatus === 'rejected' ? '入班申请已被拒绝' : '入班申请已提交'}</b></p>
+      <p><b>{approved ? '已加入班级' : resolvedStatus === 'rejected' ? '入班申请已被拒绝' : '入班申请已提交'}</b></p>
       <p className="hint">班级编号：{detail?.class_id || classId || '未返回'} · 申请编号：{requestId || '未返回'}</p>
       {detail && <div className="assignment-submit-summary">
         <h3>{detail.class_name || '班级'}</h3>
@@ -1098,9 +1120,9 @@ function StudentMobileJoinStatusPage() {
         {detail.review_reason && <p>审核说明：{detail.review_reason}</p>}
       </div>}
       {error && <p className="error">{error}</p>}
-      <p className="hint">如需继续，请返回任务首页或等待教师审核。</p>
+      <p className="hint">{approved ? '申请已通过，可直接进入班级或查看任务。' : '如需继续，请返回任务首页或等待教师审核。'}</p>
       <div className="actions">
-        <a href="/student-mobile/home">返回首页</a>
+        <a href={approved ? `/student-mobile/classes/${encodeURIComponent(nextClassId)}` : '/student-mobile/home'}>{approved ? '进入我的班级' : '返回首页'}</a>
         <a href="/student-mobile/tasks">查看任务</a>
         {resolvedStatus === 'rejected' && <a href="/student-mobile/join/code">修改信息并重新申请</a>}
       </div>
@@ -1135,12 +1157,46 @@ function StudentMobileHomePage() {
       </div>
     </Card>
     <Card title="我的班级" icon={<School size={20} />}>
-      {classes.map((klass) => <article key={klass.id} className="item"><b>{klass.name}</b><p>{klass.grade || '未填写年级'} · {klass.join_mode || 'approval'} · {klass.status || 'active'}</p><p className="hint">邀请码状态：{klass.invite_code ? '已配置' : '未配置'}</p></article>)}
+      {classes.map((klass) => <article key={klass.id} className="item"><b>{klass.name}</b><p>{klass.grade || '未填写年级'} · {klass.join_mode || 'approval'} · {klass.status || 'active'}</p><p className="hint">邀请码状态：{klass.invite_code ? '已配置' : '未配置'}</p><p><a href={`/student-mobile/classes/${encodeURIComponent(klass.id)}`}>进入班级</a></p></article>)}
       {!classes.length && <p className="hint">还没有班级，请先通过邀请码加入。</p>}
     </Card>
     <Card title="我的任务" icon={<BookOpen size={20} />}>
       {tasks.map((task) => <article key={task.id} className="item"><b>{task.title}</b><p>{task.class_name || ''} · {task.essay_type || ''} · 满分 {task.full_score || 60}</p><p><a href={`/student-mobile/tasks/${encodeURIComponent(task.id)}`}>查看详情</a></p></article>)}
       {!tasks.length && <p className="hint">当前还没有任务。</p>}
+    </Card>
+  </div></Layout>;
+}
+
+function StudentMobileClassPage() {
+  const { classId } = useParams();
+  const [classes, setClasses] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [message, setMessage] = useState('');
+  useEffect(() => {
+    Promise.all([
+      api('/student-mobile/classes'),
+      api(`/student-mobile/tasks?classId=${encodeURIComponent(classId)}`)
+    ]).then(([classRows, taskRows]) => {
+      setClasses(classRows || []);
+      setTasks(taskRows || []);
+    }).catch((err) => setMessage(err.message));
+  }, [classId]);
+  const klass = classes.find((item) => String(item.id) === String(classId)) || null;
+  return <Layout><div className="grid">
+    <Card title="班级首页" icon={<School size={20} />}>
+      {klass ? <>
+        <p><b>{klass.name}</b></p>
+        <p className="hint">{klass.grade || '未填写年级'} · {klass.join_mode || 'approval'} · {klass.status || 'active'}</p>
+        <p className="hint">任课教师：{klass.teacher_name || '未填写'} · 当前任务：{tasks.length}</p>
+        <div className="actions">
+          <a href={`/student-mobile/tasks?classId=${encodeURIComponent(classId)}`}>查看我的任务</a>
+          <a href="/student-mobile/home">返回首页</a>
+        </div>
+      </> : message ? <p className="error">{message}</p> : <p className="hint">正在加载班级信息...</p>}
+    </Card>
+    <Card title="班级任务" icon={<BookOpen size={20} />}>
+      {tasks.map((task) => <article key={task.id} className="item"><b>{task.title}</b><p>{task.essay_type || ''} · 满分 {task.full_score || 60}</p><p className="hint">{task.prompt || task.requirements || '暂无说明'}</p><p><a href={`/student-mobile/tasks/${encodeURIComponent(task.id)}`}>查看详情</a></p></article>)}
+      {!tasks.length && <p className="hint">当前班级暂无可见任务。</p>}
     </Card>
   </div></Layout>;
 }
@@ -1231,6 +1287,7 @@ function TeacherLifecycleClassPage() {
   const location = useLocation();
   const nav = useNavigate();
   const isNumeric = /^\d+$/.test(String(classKey || ''));
+  const joinRequestsUrl = buildTeacherJoinRequestsUrl(classKey);
   const initialTab = location.pathname.endsWith('/join-requests')
     ? 'requests'
     : location.pathname.endsWith('/members')
@@ -1401,7 +1458,7 @@ function TeacherLifecycleClassPage() {
       <a href="/teacher">首页</a>
       <a href="/teacher/classes">班级</a>
       <a href={`/teacher/classes/${encodeURIComponent(classKey)}`}>总览</a>
-      <a href={`/teacher/classes/${encodeURIComponent(classKey)}/join-requests`}>入班申请</a>
+      <a href={joinRequestsUrl}>入班申请</a>
       <a href={`/teacher/classes/${encodeURIComponent(classKey)}/members`}>成员管理</a>
     </div>
     <div className="grid">
@@ -1409,7 +1466,7 @@ function TeacherLifecycleClassPage() {
         <div className="stats">
           <span><b>{klass.student_count ?? 0}</b>成员</span>
           <span><b>{klass.binding_count ?? 0}</b>绑定</span>
-          <span><b>{klass.pending_join_requests ?? 0}</b>待审核</span>
+          <button type="button" className="kpi-link" onClick={() => nav(joinRequestsUrl)} aria-label="打开入班申请列表"><b>{klass.pending_join_requests ?? 0}</b>待审核<small>点击查看申请</small></button>
           <span><b>{klass.active_invites ?? 0}</b>有效邀请码</span>
         </div>
         <p>{klass.name || '未命名班级'} · {klass.grade || '未填写年级'} · {klass.join_mode || 'approval'} · {klass.status || 'active'}</p>
@@ -2297,7 +2354,7 @@ function TeacherClassDetailPage() {
     {data.klass && <><div className="teacher-kpis"><span><b>{data.stats.studentTotal}</b>学生</span><span><b>{data.stats.essayTotal}</b>作文</span><span><b>{data.stats.averageScore ?? '--'}</b>均分</span><span><b>{Math.round((data.stats.gradingCompletionRate || 0) * 100)}%</b>完成率</span></div>
     {trendRows.length ? <ResponsiveContainer width="100%" height={180}><LineChart data={trendRows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><Tooltip /><Line dataKey="count" stroke="#226b5f" strokeWidth={3} /></LineChart></ResponsiveContainer> : <p className="hint">暂无提交趋势。</p>}
     <h3>学生</h3><div className="management-table">{data.students.map((student) => <a className="management-row" href={`/student-profiles/${encodeURIComponent(student.studentKey)}`} key={student.studentKey}><b>{student.studentName}<span>{student.studentId}</span></b><span>{student.essayCount}篇</span><span>{student.averageScore ?? '--'}分</span><span>{student.scoreTrend || '样本不足'}</span><span>{student.weakestAbility || '--'}</span></a>)}</div>
-    <h3>任务</h3><div className="management-table">{data.assignments.length ? data.assignments.map((assignment) => <article className="management-row" key={assignment.id}><b>{assignment.title}<span>{assignment.public_id || assignment.id}</span></b><span>{assignment.status}</span><span>{formatDateTime(assignment.created_at)}</span><span>{assignment.submitted_count || 0} 已交</span><span>{assignment.missing_count || 0} 未交</span></article>) : <p className="hint">当前班级暂无已发布任务。</p>}</div>
+    <h3>任务</h3><div className="management-table">{data.assignments.length ? data.assignments.map((assignment) => <article className="management-row" key={assignment.id}><b>{assignment.title}<span>{assignment.public_id || assignment.id}</span></b><span>{assignment.status}</span><span>{formatDateTime(assignment.created_at)}</span><span>{assignment.submitted_count || 0} 已交</span><span>{assignment.missing_count || 0} 未交</span><span className="record-actions"><a href={buildTeacherAssignmentDetailUrl(assignment.id)}>查看详情</a></span></article>) : <p className="hint">当前班级暂无已发布任务。</p>}</div>
     <h3>作文</h3><div className="management-table">{data.essays.slice(0, 10).map((essay) => <article className="management-row" key={essay.archiveId}><b>{essay.essayTitle}<span>{essay.studentName}</span></b><span>{essay.score ?? '--'}分</span><span>{essay.level || '--'}</span><code>{essay.nasPath}</code></article>)}</div></>}
   </TeacherManagementShell>;
 }
@@ -2482,8 +2539,8 @@ function TeacherTestCenterPage() {
           <p>{fixtureClass?.grade || '测试'} · {fixtureClass?.schoolYear || '当前学年'} · {fixtureClass?.joinMode || 'approval'} · {fixtureClass?.status || 'active'}</p>
           <div className="teacher-kpis test-center-mini-kpis">
             <span><b>{Number(fixtureClass?.studentCount || 0)}</b>当前学生</span>
-            <span><b>{Number(report?.teacherManagement?.totals?.testStudents || 0)}</b>待审核人数</span>
-            <span><b>{Number(report?.teacherManagement?.totals?.tasks || 0)}</b>测试任务</span>
+            <button type="button" className="kpi-link" onClick={() => nav(buildTeacherJoinRequestsUrl(fixtureClass?.classId || fixtureClass?.id || ''))}><b>{Number(report?.teacherManagement?.totals?.testStudents || 0)}</b>待审核人数<small>点击查看申请</small></button>
+            <button type="button" className="kpi-link" onClick={() => nav(buildTeacherAssignmentsUrl(fixtureClass?.classId || fixtureClass?.id || '', 'system_test'))}><b>{Number(report?.teacherManagement?.totals?.tasks || 0)}</b>测试任务<small>点击查看列表</small></button>
             <span><b>{Number(report?.teacherManagement?.totals?.essays || 0)}</b>测试作文</span>
           </div>
           <div className="test-center-invite-code">
@@ -2509,7 +2566,7 @@ function TeacherTestCenterPage() {
             <p><b>{Number(report?.teacherManagement?.totals?.pendingRequests || report?.teacherManagement?.totals?.requests || 0)}</b> 待审核</p>
             <p className="hint">查看最近申请后，再批准加入系统测试班。</p>
             <div className="actions">
-              <a className="button-link" href={data?.links?.testClassRequests || `${data?.links?.testClassDetail || '/teacher/classes'}/join-requests`}>查看待审核申请</a>
+              <a className="button-link" href={data?.links?.testClassRequests || buildTeacherJoinRequestsUrl(fixtureClass?.classId || fixtureClass?.id || '')}>查看待审核申请</a>
               <a className="button-link" href={data?.links?.testClassMembers || `${data?.links?.testClassDetail || '/teacher/classes'}/members`}>打开班级成员</a>
             </div>
           </section>
@@ -2519,8 +2576,8 @@ function TeacherTestCenterPage() {
             <p><b>{Number(report?.teacherManagement?.totals?.submissions || report?.teacherManagement?.totals?.essays || 0)}</b> 最近提交</p>
             <p className="hint">先发任务，再让测试学生扫码提交作文。</p>
             <div className="actions">
-              <a className="button-link" href={data?.links?.teacherAssignments || '/teacher/assignments'}>发布测试作文</a>
-              <a className="button-link" href={data?.links?.teacherTasks || '/teacher/assignments'}>查看测试任务</a>
+              <a className="button-link" href={data?.links?.teacherAssignments || buildTeacherAssignmentsUrl(fixtureClass?.classId || fixtureClass?.id || '', 'system_test')}>发布测试作文</a>
+              <a className="button-link" href={data?.links?.teacherTasks || buildTeacherAssignmentsUrl(fixtureClass?.classId || fixtureClass?.id || '', 'system_test')}>查看测试任务</a>
               <a className="button-link" href="/teacher/submissions">查看学生提交</a>
             </div>
             {assignments.length ? <div className="teacher-advanced-body"><p className="hint">最近任务：{assignments.slice(0, 3).map((assignment) => assignment.title).join(' · ')}</p></div> : null}
@@ -2642,31 +2699,67 @@ function TeacherTasksPage({ title = '批改任务中心' } = {}) {
 }
 
 function TeacherJoinRequestsPage() {
+  const location = useLocation();
+  const query = new URLSearchParams(location.search);
+  const classIdFilter = query.get('classId') || '';
   const [rows, setRows] = useState([]);
+  const [statusFilter, setStatusFilter] = useState('pending');
   const [message, setMessage] = useState('');
   useEffect(() => {
+    if (classIdFilter) {
+      api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests`).then((data) => setRows(data || [])).catch((err) => setMessage(err.message));
+      return;
+    }
     api('/teacher/classes').then((data) => setRows(data.items || data || [])).catch((err) => setMessage(err.message));
-  }, []);
+  }, [classIdFilter]);
+  const visibleRows = classIdFilter && statusFilter !== 'all' ? rows.filter((row) => String(row.status || '') === statusFilter) : rows;
   return <TeacherManagementShell title="入班申请" icon={<UserPlus size={20} />}>
-    <p className="hint">这里按班级汇总所有待审核申请；进入班级详情后可以完成批准或拒绝。</p>
+    <p className="hint">{classIdFilter ? `当前班级 ${classIdFilter} 的待审核申请。` : '这里按班级汇总所有待审核申请；进入班级详情后可以完成批准或拒绝。'}</p>
+    {classIdFilter && <div className="actions">
+      <button type="button" className={statusFilter === 'pending' ? 'primary-button' : ''} onClick={() => setStatusFilter('pending')}>待审核</button>
+      <button type="button" className={statusFilter === 'approved' ? 'primary-button' : ''} onClick={() => setStatusFilter('approved')}>已批准</button>
+      <button type="button" className={statusFilter === 'rejected' ? 'primary-button' : ''} onClick={() => setStatusFilter('rejected')}>已拒绝</button>
+      <button type="button" className={statusFilter === 'duplicate' ? 'primary-button' : ''} onClick={() => setStatusFilter('duplicate')}>重复申请</button>
+      <button type="button" className={statusFilter === 'all' ? 'primary-button' : ''} onClick={() => setStatusFilter('all')}>全部</button>
+    </div>}
     {message && <p className="error">{message}</p>}
     <div className="management-table">
-      {rows.map((klass) => <article className="management-row" key={klass.classKey || klass.id}>
-        <b>{klass.className || klass.name}<span>{klass.grade || '未填写年级'} · {klass.schoolYear || klass.school_year || '当前学年'}</span></b>
-        <span>待审核 {klass.pendingJoinRequests ?? klass.pending_join_requests ?? 0}</span>
-        <span>主群 {klass.inviteStatus || klass.status || 'active'}</span>
-        <span className="record-actions">
-          <a href={`/teacher/classes/${encodeURIComponent(klass.classId || klass.id || klass.classKey)}/join-requests`}>打开申请</a>
-          <a href={`/teacher/classes/${encodeURIComponent(klass.classId || klass.id || klass.classKey)}/members`}>成员管理</a>
-        </span>
-      </article>)}
-      {!rows.length && <p className="hint">暂无班级或暂无待审核申请。</p>}
+      {classIdFilter
+        ? visibleRows.map((request) => <article className="management-row" key={request.id}>
+          <b>{request.student_name}<span>{request.student_no || '未填学号'}</span></b>
+          <span>{request.source || 'student-mobile'}</span>
+          <span>{request.status || 'pending'}</span>
+          <span>{formatDateTime(request.requested_at)}</span>
+          <span>{request.class_name || '系统测试班'}</span>
+          <span className="record-actions">
+            <button type="button" onClick={() => api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests/${encodeURIComponent(request.id)}/approve`, { method: 'POST', body: {} }).then(() => api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests`).then((data) => setRows(data || []))).catch((err) => setMessage(err.message))}>批准</button>
+            <button type="button" onClick={() => api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests/${encodeURIComponent(request.id)}/reject`, { method: 'POST', body: {} }).then(() => api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests`).then((data) => setRows(data || []))).catch((err) => setMessage(err.message))}>拒绝</button>
+          </span>
+        </article>)
+        : rows.map((klass) => <article className="management-row" key={klass.classKey || klass.id}>
+          <b>{klass.className || klass.name}<span>{klass.grade || '未填写年级'} · {klass.schoolYear || klass.school_year || '当前学年'}</span></b>
+          <span>待审核 {klass.pendingJoinRequests ?? klass.pending_join_requests ?? 0}</span>
+          <span>主群 {klass.inviteStatus || klass.status || 'active'}</span>
+          <span className="record-actions">
+            <a href={buildTeacherJoinRequestsUrl(klass.classId || klass.id || klass.classKey)}>打开申请</a>
+            <a href={`/teacher/classes/${encodeURIComponent(klass.classId || klass.id || klass.classKey)}/members`}>成员管理</a>
+          </span>
+        </article>)}
+      {!visibleRows.length && <p className="hint">{classIdFilter ? '当前班级暂无符合条件的申请。' : '暂无班级或暂无待审核申请。'}</p>}
     </div>
   </TeacherManagementShell>;
 }
 
 function TeacherAssignmentsPage() {
+  const location = useLocation();
+  const query = new URLSearchParams(location.search);
+  const classIdFilter = query.get('classId') || '';
+  const dataScopeFilter = query.get('dataScope') || '';
   return <TeacherManagementShell title="作文任务" icon={<BookOpen size={20} />}>
+    <div className="teacher-task-context">
+      {classIdFilter ? <p className="hint">当前班级：{classIdFilter}{dataScopeFilter ? ` · ${dataScopeFilter}` : ''}</p> : <p className="hint">查看全部已发布任务，或通过班级筛选定位系统测试班任务。</p>}
+      <div className="actions"><a className="button-link" href="/teacher/test-center">返回系统测试中心</a></div>
+    </div>
     <div className="grid">
       <AssignmentPublish />
       <AssignmentManagement />
@@ -3293,10 +3386,13 @@ function ClassRosterPanel({ klass, availableClasses = [], onChanged }) {
 
 function AssignmentPublish() {
   const [classes, setClasses] = useState([]);
+  const location = useLocation();
+  const query = new URLSearchParams(location.search);
+  const classIdFilter = query.get('classId') || '';
   const [form, setForm] = useState({ class_id: 1, title: '', prompt: '', requirements: '', essay_type: '材料作文', full_score: 60, grade: '', min_words: 800, max_words: 1000, scoring_standard: '内容、表达、发展等级综合评分', deadline: '', allow_resubmit: false });
   const [published, setPublished] = useState(null);
   const [publishing, setPublishing] = useState(false);
-  useEffect(() => { api('/classes').then((rows) => { setClasses(rows); setForm((f) => ({ ...f, class_id: rows[0]?.id || 1 })); }); }, []);
+  useEffect(() => { api('/classes').then((rows) => { setClasses(rows); setForm((f) => ({ ...f, class_id: Number(classIdFilter) || rows[0]?.id || 1 })); }); }, [classIdFilter]);
   async function copyLink(value) {
     try {
       await navigator.clipboard.writeText(value);
@@ -3342,8 +3438,13 @@ function AssignmentManagement() {
   const [publishedAssignments, setPublishedAssignments] = useState([]);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const location = useLocation();
+  const query = new URLSearchParams(location.search);
+  const classIdFilter = query.get('classId') || '';
+  const dataScopeFilter = query.get('dataScope') || '';
   async function loadAssignments() {
-    setPublishedAssignments(await api('/assignments'));
+    const rows = await api(buildTeacherAssignmentsUrl(classIdFilter, dataScopeFilter));
+    setPublishedAssignments(Array.isArray(rows) ? rows : rows.items || rows.rows || []);
   }
   useEffect(() => {
     loadAssignments();
@@ -3389,6 +3490,7 @@ function AssignmentManagement() {
           {assignment.submission_url && <p className="assignment-link">{assignment.submission_url}</p>}
         </div>
         <div className="roster-actions">
+          <button type="button" onClick={() => window.open(buildTeacherAssignmentDetailUrl(assignment.id), '_self')}>查看详情</button>
           <button type="button" onClick={() => showStatus(assignment)}>查看提交状态</button>
           <button type="button" onClick={() => window.open('/teacher/submissions', '_self')}>查看报告</button>
           <button type="button" className="danger-button" onClick={() => deleteAssignment(assignment)}>删除任务</button>
@@ -3400,6 +3502,92 @@ function AssignmentManagement() {
       {!publishedAssignments.length && <p className="hint">暂无已发布任务。</p>}
     </div>
   </Card>;
+}
+
+function TeacherAssignmentDetailPage() {
+  const { assignmentId } = useParams();
+  const nav = useNavigate();
+  const [data, setData] = useState(null);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setData(null);
+    setMessage('');
+    api(`/assignments/${encodeURIComponent(assignmentId)}/status`).then((next) => {
+      if (!cancelled) setData(next);
+    }).catch((err) => {
+      if (!cancelled) setMessage(err.message);
+    });
+    return () => { cancelled = true; };
+  }, [assignmentId]);
+
+  if (message && !data) {
+    return <TeacherManagementShell title="任务详情" icon={<BookOpen size={20} />}><p className="error">{message}</p></TeacherManagementShell>;
+  }
+  if (!data) {
+    return <TeacherManagementShell title="任务详情" icon={<BookOpen size={20} />}><p className="hint">正在加载任务详情...</p></TeacherManagementShell>;
+  }
+
+  const assignment = data.assignment || {};
+  const submissions = data.submissions || [];
+  const missing = data.missing || [];
+
+  return <TeacherManagementShell title="任务详情" icon={<BookOpen size={20} />}>
+    <div className="grid">
+      <Card title="任务内容" icon={<BookOpen size={20} />}>
+        <div className="form-stack">
+          <p><b>{assignment.title || '未命名任务'}</b></p>
+          <p className="hint">{assignment.class_name || '未知班级'} · {assignment.essay_type || '材料作文'} · {assignment.grade || '未填写年级'}</p>
+          <p className="hint">状态：{assignment.status || 'published'} · 发布时间：{formatDateTime(assignment.published_at || assignment.created_at)} · 截止：{formatDateTime(assignment.deadline)}</p>
+          <p className="hint">最低字数：{assignment.min_words || 0} · 最高字数：{assignment.max_words || '不限'} · 满分：{assignment.full_score || 60}</p>
+          <div className="assignment-submit-summary">
+            <h3>写作材料</h3>
+            <p style={{ whiteSpace: 'pre-wrap' }}>{assignment.prompt || '暂无材料说明'}</p>
+          </div>
+          <div className="assignment-submit-summary">
+            <h3>写作要求</h3>
+            <p style={{ whiteSpace: 'pre-wrap' }}>{assignment.requirements || '暂无写作要求'}</p>
+          </div>
+          <div className="assignment-submit-summary">
+            <h3>评分标准</h3>
+            <p style={{ whiteSpace: 'pre-wrap' }}>{assignment.scoring_standard || '未设置'}</p>
+          </div>
+          <div className="actions">
+            <a href={buildTeacherAssignmentsUrl(assignment.class_id, 'system_test')}>返回任务列表</a>
+            <a href={`/teacher/classes/${encodeURIComponent(assignment.class_id)}`}>返回班级详情</a>
+            {assignment.share_url && <a href={assignment.share_url} target="_blank" rel="noreferrer">打开学生提交链接</a>}
+          </div>
+        </div>
+      </Card>
+      <Card title="提交统计" icon={<FileText size={20} />}>
+        <div className="teacher-kpis">
+          <span><b>{assignment.total_students ?? 0}</b>应交</span>
+          <span><b>{assignment.submitted_count ?? 0}</b>已交</span>
+          <span><b>{assignment.missing_count ?? 0}</b>未交</span>
+        </div>
+        <h3>学生提交</h3>
+        <div className="management-table">
+          {submissions.length ? submissions.map((submission) => <article className="management-row" key={submission.id}>
+            <b>{submission.student_name}<span>{submission.student_no || '未填学号'}</span></b>
+            <span>{submission.status || 'submitted'}</span>
+            <span>{submission.grading_status || 'pending'}</span>
+            <span>{submission.word_count || 0}字</span>
+            <span>{formatDateTime(submission.submitted_at || submission.created_at)}</span>
+            <span className="record-actions"><a href={`/teacher/essays/${encodeURIComponent(submission.id)}`}>查看报告</a></span>
+          </article>) : <p className="hint">当前还没有学生提交。</p>}
+        </div>
+        <h3>未提交学生</h3>
+        <div className="management-table">
+          {missing.length ? missing.map((student) => <article className="management-row" key={student.student_id}>
+            <b>{student.student_name}<span>{student.student_no || '未填学号'}</span></b>
+            <span>未提交</span>
+          </article>) : <p className="hint">暂无未提交名单。</p>}
+        </div>
+        <div className="actions"><button type="button" onClick={() => nav('/teacher/submissions')}>打开学生提交中心</button></div>
+      </Card>
+    </div>
+  </TeacherManagementShell>;
 }
 
 function EssayList() {
@@ -3615,6 +3803,7 @@ function App() {
     <Route path="/student-mobile/join/code" element={<StudentMobileJoinCodePage />} />
     <Route path="/student-mobile/join/status" element={<StudentMobileJoinStatusPage />} />
     <Route path="/student-mobile/home" element={<RoleRoute roles={['student']}><StudentMobileHomePage /></RoleRoute>} />
+    <Route path="/student-mobile/classes/:classId" element={<RoleRoute roles={['student']}><StudentMobileClassPage /></RoleRoute>} />
     <Route path="/student-mobile/tasks" element={<RoleRoute roles={['student']}><StudentMobileTasksPage /></RoleRoute>} />
     <Route path="/student-mobile/tasks/:assignmentId" element={<RoleRoute roles={['student']}><StudentMobileTasksPage /></RoleRoute>} />
     <Route path="/student-mobile/profile" element={<RoleRoute roles={['student']}><StudentMobileProfilePage /></RoleRoute>} />
@@ -3631,6 +3820,7 @@ function App() {
     <Route path="/teacher/classes" element={<RoleRoute roles={['teacher']}><TeacherClassesPage /></RoleRoute>} />
     <Route path="/teacher/join-requests" element={<RoleRoute roles={['teacher']}><TeacherJoinRequestsPage /></RoleRoute>} />
     <Route path="/teacher/assignments" element={<RoleRoute roles={['teacher']}><TeacherAssignmentsPage /></RoleRoute>} />
+    <Route path="/teacher/assignments/:assignmentId" element={<RoleRoute roles={['teacher']}><TeacherAssignmentDetailPage /></RoleRoute>} />
     <Route path="/teacher/submissions" element={<RoleRoute roles={['teacher']}><TeacherSubmissionsPage /></RoleRoute>} />
     <Route path="/teacher/grading" element={<RoleRoute roles={['teacher']}><TeacherGradingPage /></RoleRoute>} />
     <Route path="/teacher/growth" element={<RoleRoute roles={['teacher']}><TeacherGrowthPage /></RoleRoute>} />
