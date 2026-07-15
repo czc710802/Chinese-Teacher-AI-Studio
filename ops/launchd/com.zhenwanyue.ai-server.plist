@@ -23,6 +23,8 @@
     <string>/Users/chenxiansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>PUBLIC_APP_ORIGIN</key>
     <string>https://pi.zhenwanyue.icu</string>
+    <key>PUBLIC_APP_URL</key>
+    <string>https://pi.zhenwanyue.icu</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

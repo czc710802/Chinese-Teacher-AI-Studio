@@ -6,6 +6,7 @@ import { schemaSql } from '../src/db/schema.js';
 import { applyP3MobileClassLifecycleMigration, getP3MobileClassLifecycleMigrationId } from '../src/db/migrations/20260715_p3_mobile_class_lifecycle.js';
 import {
   archiveLifecycleClass,
+  buildQrSvg,
   createJoinRequest,
   createJoinRequestByCode,
   createLifecycleClass,
@@ -77,15 +78,16 @@ test('teacher class lifecycle creates an invite token that join preview and join
   });
 
   assert.equal(created.status, 200);
-  assert.match(created.class.invite_url, /\/student-mobile\/join\?token=/);
+  assert.match(created.class.invite_url, /^https?:\/\/.+\/student-mobile\/join\?token=/);
   assert.match(created.class.qr_svg, /<svg/);
-  assert.doesNotMatch(created.class.qr_svg, /student-mobile\/join\?token=/);
+  assert.doesNotMatch(created.class.qr_svg, /\/student-mobile\/join\?token=/);
   assert.ok(created.inviteToken.startsWith('join_'));
+  assert.throws(() => buildQrSvg('/student-mobile/join?token=join_123'), /必须以 http:\/\/ 或 https:\/\//);
 
   const preview = getJoinPreview(fixture.database, created.inviteToken);
   assert.equal(preview.status, 200);
   assert.equal(preview.class.name, '高二2班');
-  assert.match(preview.class.invite_url, /\/student-mobile\/join\?token=/);
+  assert.match(preview.class.invite_url, /^https?:\/\/.+\/student-mobile\/join\?token=/);
   assert.match(preview.class.qr_svg, /<svg/);
 
   const request = createJoinRequest(fixture.database, {

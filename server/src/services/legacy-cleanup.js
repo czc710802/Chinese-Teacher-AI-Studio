@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import { generateClassKey } from './teacher-management/teacher-management-service.js';
 import { TEACHER_MANAGEMENT_VERSION } from './teacher-management/teacher-management-service.js';
+import { buildQrSvg } from './class-lifecycle.js';
+import { buildPublicUrl } from './public-access.js';
 
 function readJson(file, fallback) {
   try {
@@ -177,8 +179,8 @@ function getLiveSystemTestFixture(database) {
         joinMode: klass.join_mode || 'approval',
         inviteCode: activeInvite?.invite_code || klass.invite_code || 'SYSTEM-TEST-001',
         inviteCodeExpiresAt: activeInvite?.expires_at || klass.invite_code_expires_at || '',
-        inviteUrl: activeInvite?.invite_token ? `/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}` : '',
-        qrSvg: activeInvite?.invite_token ? buildQrSvg(`/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}`, klass.name || '系统测试班') : '',
+        inviteUrl: activeInvite?.invite_token ? buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}`) : '',
+        qrSvg: activeInvite?.invite_token ? buildQrSvg(buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}`), klass.name || '系统测试班') : '',
         maxStudents: Number(klass.max_students || 60),
         status: klass.status || 'active',
         isTestData: isTrue(klass.is_test_data) || true,
@@ -695,8 +697,8 @@ export function buildSystemTestCenterSnapshot({ appDir = process.cwd(), database
             inviteCode: activeInvite?.invite_code || klass.invite_code || 'SYSTEM-TEST-001',
             inviteCodeExpiresAt: activeInvite?.expires_at || klass.invite_code_expires_at || '',
             inviteStatus: activeInvite?.status || klass.status || 'active',
-            inviteUrl: activeInvite?.invite_token ? `/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}` : '',
-            qrSvg: activeInvite?.invite_token ? buildQrSvg(`/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}`, klass.name || '系统测试班') : '',
+            inviteUrl: activeInvite?.invite_token ? buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}`) : '',
+            qrSvg: activeInvite?.invite_token ? buildQrSvg(buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(activeInvite.invite_token)}`), klass.name || '系统测试班') : '',
             maxStudents: Number(klass.max_students || 60),
             status: klass.status || 'active',
             isTestData: true,
@@ -750,7 +752,7 @@ export function buildSystemTestCenterSnapshot({ appDir = process.cwd(), database
       teacherTasks: '/teacher/tasks',
       teacherTestCenter: '/teacher/test-center',
       studentHome: '/student-mobile/home',
-      studentJoin: fixture.class?.inviteUrl || '/student-mobile/join/code',
+      studentJoin: fixture.class?.inviteUrl || buildPublicUrl('/student-mobile/join/code'),
       studentTasks: '/student-mobile/tasks',
       studentProfile: '/student-mobile/profile',
       testClassDetail: `/teacher/classes/${encodeURIComponent(classKey)}`,

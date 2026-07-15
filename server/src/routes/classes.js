@@ -3,6 +3,7 @@ import { db } from '../db/connection.js';
 import { requireUser, roleGuard } from '../middleware/auth.js';
 import { deleteManagedEmptyClass, getClassRosterForUser, renameStudentForManagedClass } from '../services/class-access.js';
 import { bindFeishuClass, bindFeishuStudent, listFeishuClassBindings } from '../services/feishu-assignment-bindings.js';
+import { buildPublicUrl } from '../services/public-access.js';
 import {
   approveJoinRequest,
   archiveLifecycleClass,
@@ -78,11 +79,12 @@ classRouter.get('/:id/invite', roleGuard('teacher'), (req, res) => {
   const klass = db.prepare('SELECT * FROM classes WHERE id = ?').get(req.params.id);
   if (!klass) return res.status(404).json({ message: '班级不存在' });
   const invite = db.prepare('SELECT * FROM class_invites WHERE class_id = ? AND status = ? ORDER BY id DESC LIMIT 1').get(req.params.id, 'active');
+  const inviteUrl = invite ? buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`) : '';
   res.json({
     class: klass,
     invite,
-    invite_url: invite ? `/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}` : '',
-    qr_svg: invite ? buildQrSvg(`/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`, klass.name) : '',
+    invite_url: inviteUrl,
+    qr_svg: invite ? buildQrSvg(inviteUrl, klass.name) : '',
     requests: result.rows
   });
 });

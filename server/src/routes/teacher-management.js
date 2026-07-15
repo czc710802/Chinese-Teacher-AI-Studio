@@ -43,6 +43,7 @@ import { archiveEssayToZSpaceAsync } from '../services/zspace-storage.js';
 import { buildLegacyCleanupDryRun, buildSystemTestCenterSnapshot, writeLegacyCleanupReport } from '../services/legacy-cleanup.js';
 import { resetSystemTestEnvironment } from '../services/test-environment.js';
 import { buildQrSvg } from '../services/class-lifecycle.js';
+import { buildPublicUrl } from '../services/public-access.js';
 
 function actor(req) {
   return { actorId: String(req.user?.id || ''), actorRole: req.user?.role || '' };
@@ -207,6 +208,7 @@ teacherManagementRouter.get('/test-center', (req, res) => {
         WHERE cs.class_id = ? AND COALESCE(b.status, 'active') = 'active'
       `).get(klass.id)?.count || 0);
       const classKey = `${new Date().getFullYear()}_测试_系统测试班`;
+      const inviteUrl = invite?.invite_token ? buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`) : snapshot.fixture?.class?.inviteUrl || '';
         snapshot.fixture = {
         class: {
           ...snapshot.fixture?.class,
@@ -221,8 +223,8 @@ teacherManagementRouter.get('/test-center', (req, res) => {
           inviteCode: invite?.invite_code || klass.invite_code || snapshot.fixture?.class?.inviteCode || 'SYSTEM-TEST-001',
           inviteCodeExpiresAt: invite?.expires_at || klass.invite_code_expires_at || '',
           inviteStatus: invite?.status || klass.status || snapshot.fixture?.class?.inviteStatus || 'active',
-          inviteUrl: invite?.invite_token ? `/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}` : snapshot.fixture?.class?.inviteUrl || '',
-          qrSvg: invite?.invite_token ? buildQrSvg(`/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`, klass.name || '系统测试班') : snapshot.fixture?.class?.qrSvg || '',
+          inviteUrl,
+          qrSvg: invite?.invite_token ? buildQrSvg(inviteUrl, klass.name || '系统测试班') : snapshot.fixture?.class?.qrSvg || '',
           maxStudents: Number(klass.max_students || snapshot.fixture?.class?.maxStudents || 60),
           status: klass.status || snapshot.fixture?.class?.status || 'active',
           dataScope: 'system_test',
@@ -232,7 +234,7 @@ teacherManagementRouter.get('/test-center', (req, res) => {
       };
       snapshot.links = {
         ...snapshot.links,
-        studentJoin: snapshot.fixture.class.inviteUrl || snapshot.links?.studentJoin || '/student-mobile/join/code',
+        studentJoin: snapshot.fixture.class.inviteUrl || snapshot.links?.studentJoin || buildPublicUrl('/student-mobile/join/code'),
         testClassDetail: `/teacher/classes/${encodeURIComponent(classKey)}`,
         testClassMembers: `/teacher/classes/${encodeURIComponent(classKey)}/members`,
         testClassRequests: `/teacher/classes/${encodeURIComponent(classKey)}/join-requests`

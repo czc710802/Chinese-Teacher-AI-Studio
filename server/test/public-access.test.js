@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { getPublicAccessStatus } from '../src/services/public-access.js';
+import { buildPublicUrl, getPublicAccessStatus } from '../src/services/public-access.js';
 
 test('builds public access status from env and tunnel config', () => {
   const files = new Map([
@@ -46,6 +46,17 @@ test('falls back to cloudflared hostname when public env url is absent', () => {
   assert.equal(status.enabled, true);
   assert.equal(status.url, 'https://essay.example.com');
   assert.equal(status.hasTunnelBinary, false);
+});
+
+test('buildPublicUrl prefers PUBLIC_APP_URL and keeps absolute paths canonical', () => {
+  assert.equal(
+    buildPublicUrl('/student-mobile/join?token=join_123', { env: { PUBLIC_APP_URL: 'https://pi.zhenwanyue.icu' } }),
+    'https://pi.zhenwanyue.icu/student-mobile/join?token=join_123'
+  );
+  assert.equal(
+    buildPublicUrl('https://pi.zhenwanyue.icu/student-mobile/join?token=join_123', { env: { PUBLIC_APP_URL: 'https://dev.example.com' } }),
+    'https://pi.zhenwanyue.icu/student-mobile/join?token=join_123'
+  );
 });
 
 test('production tunnel config pins http2 protocol for restricted networks', () => {

@@ -2342,8 +2342,7 @@ function TeacherTestCenterPage() {
   }
 
   async function copyJoinLink() {
-    const path = data?.fixture?.class?.inviteUrl || data?.links?.studentJoin || '';
-    const url = path ? `${window.location.origin}${path}` : '';
+    const url = String(data?.fixture?.class?.inviteUrl || data?.links?.studentJoin || '').trim();
     await copyText(url, '加入链接已复制。');
   }
 
@@ -2436,6 +2435,7 @@ function TeacherTestCenterPage() {
 
   const report = data?.report || null;
   const fixtureClass = data?.fixture?.class || null;
+  const inviteUrl = String(fixtureClass?.inviteUrl || data?.links?.studentJoin || '').trim();
   const qrDataUrl = getQrDataUrl();
   const stepCounts = {
     students: Number(fixtureClass?.studentCount || 0),
@@ -2472,7 +2472,7 @@ function TeacherTestCenterPage() {
             <button type="button" onClick={copyJoinLink}><Share2 size={16} />复制加入链接</button>
             <button type="button" onClick={regenerateInvite} disabled={busy === 'invite'}>{busy === 'invite' ? '生成中...' : '重新生成邀请'}</button>
           </div>
-          <p className="hint">加入链接：{qrDataUrl ? '已生成' : '二维码暂不可用，请重新生成。'}</p>
+          <p className="hint">加入链接：{inviteUrl || '二维码暂不可用，请重新生成。'}</p>
           {qrDataUrl && <button type="button" className="qr-card-button" onClick={() => setQrExpanded(true)} aria-label="放大二维码">
             <img className="qr-card-image" src={qrDataUrl} alt="系统测试班二维码" />
           </button>}
@@ -2560,7 +2560,7 @@ function TeacherTestCenterPage() {
         <button type="button" className="qr-modal-close" onClick={() => setQrExpanded(false)}>关闭</button>
         <img src={qrDataUrl} alt="系统测试班二维码放大图" />
         <p>{fixtureClass?.inviteCode || 'SYSTEM-TEST-001'}</p>
-        <p className="hint">加入链接：已生成</p>
+        <p className="hint">加入链接：{inviteUrl || '二维码暂不可用，请重新生成。'}</p>
       </div>
     </div>}
   </TeacherManagementShell>;

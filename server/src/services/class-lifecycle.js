@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { db } from '../db/connection.js';
+import { assertAbsoluteHttpUrl, buildPublicUrl } from './public-access.js';
 
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -40,8 +41,7 @@ export function buildInviteCode(prefix = 'JOIN') {
 }
 
 export function buildQrSvg(url, title = '班级邀请链接') {
-  const inviteUrl = String(url || '').trim();
-  if (!inviteUrl) return '';
+  const inviteUrl = assertAbsoluteHttpUrl(url, '二维码内容');
   const pythonCandidates = [
     process.env.CODEX_PYTHON,
     '/Users/chenxiansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3',
@@ -191,7 +191,7 @@ function buildJoinPreview(database, invite) {
       invite_status: invite.status,
       invite_expires_at: invite.expires_at || '',
       invite_join_mode: invite.join_mode || 'approval',
-      invite_url: `/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`
+      invite_url: buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`)
     }
   };
 }
@@ -218,8 +218,8 @@ function attachLifecycle(database, row) {
       created_at: invite.created_at,
       updated_at: invite.updated_at
     } : null,
-    invite_url: invite ? `/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}` : '',
-    qr_svg: invite ? buildQrSvg(`/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`, row.name) : ''
+    invite_url: invite ? buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`) : '',
+    qr_svg: invite ? buildQrSvg(buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(invite.invite_token)}`), row.name) : ''
   };
 }
 
@@ -291,7 +291,15 @@ export function createLifecycleClass(database = db, user, body = {}) {
     after: klass,
     reason: 'teacher create class'
   });
-  return { status: 200, class: attachLifecycle(database, klass), inviteToken };
+  return {
+    status: 200,
+    class: {
+      ...attachLifecycle(database, klass),
+      invite_url: buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(inviteToken)}`),
+      qr_svg: buildQrSvg(buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(inviteToken)}`), klass.name || name)
+    },
+    inviteToken
+  };
 }
 
 export function updateLifecycleClass(database = db, user, classId, body = {}) {
@@ -415,7 +423,15 @@ export function rotateClassInvite(database = db, user, classId, body = {}) {
     after: updated,
     reason: 'teacher rotate invite'
   });
-  return { status: 200, class: attachLifecycle(database, updated), inviteToken };
+  return {
+    status: 200,
+    class: {
+      ...attachLifecycle(database, updated),
+      invite_url: buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(inviteToken)}`),
+      qr_svg: buildQrSvg(buildPublicUrl(`/student-mobile/join?token=${encodeURIComponent(inviteToken)}`), updated.name || klass.name || '班级邀请')
+    },
+    inviteToken
+  };
 }
 
 export function getJoinPreview(database = db, token = '') {

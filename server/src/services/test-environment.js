@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { createLifecycleClass } from './class-lifecycle.js';
 import { ensureSystemTestFixture, buildLegacyCleanupDryRun, buildSystemTestCenterSnapshot } from './legacy-cleanup.js';
+import { buildPublicUrl } from './public-access.js';
 
 function readJson(file, fallback) {
   try {
@@ -379,7 +380,7 @@ export function resetSystemTestEnvironment({ appDir = process.cwd(), database, l
     inviteCode: classRow?.invite_code || 'SYSTEM-TEST-001',
     inviteCodeExpiresAt: classRow?.invite_code_expires_at || '',
     inviteStatus: classRow?.invite_status || classRow?.status || 'active',
-    inviteUrl: classRow?.invite_url || created.class.invite_url || '',
+    inviteUrl: classRow?.invite_url ? buildPublicUrl(classRow.invite_url) : created.class.invite_url || '',
     qrSvg: classRow?.qr_svg || created.class.qr_svg || '',
     maxStudents: Number(classRow?.max_students || 60),
     status: classRow?.status || 'active',

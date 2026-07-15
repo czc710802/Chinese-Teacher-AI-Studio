@@ -275,8 +275,8 @@ test('system test center snapshot reads the live invite from the database', () =
   assert.equal(snapshot.fixture.class.isTestData, true);
   assert.equal(snapshot.fixture.class.studentCount, 0);
   assert.ok(snapshot.fixture.class.inviteCode);
-  assert.match(snapshot.fixture.class.inviteUrl, /\/student-mobile\/join\?token=/);
+  assert.match(snapshot.fixture.class.inviteUrl, /^https?:\/\/.+\/student-mobile\/join\?token=/);
   assert.match(snapshot.fixture.class.qrSvg, /<svg/);
-  assert.doesNotMatch(snapshot.fixture.class.qrSvg, /student-mobile\/join\?token=/);
+  assert.doesNotMatch(snapshot.fixture.class.qrSvg, /\/student-mobile\/join\?token=/);
   database.close();
 });
