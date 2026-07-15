@@ -12,6 +12,8 @@ SERVER_HEALTH="http://127.0.0.1:4000/api/health"
 PUBLIC_HEALTH="https://pi.zhenwanyue.icu/api/health"
 COOLDOWN_SECONDS=180
 CHECK_INTERVAL_SECONDS=60
+SERVER_RESTART_THRESHOLD=3
+PUBLIC_RESTART_THRESHOLD=2
 UID_NUM="$(id -u)"
 DOMAIN="gui/$UID_NUM"
 WATCHDOG_LOG="$LOG_DIR/watchdog.log"
@@ -102,10 +104,10 @@ run_once() {
     server_fail_count=$(( $(read_counter "$SERVER_FAIL_FILE") + 1 ))
     write_counter "$SERVER_FAIL_FILE" "$server_fail_count"
     log "本地 health 失败，连续 ${server_fail_count} 次：$SERVER_HEALTH"
-    if (( server_fail_count >= 2 )); then
+    if (( server_fail_count >= SERVER_RESTART_THRESHOLD )); then
       log "本地 health 连续失败，触发后端重启"
+      restart_service "$SERVER_LABEL" "$SERVER_PLIST" "$SERVER_RESTART_FILE" "后端"
     fi
-    restart_service "$SERVER_LABEL" "$SERVER_PLIST" "$SERVER_RESTART_FILE" "后端"
   fi
 
   if (( local_ok )); then
@@ -117,10 +119,10 @@ run_once() {
       public_fail_count=$(( $(read_counter "$PUBLIC_FAIL_FILE") + 1 ))
       write_counter "$PUBLIC_FAIL_FILE" "$public_fail_count"
       log "公网 health 失败，连续 ${public_fail_count} 次：$PUBLIC_HEALTH"
-      if (( public_fail_count >= 2 )); then
+      if (( public_fail_count >= PUBLIC_RESTART_THRESHOLD )); then
         log "公网 health 连续失败，触发 Cloudflare Tunnel 重启"
+        restart_service "$TUNNEL_LABEL" "$APP_DIR/ops/launchd/com.zhenwanyue.cloudflared.plist" "$TUNNEL_RESTART_FILE" "Cloudflare Tunnel"
       fi
-      restart_service "$TUNNEL_LABEL" "$APP_DIR/ops/launchd/com.zhenwanyue.cloudflared.plist" "$TUNNEL_RESTART_FILE" "Cloudflare Tunnel"
     fi
   else
     log "公网 health 跳过：本地 health 未恢复"
