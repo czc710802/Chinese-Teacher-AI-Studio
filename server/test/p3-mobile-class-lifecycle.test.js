@@ -13,6 +13,7 @@ import {
   getJoinPreview,
   getJoinPreviewByCode,
   getJoinRequestStatus,
+  listLifecycleClasses,
   listStudentMobileAssignments,
   listStudentMobileClasses,
   approveJoinRequest,
@@ -100,6 +101,15 @@ test('teacher class lifecycle creates an invite token that join preview and join
   assert.equal(request.status, 200);
   assert.equal(request.request.status, 'pending');
   assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM class_students WHERE class_id = ?').get(created.class.id).count, 0);
+});
+
+test('teacher class lifecycle includes live assignment counts for class overview', () => {
+  const fixture = createFixtureDb();
+  const rows = listLifecycleClasses(fixture.database, fixture.teacherUser, {}).rows;
+  const managedClass = rows.find((row) => Number(row.id) === Number(fixture.classId));
+
+  assert.ok(managedClass);
+  assert.equal(managedClass.assignment_count, 1);
 });
 
 test('approval and archive restore flows preserve membership and student mobile visibility', () => {

@@ -2248,6 +2248,7 @@ function TeacherClassesPage() {
       {rows.map((klass) => <article className="management-row" key={klass.classKey}>
         <b>{klass.className}<span>{klass.grade} · {klass.schoolYear}</span></b>
         <span>{klass.studentCount} 人</span>
+        <span>{klass.assignmentCount ?? klass.assignment_count ?? 0} 任务</span>
         <span>{klass.essayCount} 篇</span>
         <span>均分 {klass.averageScore ?? '--'}</span>
         <span>优秀率 {klass.excellentRate == null ? '--' : `${Math.round(klass.excellentRate * 100)}%`}</span>
@@ -2265,7 +2266,7 @@ function TeacherClassesPage() {
 
 function TeacherClassDetailPage() {
   const { classKey } = useParams();
-  const [data, setData] = useState({ klass: null, stats: null, students: [], essays: [] });
+  const [data, setData] = useState({ klass: null, stats: null, students: [], essays: [], assignments: [] });
   const [message, setMessage] = useState('');
   useEffect(() => {
     Promise.all([
@@ -2273,7 +2274,22 @@ function TeacherClassDetailPage() {
       api(`/teacher/classes/${encodeURIComponent(classKey)}/statistics`),
       api(`/teacher/classes/${encodeURIComponent(classKey)}/students`),
       api(`/teacher/classes/${encodeURIComponent(classKey)}/essays`)
-    ]).then(([klass, stats, students, essays]) => setData({ klass, stats, students: students.items || [], essays: essays.items || [] })).catch((err) => setMessage(err.message));
+    ]).then(async ([klass, stats, students, essays]) => {
+      let assignments = [];
+      try {
+        const allAssignments = await api('/assignments');
+        assignments = (Array.isArray(allAssignments) ? allAssignments : allAssignments?.items || allAssignments?.rows || [])
+          .filter((assignment) => String(assignment.class_name || '') === String(klass?.className || klass?.name || ''))
+          .filter((assignment) => String(assignment.grade || '') === String(klass?.grade || ''));
+      } catch {}
+      setData({
+        klass,
+        stats,
+        students: students.items || [],
+        essays: essays.items || [],
+        assignments
+      });
+    }).catch((err) => setMessage(err.message));
   }, [classKey]);
   const trendRows = data.stats?.submitTrend30d || [];
   return <TeacherManagementShell title="班级详情" icon={<School size={20} />}>
@@ -2281,6 +2297,7 @@ function TeacherClassDetailPage() {
     {data.klass && <><div className="teacher-kpis"><span><b>{data.stats.studentTotal}</b>学生</span><span><b>{data.stats.essayTotal}</b>作文</span><span><b>{data.stats.averageScore ?? '--'}</b>均分</span><span><b>{Math.round((data.stats.gradingCompletionRate || 0) * 100)}%</b>完成率</span></div>
     {trendRows.length ? <ResponsiveContainer width="100%" height={180}><LineChart data={trendRows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><Tooltip /><Line dataKey="count" stroke="#226b5f" strokeWidth={3} /></LineChart></ResponsiveContainer> : <p className="hint">暂无提交趋势。</p>}
     <h3>学生</h3><div className="management-table">{data.students.map((student) => <a className="management-row" href={`/student-profiles/${encodeURIComponent(student.studentKey)}`} key={student.studentKey}><b>{student.studentName}<span>{student.studentId}</span></b><span>{student.essayCount}篇</span><span>{student.averageScore ?? '--'}分</span><span>{student.scoreTrend || '样本不足'}</span><span>{student.weakestAbility || '--'}</span></a>)}</div>
+    <h3>任务</h3><div className="management-table">{data.assignments.length ? data.assignments.map((assignment) => <article className="management-row" key={assignment.id}><b>{assignment.title}<span>{assignment.public_id || assignment.id}</span></b><span>{assignment.status}</span><span>{formatDateTime(assignment.created_at)}</span><span>{assignment.submitted_count || 0} 已交</span><span>{assignment.missing_count || 0} 未交</span></article>) : <p className="hint">当前班级暂无已发布任务。</p>}</div>
     <h3>作文</h3><div className="management-table">{data.essays.slice(0, 10).map((essay) => <article className="management-row" key={essay.archiveId}><b>{essay.essayTitle}<span>{essay.studentName}</span></b><span>{essay.score ?? '--'}分</span><span>{essay.level || '--'}</span><code>{essay.nasPath}</code></article>)}</div></>}
   </TeacherManagementShell>;
 }
@@ -2310,6 +2327,7 @@ function TeacherStudentsPage() {
 
 function TeacherTestCenterPage() {
   const [data, setData] = useState(null);
+  const [assignments, setAssignments] = useState([]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState('');
   const [qrExpanded, setQrExpanded] = useState(false);
@@ -2318,7 +2336,15 @@ function TeacherTestCenterPage() {
   async function load() {
     setBusy('load');
     try {
-      setData(await api('/teacher/test-center'));
+      const snapshot = await api('/teacher/test-center');
+      setData(snapshot);
+      const classId = snapshot?.fixture?.class?.classId;
+      if (classId) {
+        const rows = await api(`/assignments?classId=${encodeURIComponent(classId)}`).catch(() => []);
+        setAssignments(Array.isArray(rows) ? rows : rows?.items || rows?.rows || []);
+      } else {
+        setAssignments([]);
+      }
       setMessage('');
     } catch (error) {
       setMessage(error.message);
@@ -2440,7 +2466,7 @@ function TeacherTestCenterPage() {
   const stepCounts = {
     students: Number(fixtureClass?.studentCount || 0),
     pending: Number(report?.teacherManagement?.totals?.pendingRequests || report?.teacherManagement?.totals?.requests || 0),
-    tasks: Number(report?.teacherManagement?.totals?.tasks || 0),
+    tasks: Number(assignments.length || report?.teacherManagement?.totals?.tasks || 0),
     essays: Number(report?.teacherManagement?.totals?.essays || 0),
     reports: Number(report?.teacherManagement?.totals?.reports || report?.sqlite?.tables?.teacher_reports || 0)
   };
@@ -2489,14 +2515,15 @@ function TeacherTestCenterPage() {
           </section>
           <section className="test-center-step">
             <h3>发布测试任务</h3>
-            <p><b>{Number(report?.teacherManagement?.totals?.tasks || 0)}</b> 当前任务</p>
+            <p><b>{Number(assignments.length || report?.teacherManagement?.totals?.tasks || 0)}</b> 当前任务</p>
             <p><b>{Number(report?.teacherManagement?.totals?.submissions || report?.teacherManagement?.totals?.essays || 0)}</b> 最近提交</p>
             <p className="hint">先发任务，再让测试学生扫码提交作文。</p>
             <div className="actions">
               <a className="button-link" href={data?.links?.teacherAssignments || '/teacher/assignments'}>发布测试作文</a>
-              <a className="button-link" href={data?.links?.teacherTasks || '/teacher/grading'}>查看测试任务</a>
+              <a className="button-link" href={data?.links?.teacherTasks || '/teacher/assignments'}>查看测试任务</a>
               <a className="button-link" href="/teacher/submissions">查看学生提交</a>
             </div>
+            {assignments.length ? <div className="teacher-advanced-body"><p className="hint">最近任务：{assignments.slice(0, 3).map((assignment) => assignment.title).join(' · ')}</p></div> : null}
           </section>
           <section className="test-center-step">
             <h3>验证批改结果</h3>

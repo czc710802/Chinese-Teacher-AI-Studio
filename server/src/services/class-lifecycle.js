@@ -131,6 +131,7 @@ function classCounts(database, classId) {
       WHERE cs.class_id = ? AND COALESCE(b.status, 'active') = 'active'
     `).get(classId).count,
     binding_count: database.prepare('SELECT COUNT(*) AS count FROM student_class_bindings WHERE class_id = ?').get(classId).count,
+    assignment_count: database.prepare('SELECT COUNT(*) AS count FROM assignments WHERE class_id = ?').get(classId).count,
     pending_join_requests: database.prepare('SELECT COUNT(*) AS count FROM class_join_requests WHERE class_id = ? AND status = ?').get(classId, 'pending').count,
     active_invites: database.prepare('SELECT COUNT(*) AS count FROM class_invites WHERE class_id = ? AND status = ?').get(classId, 'active').count
   };

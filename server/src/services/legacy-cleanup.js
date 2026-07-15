@@ -748,8 +748,8 @@ export function buildSystemTestCenterSnapshot({ appDir = process.cwd(), database
     links: {
       teacherClasses: '/teacher/classes?scope=system_test',
       teacherStudents: '/teacher/students?scope=system_test',
-      teacherAssignments: '/assignments/new',
-      teacherTasks: '/teacher/tasks',
+      teacherAssignments: '/teacher/assignments',
+      teacherTasks: '/teacher/assignments',
       teacherTestCenter: '/teacher/test-center',
       studentHome: '/student-mobile/home',
       studentJoin: fixture.class?.inviteUrl || buildPublicUrl('/student-mobile/join/code'),
