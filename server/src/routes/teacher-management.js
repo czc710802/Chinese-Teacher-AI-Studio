@@ -34,6 +34,7 @@ import {
 import { getStudentProfile } from '../services/student-profile/profile-service.js';
 import { getArchiveRecord } from '../services/archive-pipeline.js';
 import { buildArchiveDownloadLinks } from '../services/file-access.js';
+import { buildFeishuBusinessMigrationNotice, isFeishuBusinessEnabled } from '../integrations/feishu/config.js';
 import { buildEssayResultCard } from '../integrations/feishu/cards.js';
 import { sendCardMessage } from '../integrations/feishu/client.js';
 import { refreshStudentProfile } from '../services/profile.js';
@@ -57,6 +58,27 @@ function nasStatus(req) {
 
 function currentPublicOrigin(req) {
   return String(req.app.locals.env?.PUBLIC_APP_ORIGIN || req.app.locals.env?.FEISHU_REPORT_PUBLIC_BASE_URL || 'https://pi.zhenwanyue.icu').replace(/\/+$/, '');
+}
+
+function appendQuery(url = '', params = {}) {
+  const target = String(url || '').trim();
+  if (!target) return '';
+  try {
+    const parsed = new URL(target);
+    for (const [key, value] of Object.entries(params || {})) {
+      if (value == null || value === '') continue;
+      parsed.searchParams.set(key, String(value));
+    }
+    return parsed.toString();
+  } catch {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params || {})) {
+      if (value == null || value === '') continue;
+      search.set(key, String(value));
+    }
+    const query = search.toString();
+    return query ? `${target}${target.includes('?') ? '&' : '?'}${query}` : target;
+  }
 }
 
 function canAccessEssayRecord(req, essay) {
@@ -117,6 +139,7 @@ async function loadTeacherEssayDetail(req, essayId) {
         client: req.app.locals.zspaceClient
       })
     : { archiveId, available: false, reportUrl: '', markdownUrl: '', docxUrl: '', pdfUrl: '', files: {} };
+  const teacherEssayUrl = `${currentPublicOrigin(req)}/teacher/essays/${essayId}`;
   return {
     status: 200,
     essay,
@@ -128,8 +151,12 @@ async function loadTeacherEssayDetail(req, essayId) {
     archive: archiveRecord,
     links: {
       ...downloadLinks,
-      teacherEssayUrl: `${currentPublicOrigin(req)}/teacher/essay/${essayId}`,
-      reportUrl: downloadLinks.reportUrl || `${currentPublicOrigin(req)}/review/${essayId}`,
+      archiveUrl: downloadLinks.reportUrl || '',
+      teacherEssayUrl,
+      teacherReviewUrl: appendQuery(teacherEssayUrl, { reportId: review?.id || '', action: 'review' }),
+      regradeUrl: appendQuery(teacherEssayUrl, { reportId: review?.id || '', action: 'regrade' }),
+      studentReportUrl: `${currentPublicOrigin(req)}/student/essays/${essayId}/report?reportId=${encodeURIComponent(String(review?.id || ''))}`,
+      reportUrl: downloadLinks.reportUrl || `${currentPublicOrigin(req)}/student/essays/${essayId}/report?reportId=${encodeURIComponent(String(review?.id || ''))}`,
       pdfUrl: downloadLinks.pdfUrl || '',
       docxUrl: downloadLinks.docxUrl || ''
     }
@@ -263,18 +290,36 @@ teacherManagementRouter.post('/essays/:archiveId/send-to-feishu', async (req, re
       nextTraining: []
     };
     const card = buildEssayResultCard(result, { links });
-    const teacherEssayUrl = `${currentPublicOrigin(req)}/teacher/essay/${encodeURIComponent(String(record.essayId || req.params.archiveId.replace(/^essay-/, '')))}`;
+    const teacherEssayId = String(record.essayId || '').trim();
+    const teacherEssayUrl = teacherEssayId ? `${currentPublicOrigin(req)}/teacher/essays/${encodeURIComponent(teacherEssayId)}` : '';
     let sent = false;
-    if (req.body?.chatId) {
+    if (req.body?.chatId && isFeishuBusinessEnabled(req.app.locals.env || process.env)) {
       const sendResult = await sendCardMessage({
         env: req.app.locals.env || process.env,
         receiveId: req.body.chatId,
         receiveIdType: req.body.receiveIdType || 'chat_id',
-        card: buildEssayResultCard(result, { links: { ...links, teacherEssayUrl } })
+        card: buildEssayResultCard(result, {
+          links: {
+            ...links,
+            audience: 'teacher',
+            archiveUrl: links.reportUrl || '',
+            teacherEssayUrl,
+            teacherReviewUrl: appendQuery(teacherEssayUrl, { reportId: record.reportId || '', action: 'review' }),
+            regradeUrl: appendQuery(teacherEssayUrl, { reportId: record.reportId || '', action: 'regrade' })
+          }
+        })
       });
       sent = Boolean(sendResult.ok);
     }
-    res.json({ ok: true, sent, archiveId: record.id, links: { ...links, teacherEssayUrl }, card });
+    res.json({
+      ok: true,
+      sent,
+      paused: !isFeishuBusinessEnabled(req.app.locals.env || process.env),
+      message: !isFeishuBusinessEnabled(req.app.locals.env || process.env) ? buildFeishuBusinessMigrationNotice(req.app.locals.env || process.env) : '',
+      archiveId: record.id,
+      links: { ...links, audience: 'teacher', archiveUrl: links.reportUrl || '', teacherEssayUrl },
+      card
+    });
   } catch (error) {
     next(error);
   }

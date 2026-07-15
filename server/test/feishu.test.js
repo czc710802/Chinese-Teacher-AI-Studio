@@ -106,6 +106,11 @@ test('feishu example env exposes all required keys', () => {
     'FEISHU_BOT_NAME=Chinese Teacher AI Studio',
     'FEISHU_REPLY_MODE=send',
     'FEISHU_TEST_CHAT_ID=',
+    'FEISHU_BUSINESS_ENABLED=false',
+    'FEISHU_STUDENT_SUBMISSION_ENABLED=false',
+    'FEISHU_TEACHER_REVIEW_ENABLED=false',
+    'FEISHU_REGRADING_ENABLED=false',
+    'FEISHU_SYSTEM_NOTIFICATION_ENABLED=true'
   ]) {
     assert.match(example, new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
@@ -129,6 +134,8 @@ test('feishu config reads app and webhook credentials from env', () => {
   assert.equal(config.replyMode, 'send');
   assert.equal(loadFeishuConfig({ FEISHU_REPLY_MODE: 'reply' }).replyMode, 'reply');
   assert.equal(loadFeishuConfig({ FEISHU_REPLY_MODE: 'send' }).replyMode, 'send');
+  assert.equal(loadFeishuConfig({ NODE_ENV: 'production' }).businessEnabled, false);
+  assert.equal(loadFeishuConfig({ NODE_ENV: 'development' }).businessEnabled, true);
 });
 
 test('feishu send test script sends text markdown and card with response fields', () => {

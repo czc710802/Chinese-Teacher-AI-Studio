@@ -21,6 +21,17 @@ button, .button-link {
   min-height: 42px;
   padding: 0 14px;
 }
+.button-link.primary {
+  background: #1f6b4d;
+}
+.mobile-quick-links {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+.mobile-quick-links .button-link {
+  width: 100%;
+}
 button.danger-button { background: #f5e8e4; color: #a33d2e; }
 input, textarea, select {
   background: #fff;

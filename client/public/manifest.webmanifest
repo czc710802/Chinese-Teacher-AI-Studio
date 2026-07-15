@@ -1,0 +1,10 @@
+{
+  "name": "Chinese Teacher AI Studio",
+  "short_name": "作文批改",
+  "start_url": "/student-mobile/home",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f8f5",
+  "theme_color": "#226b5f",
+  "icons": []
+}

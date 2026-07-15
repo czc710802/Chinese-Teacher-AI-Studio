@@ -17,6 +17,7 @@ import { recordOcrArtifact, recordOriginalArtifact, recordReviewArtifact } from 
 import { archiveEssayToZSpaceAsync } from '../services/zspace-storage.js';
 import { archiveEssayToNASAsync } from '../services/archive-pipeline.js';
 import { safeJson } from '../utils/json.js';
+import { buildFeishuBusinessMigrationNotice, isFeishuBusinessEnabled } from '../integrations/feishu/config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const upload = multer({ dest: path.resolve(__dirname, '../../uploads') });
@@ -349,7 +350,7 @@ essayRouter.post('/:id/publish-report', async (req, res, next) => {
     const publicOrigin = String(req.app.locals.env?.PUBLIC_APP_ORIGIN || 'https://pi.zhenwanyue.icu').replace(/\/+$/, '');
     const binding = getActiveStudentBinding(db, essay.student_id, essay.class_id);
     let sent = false;
-    if (binding?.feishu_open_id && req.app.locals.feishuService?.sendCard) {
+    if (binding?.feishu_open_id && req.app.locals.feishuService?.sendCard && isFeishuBusinessEnabled(req.app.locals.env || process.env)) {
       const card = buildEssayResultCard({
         totalScore: raw.total_score ?? reviewRow.total_score,
         fullScore: essay.full_score || 60,
@@ -367,7 +368,14 @@ essayRouter.post('/:id/publish-report', async (req, res, next) => {
       await req.app.locals.feishuService.sendCard(binding.feishu_open_id, card);
       sent = true;
     }
-    res.json({ ok: true, status: 'report_published', feishuSent: sent, essayId: essay.id });
+    res.json({
+      ok: true,
+      status: 'report_published',
+      feishuSent: sent,
+      feishuPaused: !isFeishuBusinessEnabled(req.app.locals.env || process.env),
+      message: !isFeishuBusinessEnabled(req.app.locals.env || process.env) ? buildFeishuBusinessMigrationNotice(req.app.locals.env || process.env) : '',
+      essayId: essay.id
+    });
   } catch (error) {
     next(error);
   }

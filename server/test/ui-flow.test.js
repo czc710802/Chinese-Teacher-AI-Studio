@@ -175,6 +175,34 @@ test('mobile student join flow and teacher class workbench expose code join, joi
   assert.match(mainSource, /转班/);
 });
 
+test('student mobile home exposes six core entries plus legacy direct grading entry', () => {
+  const studentMobileHome = functionBody('StudentMobileHomePage');
+  assert.match(studentMobileHome, /我的任务/);
+  assert.match(studentMobileHome, /提交作文/);
+  assert.match(studentMobileHome, /批改进度/);
+  assert.match(studentMobileHome, /我的报告/);
+  assert.match(studentMobileHome, /升格与修改/);
+  assert.match(studentMobileHome, /成长档案/);
+  assert.match(studentMobileHome, /自由作文 AI 批改/);
+  assert.match(mainSource, /mobile-quick-links/);
+});
+
+test('admin integrations page reports feishu pause state and mobile entry points', () => {
+  assert.match(mainSource, /function AdminIntegrationsPage/);
+  assert.match(mainSource, /\/admin\/integrations/);
+  assert.match(mainSource, /飞书业务已暂停/);
+  assert.match(mainSource, /微信生态入口已启用/);
+});
+
+test('pwa manifest is exposed for the mobile web shell', () => {
+  const indexHtml = readFileSync(path.join(rootDir, 'client/index.html'), 'utf8');
+  const manifest = readFileSync(path.join(rootDir, 'client/public/manifest.webmanifest'), 'utf8');
+  assert.match(indexHtml, /manifest\.webmanifest/);
+  assert.match(indexHtml, /theme-color/);
+  assert.match(manifest, /"start_url": "\/student-mobile\/home"/);
+  assert.match(manifest, /"display": "standalone"/);
+});
+
 test('student photo upload sends images directly for AI recognition and review', () => {
   const uploadPage = functionBody('UploadPage');
   assert.match(uploadPage, /api\('\/essays\/images'/);

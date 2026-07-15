@@ -1091,15 +1091,21 @@ function StudentMobileHomePage() {
     api('/student-mobile/tasks').then(setTasks).catch(() => {});
     api('/student-mobile/profile').then(setProfile).catch(() => {});
   }, []);
+  const quickLinks = [
+    { href: '/student-mobile/tasks', label: '我的任务' },
+    { href: '/student-mobile/tasks', label: '提交作文' },
+    { href: '/student-mobile/tasks', label: '批改进度' },
+    { href: '/student-mobile/profile', label: '我的报告' },
+    { href: '/student-mobile/profile', label: '升格与修改' },
+    { href: '/student-mobile/profile', label: '成长档案' },
+    { href: '/student-mobile/join', label: '加入班级' },
+    { href: '/student', label: '自由作文 AI 批改', primary: true }
+  ];
   return <Layout><div className="grid">
     <Card title="手机学生端" icon={<Home size={20} />}>
       <p>{profile?.name || '学生'} · {classes.length} 个班级 · {tasks.length} 个任务</p>
-      <div className="actions">
-        <a href="/student">自由作文 AI 批改</a>
-        <a href="/student-mobile/tasks">我的任务</a>
-        <a href="/student-mobile/join">加入班级</a>
-        <a href="/student-mobile/join/code">输入邀请码</a>
-        <a href="/student-mobile/profile">成长档案</a>
+      <div className="mobile-quick-links">
+        {quickLinks.map((link) => <a key={link.label} className={link.primary ? 'button-link primary' : 'button-link'} href={link.href}>{link.label}</a>)}
       </div>
     </Card>
     <Card title="我的班级" icon={<School size={20} />}>
@@ -1109,6 +1115,34 @@ function StudentMobileHomePage() {
     <Card title="我的任务" icon={<BookOpen size={20} />}>
       {tasks.map((task) => <article key={task.id} className="item"><b>{task.title}</b><p>{task.class_name || ''} · {task.essay_type || ''} · 满分 {task.full_score || 60}</p><p><a href={`/student-mobile/tasks/${encodeURIComponent(task.id)}`}>查看详情</a></p></article>)}
       {!tasks.length && <p className="hint">当前还没有任务。</p>}
+    </Card>
+  </div></Layout>;
+}
+
+function AdminIntegrationsPage() {
+  const [feishu, setFeishu] = useState(null);
+  const [publicAccess, setPublicAccess] = useState(null);
+  useEffect(() => {
+    api('/feishu/health').then(setFeishu).catch(() => {});
+    api('/public-access').then(setPublicAccess).catch(() => {});
+  }, []);
+  return <Layout><div className="grid">
+    <Card title="系统入口" icon={<Share2 size={20} />}>
+      <p>网页教师入口：{publicAccess?.publicOrigin || 'https://pi.zhenwanyue.icu'}/teacher</p>
+      <p>手机学生入口：{publicAccess?.publicOrigin || 'https://pi.zhenwanyue.icu'}/student-mobile</p>
+      <p>微信生态入口已启用，飞书业务已暂停。</p>
+    </Card>
+    <Card title="飞书状态" icon={<MessageCircle size={20} />}>
+      <p>业务开关：{String(feishu?.feishuBusinessEnabled ?? false)}</p>
+      <p>学生提交：{String(feishu?.feishuStudentSubmissionEnabled ?? false)}</p>
+      <p>教师审核：{String(feishu?.feishuTeacherReviewEnabled ?? false)}</p>
+      <p>重新批改：{String(feishu?.feishuRegradingEnabled ?? false)}</p>
+      <p>系统通知：{String(feishu?.feishuSystemNotificationEnabled ?? true)}</p>
+      <p>文件上传：{String(feishu?.feishuFileUploadEnabled ?? false)}</p>
+    </Card>
+    <Card title="兼容说明" icon={<FileText size={20} />}>
+      <p>历史飞书消息、旧归档链接和数据库记录保留，仅暂停新的飞书业务流。</p>
+      <p className="actions"><a className="button-link" href="/teacher">返回教师工作台</a></p>
     </Card>
   </div></Layout>;
 }
@@ -3267,6 +3301,7 @@ function AdminHome() {
     <Card title="日志与健康检查" icon={<FileText size={20} />}>
       <p>管理员端只负责系统级配置、账号权限、模型、存储、飞书、Cloudflare、WebDAV 与日志健康检查。</p>
       <a href="/api/system/logs" target="_blank" rel="noreferrer">查看系统日志摘要</a>
+      <div className="actions"><a className="button-link" href="/admin/integrations">进入集成状态</a></div>
     </Card>
   </div></Layout>;
 }
@@ -3303,6 +3338,7 @@ function App() {
     <Route path="/teacher/essays/:essayId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
     <Route path="/teacher/essays/:essayId/report/:reportId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
     <Route path="/admin" element={<RoleRoute roles={['admin']}><AdminHome /></RoleRoute>} />
+    <Route path="/admin/integrations" element={<RoleRoute roles={['admin']}><AdminIntegrationsPage /></RoleRoute>} />
     <Route path="/admin/feishu/teachers" element={<RoleRoute roles={['admin']}><AdminFeishuTeachersPage /></RoleRoute>} />
     <Route path="/teacher/feishu/classes" element={<RoleRoute roles={['teacher']}><TeacherFeishuClassesPage /></RoleRoute>} />
     <Route path="/teacher/reviews" element={<RoleRoute roles={['teacher']}><Layout><TeacherReviewCenter /></Layout></RoleRoute>} />

@@ -10,6 +10,25 @@ function parseBoolean(value, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(normalized);
 }
 
+function isProductionEnv(env = process.env) {
+  return String(env.NODE_ENV || '').trim().toLowerCase() === 'production';
+}
+
+export function isFeishuBusinessEnabled(env = process.env) {
+  return parseBoolean(env.FEISHU_BUSINESS_ENABLED, !isProductionEnv(env));
+}
+
+export function buildFeishuBusinessMigrationNotice(env = process.env, {
+  publicOrigin = env.PUBLIC_APP_ORIGIN || env.FEISHU_REPORT_PUBLIC_BASE_URL || 'https://pi.zhenwanyue.icu'
+} = {}) {
+  const origin = String(publicOrigin || 'https://pi.zhenwanyue.icu').trim().replace(/\/+$/, '') || 'https://pi.zhenwanyue.icu';
+  return [
+    '作文教学业务已迁移至 Chinese Teacher AI Studio 网页平台，请打开以下入口使用。',
+    `教师入口：${origin}/teacher`,
+    `学生入口：${origin}/student-mobile`
+  ].join('\n');
+}
+
 export function loadFeishuConfig(env = process.env) {
   const appId = normalize(env.FEISHU_APP_ID);
   const appSecret = normalize(env.FEISHU_APP_SECRET);
@@ -29,6 +48,11 @@ export function loadFeishuConfig(env = process.env) {
   const reportSignedUrlExpiresIn = Number(normalize(env.REPORT_SIGNED_URL_EXPIRES_IN || env.FEISHU_FILE_LINK_TTL_SECONDS || '86400') || 86400);
   const maxCardTextLength = Number(normalize(env.FEISHU_MAX_CARD_TEXT_LENGTH || '0') || 0);
   const maxMessageLength = Number(normalize(env.FEISHU_MAX_MESSAGE_LENGTH || '0') || 0);
+  const businessEnabled = isFeishuBusinessEnabled(env);
+  const studentSubmissionEnabled = parseBoolean(env.FEISHU_STUDENT_SUBMISSION_ENABLED, businessEnabled);
+  const teacherReviewEnabled = parseBoolean(env.FEISHU_TEACHER_REVIEW_ENABLED, businessEnabled);
+  const regradingEnabled = parseBoolean(env.FEISHU_REGRADING_ENABLED, businessEnabled);
+  const systemNotificationEnabled = parseBoolean(env.FEISHU_SYSTEM_NOTIFICATION_ENABLED, true);
   const adminOpenIds = normalize(env.FEISHU_ADMIN_OPEN_IDS)
     .split(/[,;\n]/)
     .map((item) => item.trim())
@@ -55,6 +79,11 @@ export function loadFeishuConfig(env = process.env) {
     reportSignedUrlEnabled,
     reportSignedUrlExpiresIn,
     maxCardTextLength,
-    maxMessageLength
+    maxMessageLength,
+    businessEnabled,
+    studentSubmissionEnabled,
+    teacherReviewEnabled,
+    regradingEnabled,
+    systemNotificationEnabled
   };
 }

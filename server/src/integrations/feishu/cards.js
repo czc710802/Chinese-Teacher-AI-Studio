@@ -46,6 +46,81 @@ function buttonElement(text, value, type = 'primary') {
   return button;
 }
 
+function appendQuery(url = '', params = {}) {
+  const target = String(url || '').trim();
+  if (!target) return '';
+  try {
+    const parsed = new URL(target);
+    for (const [key, value] of Object.entries(params || {})) {
+      if (value == null || value === '') continue;
+      parsed.searchParams.set(key, String(value));
+    }
+    return parsed.toString();
+  } catch {
+    const separator = target.includes('?') ? '&' : '?';
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params || {})) {
+      if (value == null || value === '') continue;
+      query.set(key, String(value));
+    }
+    const text = query.toString();
+    return text ? `${target}${separator}${text}` : target;
+  }
+}
+
+function normalizeAudience(links = {}) {
+  const explicit = String(links.audience || links.audienceType || links.entryType || '').trim().toLowerCase();
+  if (explicit) return explicit;
+  const archiveId = String(links.archiveId || '').trim();
+  if (archiveId.startsWith('essay-')) return 'teacher';
+  return 'student';
+}
+
+function resolveCardLinks(links = {}) {
+  const archiveUrl = links.archiveUrl || links.reportUrl || '';
+  const teacherEssayUrl = links.teacherEssayUrl || '';
+  const teacherReviewUrl = links.teacherReviewUrl || (teacherEssayUrl ? appendQuery(teacherEssayUrl, { reportId: links.reportId || '', action: 'review' }) : '');
+  const regradeUrl = links.regradeUrl || (teacherEssayUrl ? appendQuery(teacherEssayUrl, { reportId: links.reportId || '', action: 'regrade' }) : '');
+  const studentReportUrl = links.studentReportUrl || archiveUrl || '';
+  const studentSubmitUrl = links.studentSubmitUrl || links.submitUrl || '';
+  const studentUpgradeUrl = links.studentUpgradeUrl || links.upgradeUrl || studentReportUrl;
+  return {
+    archiveUrl,
+    teacherEssayUrl,
+    teacherReviewUrl,
+    regradeUrl,
+    studentReportUrl,
+    studentSubmitUrl,
+    studentUpgradeUrl
+  };
+}
+
+function buildEssayActions(result = {}, links = {}) {
+  const audience = normalizeAudience(links);
+  const resolved = resolveCardLinks(links);
+  const actions = [];
+  if (audience === 'teacher') {
+    if (resolved.teacherEssayUrl) actions.push(buttonElement('打开教师工作台', { url: resolved.teacherEssayUrl }));
+    if (resolved.archiveUrl) actions.push(buttonElement('查看归档报告', { url: resolved.archiveUrl }, 'default'));
+    else if (links.archiveId) actions.push(buttonElement('查看归档报告', { command: 'essay-report-page', archiveId: links.archiveId, page: 1 }, 'default'));
+    if (resolved.teacherReviewUrl) actions.push(buttonElement('教师审核', { url: resolved.teacherReviewUrl }, 'default'));
+    if (resolved.regradeUrl) actions.push(buttonElement('重新批改', { url: resolved.regradeUrl }, 'default'));
+    if (links.docxUrl) actions.push(buttonElement('下载 Word', { url: links.docxUrl }, 'default'));
+    if (links.pdfUrl) actions.push(buttonElement('下载 PDF', { url: links.pdfUrl }, 'default'));
+    return actions;
+  }
+
+  if (resolved.studentReportUrl) actions.push(buttonElement('查看我的批改', { url: resolved.studentReportUrl }));
+  else if (links.archiveId) actions.push(buttonElement('查看我的批改', { command: 'essay-report-page', archiveId: links.archiveId, page: 1 }));
+  if (resolved.studentReportUrl) actions.push(buttonElement('查看教师终评', { url: resolved.studentReportUrl }, 'default'));
+  if (resolved.studentUpgradeUrl) actions.push(buttonElement('查看升格文章', { url: resolved.studentUpgradeUrl }, 'default'));
+  if (resolved.studentSubmitUrl) actions.push(buttonElement('提交修改稿', { url: resolved.studentSubmitUrl }, 'default'));
+  if (links.docxUrl) actions.push(buttonElement('下载 Word', { url: links.docxUrl }, 'default'));
+  if (links.pdfUrl) actions.push(buttonElement('下载 PDF', { url: links.pdfUrl }, 'default'));
+  if (resolved.archiveUrl && !actions.length) actions.push(buttonElement('查看归档报告', { url: resolved.archiveUrl }));
+  return actions;
+}
+
 function stringifyPreview(item) {
   if (item == null || item === '') return '';
   if (typeof item === 'string') return item;
@@ -184,6 +259,8 @@ export function buildEssayReportPageCard(result = {}, { links = {}, archiveId = 
   const currentPage = Math.min(Math.max(1, Number(page) || 1), maxPages);
   const current = pages[currentPage - 1] || pages[0];
   const actions = [];
+  const audience = normalizeAudience(links);
+  const resolved = resolveCardLinks(links);
   if (currentPage > 1) {
     actions.push(buttonElement('上一页', { command: 'essay-report-page', archiveId, page: currentPage - 1 }, 'default'));
   }
@@ -191,8 +268,12 @@ export function buildEssayReportPageCard(result = {}, { links = {}, archiveId = 
     actions.push(buttonElement('下一页', { command: 'essay-report-page', archiveId, page: currentPage + 1 }, 'default'));
   }
   actions.push(buttonElement('返回总览', { command: 'essay-report-overview', archiveId }, 'default'));
-  if (links.reportUrl) {
-    actions.push(buttonElement('打开完整网页报告', { url: links.reportUrl }, 'default'));
+  if (audience === 'teacher') {
+    if (resolved.teacherEssayUrl) actions.push(buttonElement('打开教师工作台', { url: resolved.teacherEssayUrl }, 'default'));
+    if (resolved.archiveUrl) actions.push(buttonElement('查看归档报告', { url: resolved.archiveUrl }, 'default'));
+  } else {
+    if (resolved.studentReportUrl) actions.push(buttonElement('查看我的批改', { url: resolved.studentReportUrl }, 'default'));
+    if (resolved.archiveUrl) actions.push(buttonElement('查看归档报告', { url: resolved.archiveUrl }, 'default'));
   }
   if (links.pdfUrl) {
     actions.push(buttonElement('下载 PDF', { url: links.pdfUrl }, 'default'));
@@ -259,22 +340,24 @@ export function buildEssayResultCard(result = {}, { links = {} } = {}) {
   const problems = previewList(result.mainProblems || result.problems || result.weaknesses || [], 3);
   const suggestions = previewList(result.nextTraining || result.suggestions || [], 3);
   const overallComment = previewText(result.overallEvaluation || result.teacherComment || result.teacher_overall || '');
-  const actions = [];
-  if (links.reportUrl) actions.push(buttonElement('查看完整报告', { url: links.reportUrl }));
-  else if (links.archiveId) actions.push(buttonElement('查看完整报告', { command: 'essay-report-page', archiveId: links.archiveId, page: 1 }));
-  actions.push(buttonElement('查看分项评分', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 2 }, 'default'));
-  actions.push(buttonElement('查看逐段点评', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 6 }, 'default'));
-  actions.push(buttonElement('查看逻辑分析', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 4 }, 'default'));
-  actions.push(buttonElement('查看修改示例', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 10 }, 'default'));
-  if (links.teacherReviewUrl) actions.push(buttonElement('教师审核', { url: links.teacherReviewUrl }, 'default'));
-  if (links.teacherEssayUrl || links.teacherReviewUrl) actions.push(buttonElement('重新批改', { url: links.teacherEssayUrl || links.teacherReviewUrl }, 'default'));
-  else if (links.archiveId) actions.push(buttonElement('重新批改', { command: 'essay-rerun', archiveId: links.archiveId }, 'default'));
-  if (links.docxUrl) actions.push(buttonElement('下载 Word', { url: links.docxUrl }, 'default'));
-  if (links.pdfUrl) actions.push(buttonElement('下载 PDF', { url: links.pdfUrl }, 'default'));
+  const actions = buildEssayActions(result, links);
+  const audience = normalizeAudience(links);
+  const reportActions = [];
+  if (audience === 'teacher') {
+    reportActions.push(buttonElement('查看分项评分', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 2 }, 'default'));
+    reportActions.push(buttonElement('查看逐段点评', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 6 }, 'default'));
+    reportActions.push(buttonElement('查看逻辑分析', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 4 }, 'default'));
+    reportActions.push(buttonElement('查看修改示例', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 10 }, 'default'));
+  } else {
+    reportActions.push(buttonElement('查看教师终评', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 1 }, 'default'));
+    reportActions.push(buttonElement('查看升格文章', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 10 }, 'default'));
+    reportActions.push(buttonElement('查看修改建议', { command: 'essay-report-page', archiveId: links.archiveId || '', page: 9 }, 'default'));
+  }
+  actions.push(...reportActions);
   if (links.profileUrl) actions.push(buttonElement('查看成长档案', { url: links.profileUrl }, 'default'));
   if (!actions.length) {
     actions.push(
-      buttonElement('查看完整报告', 'essay-result'),
+      buttonElement('查看我的批改', 'essay-result'),
       buttonElement('查看分项评分', 'essay-report-page', 'default'),
       buttonElement('查看逐段点评', 'essay-report-page', 'default'),
       buttonElement('查看逻辑分析', 'essay-report-page', 'default'),

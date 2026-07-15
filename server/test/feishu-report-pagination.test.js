@@ -32,7 +32,7 @@ test('feishu report page cards expose pager actions and page metadata', () => {
   assert.match(serialized, /essay-report-overview/);
   assert.match(serialized, /上一页/);
   assert.match(serialized, /下一页/);
-  assert.match(serialized, /打开完整网页报告/);
+  assert.match(serialized, /查看归档报告/);
 });
 
 test('feishu card action values can be parsed from json strings', () => {

@@ -1,3 +1,5 @@
+import { buildFeishuBusinessMigrationNotice, isFeishuBusinessEnabled } from '../integrations/feishu/config.js';
+
 function getTeacher(database, user) {
   return database.prepare('SELECT id FROM teachers WHERE user_id = ?').get(user.id);
 }
@@ -161,6 +163,16 @@ export async function remindMissingStudents({ database, user, assignmentId, feis
   const { getAssignmentSubmissionStatus, buildAssignmentReminderCard } = await import('./assignment-access.js');
   const status = getAssignmentSubmissionStatus(database, user, assignmentId, options);
   if (status.status !== 200) return status;
+  if (!isFeishuBusinessEnabled(options.env || process.env)) {
+    return {
+      status: 200,
+      sent: 0,
+      skipped: status.missing.length,
+      paused: true,
+      message: buildFeishuBusinessMigrationNotice(options.env || process.env),
+      assignment: status.assignment
+    };
+  }
   if (!Number(status.assignment.reminder_enabled ?? 1)) return { status: 200, sent: 0, skipped: status.missing.length, message: '该作业已关闭自动提醒' };
   const card = buildAssignmentReminderCard(status.assignment);
   let sent = 0;

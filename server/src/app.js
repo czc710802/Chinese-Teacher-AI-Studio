@@ -146,7 +146,12 @@ export function createApp({
       ok: true,
       appConfigured: config.appConfigured,
       webhookConfigured: config.webhookConfigured,
-      feishuFileUploadEnabled: config.fileUploadEnabled
+      feishuFileUploadEnabled: config.fileUploadEnabled,
+      feishuBusinessEnabled: config.businessEnabled,
+      feishuStudentSubmissionEnabled: config.studentSubmissionEnabled,
+      feishuTeacherReviewEnabled: config.teacherReviewEnabled,
+      feishuRegradingEnabled: config.regradingEnabled,
+      feishuSystemNotificationEnabled: config.systemNotificationEnabled
     });
   });
 

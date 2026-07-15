@@ -48,7 +48,13 @@ export async function handleFeishuEssayMessage({ body, command = {}, appDir, env
   const teacherEssayId = archiveLinks.archive?.record?.essayId || analysis.id || '';
   return {
     responseType: 'card',
-    responseContent: buildEssayResultCard(result, { links: { ...(archiveLinks.links || {}), archiveId: archiveLinks.archiveId || '', teacherEssayUrl: `${publicOrigin}/teacher/essay/${encodeURIComponent(String(teacherEssayId))}` } }),
+    responseContent: buildEssayResultCard(result, {
+      links: {
+        ...(archiveLinks.links || {}),
+        archiveId: archiveLinks.archiveId || '',
+        teacherEssayUrl: teacherEssayId ? `${publicOrigin}/teacher/essays/${encodeURIComponent(String(teacherEssayId))}` : ''
+      }
+    }),
     message: `作文 AI 批改结果：${result.totalScore ?? '暂无'} / ${result.fullScore ?? 60}，${result.level || '暂无'}；${String(result.overallEvaluation || result.teacherComment || result.teacher_overall || '').trim().slice(0, 120) || '暂无'}`,
     analysisId: analysis.id,
     archiveId: archiveLinks.archiveId || '',

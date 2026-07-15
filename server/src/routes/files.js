@@ -140,6 +140,9 @@ publicReportRouter.get('/:archiveId', async (req, res) => {
     }
     const jsonBuffer = reportBuffer || await client.downloadFile(descriptor.file.remotePath);
     const reportJson = JSON.parse(jsonBuffer.toString('utf8'));
+    const publicOrigin = String(req.app.locals.env?.PUBLIC_APP_ORIGIN || req.app.locals.env?.FEISHU_REPORT_PUBLIC_BASE_URL || 'https://pi.zhenwanyue.icu').replace(/\/+$/, '');
+    const essayId = String(descriptor.record?.essayId || reportJson?.essayId || reportJson?.essay?.id || '').trim();
+    const reportId = String(reportJson?.metadata?.reportId || reportJson?.reportId || descriptor.record?.reportId || '').trim();
     const links = await buildArchiveDownloadLinks({
       appDir,
       archiveId: descriptor.record.id,
@@ -147,7 +150,15 @@ publicReportRouter.get('/:archiveId', async (req, res) => {
       env: req.app.locals.env || process.env,
       client
     });
-    res.type('text/html; charset=utf-8').send(renderReportHtml({ record: descriptor.record, reportJson, links }));
+    res.type('text/html; charset=utf-8').send(renderReportHtml({
+      record: descriptor.record,
+      reportJson,
+      links: {
+        ...links,
+        teacherEssayUrl: essayId ? `${publicOrigin}/teacher/essays/${encodeURIComponent(essayId)}` : '',
+        studentReportUrl: essayId ? `${publicOrigin}/student/essays/${encodeURIComponent(essayId)}/report${reportId ? `?reportId=${encodeURIComponent(reportId)}` : ''}` : ''
+      }
+    }));
     auditFileAccess(appDir, 'report.view.success', { archiveId: descriptor.record.id, fileType: 'report-page', actorId: tokenStatus.userId, statusCode: 200, result: 'success' });
   } catch (error) {
     auditFileAccess(appDir, 'report.view.failed', { archiveId: req.params.archiveId, fileType: 'report-page', statusCode: error.statusCode || 502, result: 'failure', message: error.message });

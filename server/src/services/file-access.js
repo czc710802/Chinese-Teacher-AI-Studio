@@ -353,6 +353,9 @@ function paragraphHtml(value) {
 }
 
 export function renderReportHtml({ record, reportJson = {}, links = {} } = {}) {
+  const reportVersion = reportJson?.metadata?.reportVersion || reportJson?.reportVersion || record?.archiveVersion || '2.0';
+  const teacherEssayUrl = links.teacherEssayUrl || '';
+  const studentReportUrl = links.studentReportUrl || '';
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -378,9 +381,12 @@ export function renderReportHtml({ record, reportJson = {}, links = {} } = {}) {
 <body>
   <main>
     <header>
+      <p style="margin:0 0 8px;color:#5f716d;font-size:14px;">这是飞书归档预览页，仅用于快速预览与下载。</p>
       <h1>作文 AI 批改报告</h1>
       <p>${escapeHtml(record?.essayTitle || '未命名作文')}</p>
       <div class="actions">
+        ${teacherEssayUrl ? `<a class="secondary" href="${escapeHtml(teacherEssayUrl)}">进入教师工作台</a>` : ''}
+        ${studentReportUrl ? `<a class="secondary" href="${escapeHtml(studentReportUrl)}">查看我的作文报告</a>` : ''}
         ${links.docxUrl ? `<a href="${escapeHtml(links.docxUrl)}">下载 Word</a>` : ''}
         ${links.pdfUrl ? `<a href="${escapeHtml(links.pdfUrl)}">下载 PDF</a>` : ''}
         ${links.markdownUrl ? `<a class="secondary" href="${escapeHtml(links.markdownUrl)}">下载 Markdown</a>` : ''}
@@ -391,6 +397,7 @@ export function renderReportHtml({ record, reportJson = {}, links = {} } = {}) {
       <div><b>班级</b>${escapeHtml(record?.className || '未填写')}</div>
       <div><b>总分</b>${escapeHtml(record?.score ?? reportJson.score ?? '未评分')}</div>
       <div><b>等级</b>${escapeHtml(record?.grade || reportJson.grade || reportJson.level || '未填写')}</div>
+      <div><b>报告版本</b>${escapeHtml(reportVersion)}</div>
       <div><b>模型</b>${escapeHtml(record?.provider || 'unknown')} / ${escapeHtml(record?.model || 'unknown')}</div>
     </div>
     <section><h2>总体评价</h2>${paragraphHtml(reportJson.overallEvaluation || reportJson.overall_evaluation || reportJson.teacherComment || reportJson.teacher_comment || record?.teacherComment || '暂无')}</section>

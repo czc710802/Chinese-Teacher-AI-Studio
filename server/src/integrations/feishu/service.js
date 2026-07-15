@@ -10,7 +10,7 @@ import {
   WSClient
 } from '@larksuiteoapi/node-sdk';
 
-import { loadFeishuConfig } from './config.js';
+import { buildFeishuBusinessMigrationNotice, isFeishuBusinessEnabled, loadFeishuConfig } from './config.js';
 import { parseFeishuCommand } from './commands.js';
 import { canExecuteFeishuCommand } from './auth.js';
 import {
@@ -981,6 +981,16 @@ export class FeishuService {
     const messageId = String(actionContext.open_message_id || event.messageId || event?.message_id || '');
     const receiveIdType = chatId.startsWith('oc_') ? 'chat_id' : detectReceiveIdType(chatId);
     const archiveId = String(action.archiveId || '').trim();
+    if (!isFeishuBusinessEnabled(this.env)) {
+      const notice = buildFeishuBusinessMigrationNotice(this.env);
+      if (chatId) {
+        await this.sendMessage(chatId, notice, {
+          receiveIdType,
+          messageId
+        });
+      }
+      return { ok: true, skipped: true, reason: 'feishu business paused' };
+    }
     if (!command || (!command.startsWith('essay-report-') && command !== 'essay-rerun')) {
       return { ok: false, skipped: true, reason: 'unsupported action' };
     }
@@ -1009,7 +1019,7 @@ export class FeishuService {
     }
 
     const links = { ...(report.links || {}), archiveId };
-    const teacherEssayUrl = links.teacherEssayUrl || (report?.record?.essayId ? `${this.env.PUBLIC_APP_ORIGIN || this.env.FEISHU_REPORT_PUBLIC_BASE_URL || 'https://pi.zhenwanyue.icu'}/teacher/essay/${encodeURIComponent(String(report.record.essayId))}` : '');
+    const teacherEssayUrl = links.teacherEssayUrl || (report?.record?.essayId ? `${this.env.PUBLIC_APP_ORIGIN || this.env.FEISHU_REPORT_PUBLIC_BASE_URL || 'https://pi.zhenwanyue.icu'}/teacher/essays/${encodeURIComponent(String(report.record.essayId))}` : '');
     if (command === 'essay-rerun') {
       const rerunCard = buildEssayResultCard(report.reportJson || {}, { links: { ...links, teacherEssayUrl } });
       const result = await this.replyMessage({
@@ -1345,6 +1355,12 @@ export class FeishuService {
         return result;
       };
 
+      if (!isFeishuBusinessEnabled(this.env)) {
+        const notice = buildFeishuBusinessMigrationNotice(this.env);
+        await sendTextReply(notice);
+        return { ok: true, command: command.key || 'paused', sent: 'text', businessPaused: true };
+      }
+
       if (text === '测试回复002') {
         await sendTextReply('123456');
         return { ok: true, command: 'test-reply-002', sent: 'text' };
@@ -1520,7 +1536,13 @@ export class FeishuService {
 
         const publicOrigin = (this.env.PUBLIC_APP_ORIGIN || this.env.FEISHU_REPORT_PUBLIC_BASE_URL || 'https://pi.zhenwanyue.icu').replace(/\/+$/, '');
         const teacherEssayId = archiveLinks.archive?.record?.essayId || analysis.id || '';
-        await sendCardReply(buildEssayResultCard(analysis.result || {}, { links: { ...(archiveLinks.links || {}), archiveId: archiveLinks.archiveId || '', teacherEssayUrl: `${publicOrigin}/teacher/essay/${encodeURIComponent(String(teacherEssayId))}` } }));
+        await sendCardReply(buildEssayResultCard(analysis.result || {}, {
+          links: {
+            ...(archiveLinks.links || {}),
+            archiveId: archiveLinks.archiveId || '',
+            teacherEssayUrl: teacherEssayId ? `${publicOrigin}/teacher/essays/${encodeURIComponent(String(teacherEssayId))}` : ''
+          }
+        }));
         const summaryLines = [
           `作文 AI 批改完成：${analysis.result?.totalScore ?? '暂无'} / ${analysis.result?.fullScore ?? 60}`,
           `等级：${analysis.result?.level || '暂无'}`,

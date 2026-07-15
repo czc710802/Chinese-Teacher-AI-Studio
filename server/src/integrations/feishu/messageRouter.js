@@ -27,7 +27,12 @@ import {
   classifyFeishuIncomingMessage,
   getFeishuDefaultReply
 } from './messageParser.js';
-import { bindTeacherWithCode, getTeacherWorkbenchSummary, recordFeishuAction } from '../../services/feishu-workbench.js';
+import {
+  bindTeacherWithCode,
+  getTeacherWorkbenchSummary,
+  recordFeishuAction
+} from '../../services/feishu-workbench.js';
+import { buildFeishuBusinessMigrationNotice, isFeishuBusinessEnabled } from './config.js';
 
 function extractReceiveTarget(body) {
   const event = body?.event || {};
@@ -104,6 +109,7 @@ export async function routeFeishuEvent({
   const { receiveId, receiveIdType } = extractReceiveTarget(body);
   const senderIds = extractSenderIds(body);
   const status = getSystemStatus({ appDir, env });
+  const businessEnabled = isFeishuBusinessEnabled(env);
   const adminAllowed = canExecuteFeishuCommand({
     commandKey: command.key,
     openId: body?.event?.sender?.sender_id?.open_id || body?.event?.sender?.open_id || '',
@@ -114,6 +120,30 @@ export async function routeFeishuEvent({
   let responseContent = getFeishuDefaultReply();
   let responseMessage = responseContent;
   let responseExtra = {};
+
+  if (!businessEnabled) {
+    responseType = 'text';
+    responseContent = buildFeishuBusinessMigrationNotice(env);
+    responseMessage = 'feishu business paused';
+    if (receiveId) {
+      await sendTextMessage({
+        env,
+        receiveId,
+        receiveIdType,
+        text: responseContent,
+        fetchImpl
+      });
+    }
+    return {
+      statusCode: 200,
+      body: {
+        ok: true,
+        command: command.key,
+        message: responseMessage,
+        businessPaused: true
+      }
+    };
+  }
 
   if (incoming.text === '你好') {
     responseContent = '你好，我是 Chinese Teacher AI Studio。';

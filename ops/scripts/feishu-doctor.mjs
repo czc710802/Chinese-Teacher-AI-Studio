@@ -74,6 +74,11 @@ function redactSummary(env) {
     FEISHU_REPORT_PAGINATION_ENABLED: presence(env.FEISHU_REPORT_PAGINATION_ENABLED),
     FEISHU_FILE_LINK_SECRET: presence(env.FEISHU_FILE_LINK_SECRET),
     FEISHU_FILE_LINK_TTL_SECONDS: presence(env.FEISHU_FILE_LINK_TTL_SECONDS),
+    FEISHU_BUSINESS_ENABLED: presence(env.FEISHU_BUSINESS_ENABLED),
+    FEISHU_STUDENT_SUBMISSION_ENABLED: presence(env.FEISHU_STUDENT_SUBMISSION_ENABLED),
+    FEISHU_TEACHER_REVIEW_ENABLED: presence(env.FEISHU_TEACHER_REVIEW_ENABLED),
+    FEISHU_REGRADING_ENABLED: presence(env.FEISHU_REGRADING_ENABLED),
+    FEISHU_SYSTEM_NOTIFICATION_ENABLED: presence(env.FEISHU_SYSTEM_NOTIFICATION_ENABLED),
     FEISHU_REPORT_PUBLIC_BASE_URL: presence(env.FEISHU_REPORT_PUBLIC_BASE_URL)
   };
 }
@@ -106,6 +111,11 @@ async function main() {
   );
   printCheck('FEISHU_FILE_LINK_SECRET', Boolean(env.FEISHU_FILE_LINK_SECRET));
   printCheck('FEISHU_FILE_LINK_TTL_SECONDS', Boolean(env.FEISHU_FILE_LINK_TTL_SECONDS), `value=${String(env.FEISHU_FILE_LINK_TTL_SECONDS || '86400').trim() || '86400'}`);
+  printCheck('FEISHU_BUSINESS_ENABLED', Boolean('FEISHU_BUSINESS_ENABLED' in env || config.businessEnabled), `effective=${config.businessEnabled}`, !('FEISHU_BUSINESS_ENABLED' in env));
+  printCheck('FEISHU_STUDENT_SUBMISSION_ENABLED', Boolean('FEISHU_STUDENT_SUBMISSION_ENABLED' in env || config.studentSubmissionEnabled), `effective=${config.studentSubmissionEnabled}`, !('FEISHU_STUDENT_SUBMISSION_ENABLED' in env));
+  printCheck('FEISHU_TEACHER_REVIEW_ENABLED', Boolean('FEISHU_TEACHER_REVIEW_ENABLED' in env || config.teacherReviewEnabled), `effective=${config.teacherReviewEnabled}`, !('FEISHU_TEACHER_REVIEW_ENABLED' in env));
+  printCheck('FEISHU_REGRADING_ENABLED', Boolean('FEISHU_REGRADING_ENABLED' in env || config.regradingEnabled), `effective=${config.regradingEnabled}`, !('FEISHU_REGRADING_ENABLED' in env));
+  printCheck('FEISHU_SYSTEM_NOTIFICATION_ENABLED', Boolean('FEISHU_SYSTEM_NOTIFICATION_ENABLED' in env || config.systemNotificationEnabled), `effective=${config.systemNotificationEnabled}`, !('FEISHU_SYSTEM_NOTIFICATION_ENABLED' in env));
   printCheck(
     'FEISHU_REPORT_PUBLIC_BASE_URL',
     Boolean(env.FEISHU_REPORT_PUBLIC_BASE_URL || config.reportPublicBaseUrl || env.PUBLIC_APP_ORIGIN),
@@ -191,6 +201,11 @@ async function main() {
     publicOrigin: publicStatus.url || '',
     reportBaseUrl: config.reportPublicBaseUrl || env.PUBLIC_APP_ORIGIN || 'https://pi.zhenwanyue.icu',
     fileUploadEnabled: config.fileUploadEnabled,
+    businessEnabled: config.businessEnabled,
+    studentSubmissionEnabled: config.studentSubmissionEnabled,
+    teacherReviewEnabled: config.teacherReviewEnabled,
+    regradingEnabled: config.regradingEnabled,
+    systemNotificationEnabled: config.systemNotificationEnabled,
     reportCardEnabled: config.reportCardEnabled,
     reportPaginationEnabled: config.reportPaginationEnabled
   }, null, 2));

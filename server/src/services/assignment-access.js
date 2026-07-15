@@ -3,6 +3,7 @@ import {
   markAssignmentMessageRevoked,
   recordFeishuAssignmentMessage
 } from './feishu-assignment-bindings.js';
+import { buildFeishuBusinessMigrationNotice, isFeishuBusinessEnabled } from '../integrations/feishu/config.js';
 
 function getTeacher(database, user) {
   return database.prepare('SELECT id FROM teachers WHERE user_id = ?').get(user.id);
@@ -385,6 +386,16 @@ export function buildAssignmentReminderCard(assignment) {
 export async function shareAssignmentToFeishu({ database, user, assignmentId, feishuService, chatId, options = {} }) {
   const status = getAssignmentSubmissionStatus(database, user, assignmentId, options);
   if (status.status !== 200) return status;
+  if (!isFeishuBusinessEnabled(options.env || process.env)) {
+    return {
+      status: 200,
+      sent: false,
+      paused: true,
+      message: buildFeishuBusinessMigrationNotice(options.env || process.env),
+      card: buildAssignmentFeishuCard(status.assignment),
+      assignment: status.assignment
+    };
+  }
   const binding = getPrimaryFeishuClassBinding(database, status.assignment.class_id);
   const targetChatId = String(chatId || status.assignment.feishu_chat_id || binding?.feishu_chat_id || '').trim();
   const card = buildAssignmentFeishuCard(status.assignment);
