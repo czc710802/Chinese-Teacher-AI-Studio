@@ -8,7 +8,7 @@ import { ArrowLeft, BookOpen, Camera, ChartNoAxesCombined, Check, ChevronUp, Cop
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Sparkles, MessageCircle, Trophy, Newspaper, Bookmark, RotateCcw, TrendingUp, BrainCircuit, Scale, FileSpreadsheet } from 'lucide-react';
 
-const homeByRole = { student: '/student', teacher: '/teacher', admin: '/admin' };
+const homeByRole = { student: '/student-mobile/home', teacher: '/teacher', admin: '/admin' };
 const roleLabel = { student: '学生端', teacher: '教师端', admin: '管理员端' };
 const teacherIconMap = {
   home: Home,
@@ -52,6 +52,21 @@ function buildTeacherAssignmentDetailUrl(assignmentId = '') {
 function buildTeacherStudentsUrl(classKey = '') {
   const id = String(classKey || '').trim();
   return id ? `/teacher/classes/${encodeURIComponent(id)}/members` : '/teacher/classes';
+}
+
+function buildStudentMobileSubmitUrl(assignmentId = '') {
+  const id = String(assignmentId || '').trim();
+  return id ? `/student-mobile/tasks/${encodeURIComponent(id)}/submit` : '/student-mobile/tasks';
+}
+
+function buildStudentMobileUploadUrl(assignmentId = '') {
+  const id = String(assignmentId || '').trim();
+  return id ? `/student-mobile/tasks/${encodeURIComponent(id)}/upload` : '/student-mobile/tasks';
+}
+
+function buildStudentMobileReportUrl(essayId = '') {
+  const id = String(essayId || '').trim();
+  return id ? `/student-mobile/reports/${encodeURIComponent(id)}` : '/student-mobile/reports';
 }
 
 function getClassDisplayName(klass) {
@@ -663,188 +678,11 @@ function MaterialLibrary() {
 }
 
 function StudentHome() {
-  const [classes, setClasses] = useState([]);
-  const [assignments, setAssignments] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [essays, setEssays] = useState([]);
-  const [selectedClassId, setSelectedClassId] = useState('');
-  useEffect(() => { api('/classes').then((rows) => { setClasses(rows); setSelectedClassId(pickDefaultClassId(rows)); }); }, []);
-  useEffect(() => {
-    if (!selectedClassId) {
-      setAssignments([]);
-      setStudents([]);
-      setEssays([]);
-      return;
-    }
-    api(`/assignments?classId=${selectedClassId}`).then(setAssignments);
-    api(`/classes/${selectedClassId}/students`).then(setStudents);
-    api(`/essays?classId=${selectedClassId}`).then(setEssays);
-  }, [selectedClassId]);
-  const selectedClass = classes.find((item) => String(item.id) === selectedClassId);
-  const uniqueStudents = useMemo(() => {
-    const seen = new Map();
-    for (const student of students) {
-      const key = student.student_no || student.id || student.name;
-      const existing = seen.get(key);
-      if (!existing || student.is_current_user) seen.set(key, student);
-    }
-    return Array.from(seen.values());
-  }, [students]);
-  const currentStudent = uniqueStudents.find((student) => student.is_current_user);
-  const uniqueEssays = useMemo(() => {
-    const seen = new Map();
-    for (const essay of essays) {
-      const key = essay.assignment_id || essay.assignment_title || essay.title || essay.id;
-      if (!seen.has(key)) seen.set(key, essay);
-    }
-    return Array.from(seen.values());
-  }, [essays]);
-  return <Layout>
-    <section className="role-banner student-banner">
-      <div className="role-banner-mark"><Users size={28} /></div>
-      <div>
-        <p>学生端</p>
-        <h2>作文提交、批改结果与个人成长</h2>
-      </div>
-    </section>
-    <div className="grid">
-      <Card title="我的班级" icon={<School size={20} />}>
-        <div className="class-picker">{classes.map((x) => <button key={x.id} className={String(x.id) === selectedClassId ? 'active' : ''} onClick={() => setSelectedClassId(String(x.id))}>{getClassDisplayName(x)}</button>)}</div>
-        {selectedClass && <p className="hint">{getClassDisplayName(selectedClass)} · {selectedClass.grade || '未填写年级'}</p>}
-        {!classes.length && <p className="hint">当前还没有关联班级，请联系教师在班级管理中添加学生名单。</p>}
-      </Card>
-      <Card title={`${selectedClass?.name || '班级'}学生名单`} icon={<Users size={20} />}>
-        <div className="student-roster-list">
-          {uniqueStudents.map((student) => <a key={student.id} href={`/student/workspace/${student.id}`} className={student.is_current_user ? 'current' : ''} title={`${student.name}的独立界面`}>
-            {student.student_no || '--'} · {student.name}{student.is_current_user ? '（我）' : ''}
-            <small>进入拍照、提交、查看结果</small>
-          </a>)}
-        </div>
-        {!uniqueStudents.length && <p className="hint">当前班级还没有可显示的学生名单。</p>}
-      </Card>
-      <Card title="作文任务" icon={<BookOpen size={20} />} action={currentStudent ? <a className="mini-action" href={`/student/workspace/${currentStudent.id}`}>我的作文入口</a> : null}>
-        {assignments.map((a) => <article className="item" key={a.id}>
-          <b>{a.title}</b>
-          <p>{a.essay_type} · 满分 {a.full_score}{a.deadline ? ` · 截止 ${a.deadline}` : ''}</p>
-          <div className="actions"><a href={`/submit/${a.id}`}>文字提交</a><a href={`/upload?assignmentId=${a.id}`}>拍照上传</a></div>
-        </article>)}
-        {!assignments.length && <p className="hint">当前班级暂无作文任务。</p>}
-      </Card>
-      <Card title="我的作文与结果" icon={<FileText size={20} />}>
-        <div id="my-essay-workspace" className="student-workspace-anchor" />
-        {currentStudent && <p className="hint">已进入 {currentStudent.name} 的作文拍照、提交、查看批阅结果入口。</p>}
-        {uniqueEssays.map((essay) => {
-          const displayTitle = essay.title || essay.assignment_title || '未命名作文';
-          const assignmentLabel = essay.assignment_title || '';
-          const metaPrefix = assignmentLabel && assignmentLabel !== displayTitle ? `${assignmentLabel} · ` : '';
-          return <article className="item" key={essay.id}>
-            <b>{displayTitle}</b>
-            <p>{metaPrefix}{essay.total_score ?? '--'}分 · {essay.level || '待批改'}</p>
-            <a href={`/student/essays/${essay.id}/report`}>{essay.total_score == null ? '查看批改进度' : '查看我的批改 / 复制升格文章'}</a>
-          </article>;
-        })}
-        {!uniqueEssays.length && <p className="hint">还没有提交记录。可从上方作文任务进入上传或提交。</p>}
-      </Card>
-      <PasswordCard />
-      <AiWritingExercise />
-      <AiUpgradeTrainer />
-      <QuickLinks role="student" />
-    </div>
-  </Layout>;
+  return <Navigate to="/student-mobile/home" replace />;
 }
 
 function StudentWorkspacePage() {
-  const { studentId } = useParams();
-  const session = getSession();
-  const isBlockedWorkspace = String(session?.studentId) !== String(studentId);
-  const isOwnWorkspace = !isBlockedWorkspace;
-  const [classes, setClasses] = useState([]);
-  const [assignments, setAssignments] = useState([]);
-  const [essays, setEssays] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [selectedClassId, setSelectedClassId] = useState('');
-  const [activeAssignmentId, setActiveAssignmentId] = useState(null);
-
-  useEffect(() => {
-    if (!isOwnWorkspace) return;
-    api('/classes').then((rows) => { setClasses(rows); setSelectedClassId(pickDefaultClassId(rows)); });
-  }, [isOwnWorkspace]);
-
-  useEffect(() => {
-    if (!isOwnWorkspace || !selectedClassId) {
-      setAssignments([]);
-      setEssays([]);
-      setStudents([]);
-      return;
-    }
-    api(`/assignments?classId=${selectedClassId}`).then(setAssignments);
-    api(`/essays?classId=${selectedClassId}`).then(setEssays);
-    api(`/classes/${selectedClassId}/students`).then(setStudents);
-  }, [isOwnWorkspace, selectedClassId]);
-
-  if (isBlockedWorkspace) {
-    return <Layout><Card title="学生独立界面" icon={<LockKeyhole size={20} />}>
-      <p className="error">只能进入自己的独立界面。请退出后使用该学生账号登录，再点击自己的名字进入。</p>
-      <a className="button-link" href="/student">返回学生名单</a>
-    </Card></Layout>;
-  }
-
-  const selectedClass = classes.find((item) => String(item.id) === selectedClassId);
-  const uniqueStudents = useMemo(() => {
-    const seen = new Map();
-    for (const student of students) {
-      const key = student.student_no || student.id || student.name;
-      const existing = seen.get(key);
-      if (!existing || student.is_current_user) seen.set(key, student);
-    }
-    return Array.from(seen.values());
-  }, [students]);
-  const currentStudent = uniqueStudents.find((student) => student.is_current_user);
-  const uniqueEssays = useMemo(() => {
-    const seen = new Map();
-    for (const essay of essays) {
-      const key = essay.assignment_id || essay.assignment_title || essay.title || essay.id;
-      if (!seen.has(key)) seen.set(key, essay);
-    }
-    return Array.from(seen.values());
-  }, [essays]);
-
-  return <Layout>
-    <div className="grid">
-      <Card title={`${currentStudent?.name || session?.name || '我的'}独立界面`} icon={<Users size={20} />}>
-        <div className="class-picker">{classes.map((x) => <button key={x.id} className={String(x.id) === selectedClassId ? 'active' : ''} onClick={() => setSelectedClassId(String(x.id))}>{getClassDisplayName(x)}</button>)}</div>
-        {selectedClass && <p className="hint">{getClassDisplayName(selectedClass)} · {selectedClass.grade || '未填写年级'} · 当前账号只管理自己的作文。</p>}
-      </Card>
-      <PasswordCard />
-      <Card title="作文任务" icon={<BookOpen size={20} />}>
-        {assignments.map((a) => <article className={activeAssignmentId === a.id ? 'item assignment-task-card active' : 'item assignment-task-card'} key={a.id} onClick={() => setActiveAssignmentId(activeAssignmentId === a.id ? null : a.id)} role="button" tabIndex="0" onKeyDown={(e) => { if (e.key === 'Enter') setActiveAssignmentId(activeAssignmentId === a.id ? null : a.id); }}>
-          <div className="assignment-task-head">
-            <b>{a.title}</b>
-            <span>{activeAssignmentId === a.id ? '收起任务' : '点击查看教师布置'}</span>
-          </div>
-          <p>{a.essay_type} · 满分 {a.full_score}</p>
-          <p className="assignment-time">布置时间 {formatDateTime(a.created_at)} · 截止时间 {formatDateTime(a.deadline)}</p>
-          {activeAssignmentId === a.id && <div className="assignment-prompt"><b>教师布置</b><p>{a.prompt || '教师暂未填写具体写作要求。'}</p></div>}
-          <div className="actions"><a href={`/submit/${a.id}`}>文字提交</a><a href={`/upload?assignmentId=${a.id}`}>拍照上传</a></div>
-        </article>)}
-        {!assignments.length && <p className="hint">当前班级暂无作文任务。</p>}
-      </Card>
-      <Card title="我的作文与结果" icon={<FileText size={20} />}>
-        {uniqueEssays.map((essay) => {
-          const displayTitle = essay.title || essay.assignment_title || '未命名作文';
-          const assignmentLabel = essay.assignment_title || '';
-          const metaPrefix = assignmentLabel && assignmentLabel !== displayTitle ? `${assignmentLabel} · ` : '';
-          return <article className="item essay-result-line" key={essay.id}>
-            <b className="essay-result-title">{displayTitle}</b>
-            <span className="essay-result-meta">{metaPrefix}{essay.total_score ?? '--'}分 · {essay.level || '待批改'}</span>
-            <a href={`/student/essays/${essay.id}/report`}>{essay.total_score == null ? '查看批改进度' : '查看我的批改 / 复制升格文章'}</a>
-          </article>;
-        })}
-        {!essays.length && <p className="hint">还没有提交记录。可从上方作文任务进入拍照上传或文字提交。</p>}
-      </Card>
-      <QuickLinks role="student" />
-    </div>
-  </Layout>;
+  return <Navigate to="/student-mobile/home" replace />;
 }
 
 function PasswordCard() {
@@ -877,7 +715,8 @@ function PasswordCard() {
 }
 
 function UploadPage() {
-  const assignmentId = new URLSearchParams(location.search).get('assignmentId') || '';
+  const { assignmentId: routeAssignmentId } = useParams();
+  const assignmentId = routeAssignmentId || new URLSearchParams(location.search).get('assignmentId') || '';
   const needsConfirm = new URLSearchParams(location.search).get('confirm') === 'ocr';
   const [title, setTitle] = useState('');
   const [files, setFiles] = useState([]);
@@ -899,7 +738,7 @@ function UploadPage() {
     setError('');
     try {
       const data = await api('/essays/images', { method: 'POST', formData: fd });
-      nav(`/student/essays/${data.essayId}/report`);
+      nav(buildStudentMobileReportUrl(data.essayId));
     } catch (err) {
       setError(`上传批改失败：${err.message}`);
     } finally {
@@ -960,7 +799,7 @@ function SubmitPage() {
     setError('');
     try {
       const data = await api('/essays', { method: 'POST', body: { assignment_id: assignmentId, student_id: session.studentId, title, original_text: text.trim() } });
-      nav(`/student/essays/${data.essayId}/report`);
+      nav(buildStudentMobileReportUrl(data.essayId));
     } catch (err) {
       setError(`提交失败：${err.message}`);
     } finally {
@@ -992,8 +831,8 @@ function SubmitPage() {
     <p className="hint">手机端请优先使用“拍照上传”或“OCR 后人工确认”。本页保留文字直接提交入口，文件上传入口已移除以避免误操作。</p>
     {error && <p className="error">{error}</p>}
     <div className="actions">
-      <a className="ghost" href={`/upload?assignmentId=${assignmentId}`}>拍照上传</a>
-      <a className="ghost" href={`/upload?assignmentId=${assignmentId}&confirm=ocr`}>OCR 后人工确认</a>
+      <a className="ghost" href={buildStudentMobileUploadUrl(assignmentId)}>拍照上传</a>
+      <a className="ghost" href={`${buildStudentMobileUploadUrl(assignmentId)}?confirm=ocr`}>OCR 后人工确认</a>
       <button onClick={submit} disabled={busy || !text.trim()}><Send size={18} />{busy ? '提交批改中...' : '正式提交并批改'}</button>
     </div>
   </Card></Layout>;
@@ -1339,12 +1178,11 @@ function StudentMobileHomePage() {
   const quickLinks = [
     { href: '/student-mobile/tasks', label: '我的任务' },
     { href: '/student-mobile/tasks', label: '提交作文' },
-    { href: '/student-mobile/tasks', label: '批改进度' },
-    { href: '/student-mobile/profile', label: '我的报告' },
-    { href: '/student-mobile/profile', label: '升格与修改' },
+    { href: '/student-mobile/reports', label: '批改进度' },
+    { href: '/student-mobile/reports', label: '我的报告' },
+    { href: '/student-mobile/reports', label: '升格与修改' },
     { href: '/student-mobile/profile', label: '成长档案' },
-    { href: '/student-mobile/join', label: '加入班级' },
-    { href: '/student', label: '自由作文 AI 批改', primary: true }
+    { href: '/student-mobile/join', label: '加入班级' }
   ];
   return <Layout><div className="grid">
     <Card title="手机学生端" icon={<Home size={20} />}>
@@ -1473,8 +1311,9 @@ function StudentMobileTasksPage() {
         <p>{detail.requirements || '暂无写作要求'}</p>
         <p className="hint">状态：{status?.state || '未查询'}</p>
         <div className="actions">
-          <a href={`/submit/${encodeURIComponent(assignmentId)}`}>开始写作/提交作文</a>
-          <a href={`/upload?assignmentId=${encodeURIComponent(assignmentId)}`}>拍照上传</a>
+          <a href={buildStudentMobileSubmitUrl(assignmentId)}>开始写作/提交作文</a>
+          <a href={buildStudentMobileUploadUrl(assignmentId)}>拍照上传</a>
+          {status?.essay?.id && <a href={buildStudentMobileReportUrl(status.essay.id)}>查看批改结果</a>}
           <a href="/student-mobile/tasks">返回任务列表</a>
         </div>
       </div> : !taskError ? <p className="hint">任务不存在或暂不可见。</p> : null}
@@ -1498,6 +1337,53 @@ function StudentMobileProfilePage() {
       <pre style={{whiteSpace:'pre-wrap'}}>{profile.score_trend || '[]'}</pre>
     </div> : <p className="hint">请先登录后查看。</p>}
   </Card></Layout>;
+}
+
+function StudentMobileReportsPage() {
+  const [essays, setEssays] = useState([]);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    setBusy(true);
+    try {
+      const rows = await api('/essays');
+      setEssays(Array.isArray(rows) ? rows : []);
+      setMessage('');
+    } catch (err) {
+      setEssays([]);
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  return <Layout><div className="grid">
+    <Card title="我的报告" icon={<FileText size={20} />}>
+      <p className="hint">这里汇总本人已提交的作文、批改进度和已发布结果。</p>
+      <div className="actions">
+        <button type="button" onClick={load} disabled={busy}>{busy ? '刷新中...' : '刷新报告'}</button>
+        <a className="button-link" href="/student-mobile/tasks">去任务列表</a>
+      </div>
+      {message && <p className="error">{message}</p>}
+      {essays.map((essay) => {
+        const title = essay.title || essay.assignment_title || '未命名作文';
+        const score = essay.total_score ?? '--';
+        const level = essay.level || '待批改';
+        return <article key={essay.id} className="item">
+          <b>{title}</b>
+          <p>{essay.assignment_title || '无任务标题'} · {score}分 · {level}</p>
+          <p className="hint">{formatDateTime(essay.created_at)} · {essay.grading_status || '未知状态'}</p>
+          <p><a href={buildStudentMobileReportUrl(essay.id)}>查看报告</a></p>
+        </article>;
+      })}
+      {!essays.length && !message && <p className="hint">当前没有可查看的报告。</p>}
+    </Card>
+  </div></Layout>;
 }
 
 function TeacherLifecycleClassPage() {
@@ -1745,7 +1631,7 @@ function LegacyReviewRoute() {
   const suffix = location.search || '';
   const target = session?.role === 'teacher'
     ? `/teacher/essays/${encodeURIComponent(essayId)}${suffix}`
-    : `/student/essays/${encodeURIComponent(essayId)}/report${suffix}`;
+    : `/student-mobile/reports/${encodeURIComponent(essayId)}${suffix}`;
   return <Navigate to={target} replace />;
 }
 
@@ -3216,6 +3102,33 @@ function TeacherClassRedirect() {
   return <Navigate to={`/teacher/classes/${encodeURIComponent(classId)}`} replace />;
 }
 
+function StudentLegacyRedirect({ to }) {
+  const location = useLocation();
+  return <Navigate to={`${to}${location.search || ''}`} replace />;
+}
+
+function StudentLegacyUploadRedirect() {
+  const location = useLocation();
+  const assignmentId = new URLSearchParams(location.search).get('assignmentId') || '';
+  const suffix = location.search || '';
+  const target = assignmentId
+    ? `/student-mobile/tasks/${encodeURIComponent(assignmentId)}/upload${suffix}`
+    : '/student-mobile/tasks';
+  return <Navigate to={target} replace />;
+}
+
+function StudentLegacySubmitRedirect() {
+  const { assignmentId } = useParams();
+  const location = useLocation();
+  return <Navigate to={`/student-mobile/tasks/${encodeURIComponent(assignmentId)}/submit${location.search || ''}`} replace />;
+}
+
+function StudentLegacyEssayReportRedirect() {
+  const { essayId } = useParams();
+  const location = useLocation();
+  return <Navigate to={`/student-mobile/reports/${encodeURIComponent(essayId)}${location.search || ''}`} replace />;
+}
+
 function TeacherHome() {
   return <Layout>
     <section className="role-banner teacher-banner">
@@ -3405,7 +3318,7 @@ function TeacherRerunTaskCard() {
 
 function QuickLinks({ role }) {
   const links = role === 'student'
-    ? [['/upload', '拍照上传', Camera], ['/profile', '个人档案', ChartNoAxesCombined]]
+    ? [['/student-mobile/tasks', '我的任务', BookOpen], ['/student-mobile/reports', '批改结果', FileText], ['/student-mobile/profile', '个人档案', ChartNoAxesCombined]]
     : [['/teacher/classes', '我的班级', Users], ['/teacher/join-requests', '待审核', UserPlus], ['/teacher/assignments', '发布任务', Plus], ['/teacher/submissions', '学生提交', FileText]];
   return <Card title="快捷入口" icon={<Home size={20} />}><div className="quick">{links.map(([href, label, Icon]) => <a key={href} href={href}><Icon size={18} />{label}</a>)}</div></Card>;
 }
@@ -4187,12 +4100,16 @@ function App() {
     <Route path="/student-mobile/classes/:classId" element={<RoleRoute roles={['student']}><StudentMobileClassPage /></RoleRoute>} />
     <Route path="/student-mobile/tasks" element={<RoleRoute roles={['student']}><StudentMobileTasksPage /></RoleRoute>} />
     <Route path="/student-mobile/tasks/:assignmentId" element={<RoleRoute roles={['student']}><StudentMobileTasksPage /></RoleRoute>} />
+    <Route path="/student-mobile/tasks/:assignmentId/submit" element={<RoleRoute roles={['student']}><SubmitPage /></RoleRoute>} />
+    <Route path="/student-mobile/tasks/:assignmentId/upload" element={<RoleRoute roles={['student']}><UploadPage /></RoleRoute>} />
+    <Route path="/student-mobile/reports" element={<RoleRoute roles={['student']}><StudentMobileReportsPage /></RoleRoute>} />
+    <Route path="/student-mobile/reports/:essayId" element={<RoleRoute roles={['student']}><StudentEssayReportPage /></RoleRoute>} />
     <Route path="/student-mobile/profile" element={<RoleRoute roles={['student']}><StudentMobileProfilePage /></RoleRoute>} />
-    <Route path="/student" element={<RoleRoute roles={['student']}><StudentHome /></RoleRoute>} />
-    <Route path="/student/workspace/:studentId" element={<RoleRoute roles={['student']}><StudentWorkspacePage /></RoleRoute>} />
-    <Route path="/student/essays/:essayId/report" element={<RoleRoute roles={['student']}><StudentEssayReportPage /></RoleRoute>} />
-    <Route path="/upload" element={<RoleRoute roles={['student']}><UploadPage /></RoleRoute>} />
-    <Route path="/submit/:assignmentId" element={<RoleRoute roles={['student']}><SubmitPage /></RoleRoute>} />
+    <Route path="/student" element={<RoleRoute roles={['student']}><StudentLegacyRedirect to="/student-mobile/home" /></RoleRoute>} />
+    <Route path="/student/workspace/:studentId" element={<RoleRoute roles={['student']}><StudentLegacyRedirect to="/student-mobile/home" /></RoleRoute>} />
+    <Route path="/student/essays/:essayId/report" element={<RoleRoute roles={['student']}><StudentLegacyEssayReportRedirect /></RoleRoute>} />
+    <Route path="/upload" element={<RoleRoute roles={['student']}><StudentLegacyUploadRedirect /></RoleRoute>} />
+    <Route path="/submit/:assignmentId" element={<RoleRoute roles={['student']}><StudentLegacySubmitRedirect /></RoleRoute>} />
     <Route path="/review/:essayId" element={<RoleRoute roles={['student', 'teacher']}><LegacyReviewRoute /></RoleRoute>} />
     <Route path="/profile" element={<RoleRoute roles={['student']}><StudentProfile /></RoleRoute>} />
     <Route path="/teacher" element={<RoleRoute roles={['teacher']}><TeacherHome /></RoleRoute>} />

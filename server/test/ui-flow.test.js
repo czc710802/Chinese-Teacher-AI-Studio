@@ -27,21 +27,25 @@ function countMatches(source, pattern) {
   return [...source.matchAll(pattern)].length;
 }
 
-test('student roster lets the current student enter their own submission and review area', () => {
-  assert.match(mainSource, /我的作文入口/);
-  assert.match(mainSource, /href=\{`\/student\/workspace\/\$\{student\.id\}`\}/);
-  assert.match(mainSource, /进入拍照、提交、查看结果/);
+test('student legacy entrypoints now redirect into the mobile student home', () => {
+  assert.match(mainSource, /homeByRole = \{ student: '\/student-mobile\/home'/);
+  assert.match(mainSource, /function StudentHome\(\) \{/);
+  assert.match(mainSource, /return <Navigate to="\/student-mobile\/home" replace \/>;/);
+  assert.match(mainSource, /function StudentWorkspacePage\(\) \{/);
+  assert.match(mainSource, /<Route path="\/student" element=\{<RoleRoute roles=\{\['student'\]\}><StudentLegacyRedirect to="\/student-mobile\/home" \/><\/RoleRoute>\} \/>/);
+  assert.match(mainSource, /<Route path="\/student\/workspace\/:studentId" element=\{<RoleRoute roles=\{\['student'\]\}><StudentLegacyRedirect to="\/student-mobile\/home" \/><\/RoleRoute>\} \/>/);
 });
 
-test('student personal workspace is scoped to the logged-in student and includes password plus essay actions', () => {
-  assert.match(mainSource, /function StudentWorkspacePage/);
-  assert.match(mainSource, /String\(session\?\.studentId\) !== String\(studentId\)/);
-  assert.match(mainSource, /只能进入自己的独立界面/);
-  assert.match(mainSource, /<PasswordCard \/>/);
-  assert.match(mainSource, /我的作文与结果/);
-  assert.match(mainSource, /拍照上传/);
-  assert.match(mainSource, /文字提交/);
-  assert.match(mainSource, /查看结果/);
+test('student mobile home becomes the canonical student entry with class, task and report links', () => {
+  const mobileHome = functionBody('StudentMobileHomePage');
+  assert.match(mobileHome, /我的任务/);
+  assert.match(mobileHome, /提交作文/);
+  assert.match(mobileHome, /批改进度/);
+  assert.match(mobileHome, /我的报告/);
+  assert.match(mobileHome, /升格与修改/);
+  assert.match(mobileHome, /成长档案/);
+  assert.match(mobileHome, /加入班级/);
+  assert.doesNotMatch(mobileHome, /自由作文 AI 批改/);
 });
 
 test('teacher class homework summarizes each assignment and keeps review export actions', () => {
@@ -110,24 +114,21 @@ test('teacher review results mode lets teacher click into each student AI review
   assert.match(teacherReviewCenter, /点击查看/);
 });
 
-test('student workspace exposes assignment upload review and upgraded-essay copy path', () => {
-  const workspace = functionBody('StudentWorkspacePage');
-  assert.match(workspace, /作文任务/);
-  assert.match(workspace, /href=\{`\/upload\?assignmentId=\$\{a\.id\}`\}/);
-  assert.match(workspace, /查看我的批改 \/ 复制升格文章|查看批改进度/);
-  assert.match(workspace, /复制升格文章/);
-  assert.match(mainSource, /FullEssayUpgradePanel/);
-  assert.match(mainSource, /复制升格文章/);
-});
-
-test('student submit page keeps the selected assignment when switching to photo upload', () => {
+test('student submit page uses the mobile upload route and keeps the full submission flow', () => {
   const submitPage = functionBody('SubmitPage');
-  assert.match(submitPage, /href=\{`\/upload\?assignmentId=\$\{assignmentId\}`\}/);
+  assert.match(submitPage, /buildStudentMobileUploadUrl\(assignmentId\)/);
   assert.match(submitPage, /请输入或粘贴\/黏贴作文正文/);
   assert.match(submitPage, /当前提交状态/);
   assert.match(submitPage, /OCR 后人工确认/);
+  assert.doesNotMatch(submitPage, /\/upload\?assignmentId=/);
   assert.doesNotMatch(submitPage, /保存草稿|上传文件并批改/);
   assert.match(submitPage, /正式提交并批改/);
+});
+
+test('student legacy essay result route redirects to the mobile report page', () => {
+  assert.match(mainSource, /<Route path="\/student\/essays\/:essayId\/report" element=\{<RoleRoute roles=\{\['student'\]\}><StudentLegacyEssayReportRedirect \/><\/RoleRoute>\} \/>/);
+  assert.match(mainSource, /function StudentLegacyEssayReportRedirect\(\)/);
+  assert.match(mainSource, /Navigate to=\{`\/student-mobile\/reports\/\$\{encodeURIComponent\(essayId\)\}\$\{location\.search \|\| ''\}`\} replace/);
 });
 
 test('teacher assignment management keeps task reminders and removes paused Feishu publish widgets', () => {
@@ -204,7 +205,7 @@ test('student mobile task pages show loading failures instead of fake zero state
   assert.match(tasks, /开始写作|提交作文/);
 });
 
-test('student mobile home exposes six core entries plus legacy direct grading entry', () => {
+test('student mobile home exposes the canonical six core entries plus class entry', () => {
   const studentMobileHome = functionBody('StudentMobileHomePage');
   assert.match(studentMobileHome, /我的任务/);
   assert.match(studentMobileHome, /提交作文/);
@@ -212,7 +213,8 @@ test('student mobile home exposes six core entries plus legacy direct grading en
   assert.match(studentMobileHome, /我的报告/);
   assert.match(studentMobileHome, /升格与修改/);
   assert.match(studentMobileHome, /成长档案/);
-  assert.match(studentMobileHome, /自由作文 AI 批改/);
+  assert.match(studentMobileHome, /加入班级/);
+  assert.doesNotMatch(studentMobileHome, /自由作文 AI 批改/);
   assert.match(mainSource, /mobile-quick-links/);
 });
 
@@ -238,7 +240,7 @@ test('student photo upload sends images directly for AI recognition and review',
   assert.match(uploadPage, /FormData/);
   assert.match(uploadPage, /fd\.append\('assignment_id', assignmentId\)/);
   assert.match(uploadPage, /fd\.append\('images', file\)/);
-  assert.match(uploadPage, /nav\(`\/student\/essays\/\$\{data\.essayId\}\/report`\)/);
+  assert.match(uploadPage, /nav\(buildStudentMobileReportUrl\(data\.essayId\)\)/);
   assert.match(uploadPage, /capture="environment"/);
   assert.match(uploadPage, /accept="image\/\*,\.heic"/);
   assert.match(uploadPage, /确认文字/);
@@ -289,46 +291,12 @@ test('student profile shows score changes with chart and summary metrics', () =>
   assert.match(studentProfile, /成绩趋势图/);
 });
 
-test('student workspace essay result records render as one-line rows', () => {
-  const workspace = functionBody('StudentWorkspacePage');
-  assert.match(workspace, /className="item essay-result-line"/);
-  assert.match(workspace, /className="essay-result-title"/);
-  assert.match(workspace, /className="essay-result-meta"/);
-  assert.doesNotMatch(workspace, /<Card title="我的作文与结果"[\s\S]*?<p>\{essay\.assignment_title\}/);
-});
-
-test('student workspace merges duplicate essay results and repeated assignment title text', () => {
-  const workspace = functionBody('StudentWorkspacePage');
-  assert.match(workspace, /uniqueEssays/);
-  assert.match(workspace, /new Map\(\)/);
-  assert.match(workspace, /essay\.assignment_id \|\| essay\.assignment_title \|\| essay\.title/);
-  assert.match(workspace, /uniqueEssays\.map/);
-  assert.match(workspace, /assignmentLabel !== displayTitle/);
-  assert.doesNotMatch(workspace, /essays\.map\(\(essay\) => <article className="item essay-result-line"/);
-});
-
-test('student home merges duplicate essay result records into one unit', () => {
-  const studentHome = functionBody('StudentHome');
-  assert.match(studentHome, /uniqueEssays/);
-  assert.match(studentHome, /uniqueEssays\.map/);
-  assert.match(studentHome, /assignmentLabel !== displayTitle/);
-  assert.doesNotMatch(studentHome, /essays\.map\(\(essay\) => <article className="item"/);
-});
-
-test('student workspace assignment items expand to show teacher prompt and assignment time', () => {
-  const workspace = functionBody('StudentWorkspacePage');
-  assert.match(workspace, /activeAssignmentId/);
-  assert.match(workspace, /onClick=\{\(\) => setActiveAssignmentId/);
-  assert.match(workspace, /教师布置/);
-  assert.match(workspace, /布置时间/);
-  assert.match(workspace, /formatDateTime\(a\.created_at\)/);
-  assert.match(workspace, /a\.prompt/);
-});
-
-test('student home no longer renders the writing resource library module', () => {
-  const studentHome = functionBody('StudentHome');
-  assert.doesNotMatch(studentHome, /WritingResourceLibrary/);
-  assert.doesNotMatch(studentHome, /写作训练库/);
+test('student mobile reports page replaces the old student workspace result list', () => {
+  const mobileReports = functionBody('StudentMobileReportsPage');
+  assert.match(mobileReports, /我的报告/);
+  assert.match(mobileReports, /查看报告/);
+  assert.match(mobileReports, /去任务列表/);
+  assert.doesNotMatch(mobileReports, /自由作文 AI 批改/);
 });
 
 test('teacher home keeps only the canonical high-frequency entry cards', () => {
@@ -361,6 +329,7 @@ test('teacher and student class flows no longer expose invitation code entry or 
   const classManagement = functionBody('ClassManagement');
   const classRosterPanel = functionBody('ClassRosterPanel');
 
+  assert.match(studentHome, /Navigate to="\/student-mobile\/home"/);
   assert.doesNotMatch(studentHome, /invite|邀请码|\/classes\/join/);
   assert.match(classManagement, /TeacherLegacyRedirect/);
   assert.match(classManagement, /\/teacher\/classes/);
@@ -371,11 +340,11 @@ test('teacher and student class flows no longer expose invitation code entry or 
 });
 
 test('student home shows a dedicated student marker banner above the workspace cards', () => {
-  const studentHome = functionBody('StudentHome');
-  assert.match(studentHome, /student-banner/);
-  assert.match(studentHome, /Users/);
-  assert.match(studentHome, /学生端/);
-  assert.match(studentHome, /作文提交、批改结果与个人成长/);
+  const mobileHome = functionBody('StudentMobileHomePage');
+  assert.match(mobileHome, /手机学生端/);
+  assert.match(mobileHome, /我的班级/);
+  assert.match(mobileHome, /我的任务/);
+  assert.match(mobileHome, /还没有班级，请先通过邀请码加入。/);
 });
 
 test('polished comparison renders inline original added and deleted edits without separate rewrite paragraphs', () => {
@@ -457,8 +426,8 @@ test('practice consolidation no longer renders numbered practice tabs', () => {
 });
 
 test('student home no longer renders high school marking simulation', () => {
-  const studentHome = functionBody('StudentHome');
-  assert.doesNotMatch(studentHome, /高考阅卷模拟/);
+  const mobileHome = functionBody('StudentMobileHomePage');
+  assert.doesNotMatch(mobileHome, /高考阅卷模拟/);
   assert.doesNotMatch(mainSource, /MockMarkingSystem/);
   assert.doesNotMatch(mainSource, /\/ai\/mock-mark\//);
 });
@@ -603,26 +572,22 @@ test('teacher test center exposes reset and legacy cleanup dry-run actions', () 
   assert.match(testCenter, /查看测试任务/);
 });
 
-test('student roster displays a deduplicated list while preserving workspace links', () => {
+test('student legacy roster and workspace now redirect to the mobile home', () => {
   const studentHome = functionBody('StudentHome');
   const workspace = functionBody('StudentWorkspacePage');
-  assert.match(studentHome, /uniqueStudents/);
-  assert.match(studentHome, /uniqueStudents\.map/);
-  assert.match(studentHome, /href=\{`\/student\/workspace\/\$\{student\.id\}`\}/);
-  assert.match(workspace, /uniqueStudents/);
-  assert.match(workspace, /uniqueStudents\.find\(\(student\) => student\.is_current_user\)/);
+  assert.match(studentHome, /Navigate to="\/student-mobile\/home"/);
+  assert.match(workspace, /Navigate to="\/student-mobile\/home"/);
+  assert.doesNotMatch(studentHome, /uniqueStudents|我的作文入口|学生名单/);
+  assert.doesNotMatch(workspace, /uniqueStudents|activeAssignmentId|作文任务/);
 });
 
-test('student home and workspace prefer named classes and safely label blank ones', () => {
+test('student legacy workspace no longer renders named class cards or local task panels', () => {
   const studentHome = functionBody('StudentHome');
   const workspace = functionBody('StudentWorkspacePage');
-  assert.match(mainSource, /function pickDefaultClassId/);
-  assert.match(mainSource, /function getClassDisplayName/);
-  assert.match(mainSource, /未命名班级/);
-  assert.match(studentHome, /pickDefaultClassId\(rows\)/);
-  assert.match(workspace, /pickDefaultClassId\(rows\)/);
-  assert.match(studentHome, /getClassDisplayName\(selectedClass\)/);
-  assert.match(workspace, /getClassDisplayName\(selectedClass\)/);
+  assert.doesNotMatch(studentHome, /pickDefaultClassId\(rows\)/);
+  assert.doesNotMatch(workspace, /pickDefaultClassId\(rows\)/);
+  assert.doesNotMatch(studentHome, /getClassDisplayName\(selectedClass\)/);
+  assert.doesNotMatch(workspace, /getClassDisplayName\(selectedClass\)/);
 });
 
 test('frontend exposes separated teacher, student and administrator entrances', () => {
@@ -630,8 +595,9 @@ test('frontend exposes separated teacher, student and administrator entrances', 
   assert.match(mainSource, /path="\/teacher"/);
   assert.match(mainSource, /path="\/teacher\/students"/);
   assert.match(mainSource, /path="\/teacher\/test-center" element={<RoleRoute roles=\{\['admin'\]\}><TeacherTestCenterPage \/>/);
-  assert.match(mainSource, /path="\/student"/);
-  assert.match(mainSource, /path="\/submit\/:assignmentId"/);
+  assert.match(mainSource, /path="\/student-mobile\/home"/);
+  assert.match(mainSource, /path="\/student" element=\{<RoleRoute roles=\{\['student'\]\}><StudentLegacyRedirect to="\/student-mobile\/home" \/><\/RoleRoute>\} \/>/);
+  assert.match(mainSource, /path="\/submit\/:assignmentId" element=\{<RoleRoute roles=\{\['student'\]\}><StudentLegacySubmitRedirect \/><\/RoleRoute>\} \/>/);
   assert.match(mainSource, /path="\/admin"/);
   assert.match(mainSource, /roles=\{\['admin'\]\}/);
   assert.match(adminHome, /系统配置/);
@@ -644,6 +610,7 @@ test('student mobile entry exposes login join home task detail and profile route
   const mobileLogin = functionBody('StudentMobileLoginPage');
   const mobileHome = functionBody('StudentMobileHomePage');
   const mobileTasks = functionBody('StudentMobileTasksPage');
+  const mobileReports = functionBody('StudentMobileReportsPage');
   assert.match(mainSource, /path="\/student-mobile"/);
   assert.match(mainSource, /path="\/student-mobile\/login"/);
   assert.match(mainSource, /path="\/student-mobile\/join"/);
@@ -651,14 +618,19 @@ test('student mobile entry exposes login join home task detail and profile route
   assert.match(mainSource, /path="\/student-mobile\/home"/);
   assert.match(mainSource, /path="\/student-mobile\/tasks"/);
   assert.match(mainSource, /path="\/student-mobile\/tasks\/:assignmentId"/);
+  assert.match(mainSource, /path="\/student-mobile\/tasks\/:assignmentId\/submit"/);
+  assert.match(mainSource, /path="\/student-mobile\/tasks\/:assignmentId\/upload"/);
+  assert.match(mainSource, /path="\/student-mobile\/reports"/);
+  assert.match(mainSource, /path="\/student-mobile\/reports\/:essayId"/);
   assert.match(mainSource, /path="\/student-mobile\/profile"/);
   assert.match(mobileLogin, /学号/);
   assert.match(mobileLogin, /修改密码/);
   assert.match(mobileLogin, /登录/);
-  assert.match(mobileHome, /自由作文 AI 批改/);
   assert.match(mobileHome, /我的任务/);
   assert.match(mobileHome, /加入班级/);
   assert.match(mobileTasks, /任务详情/);
   assert.match(mobileTasks, /提交作文/);
   assert.match(mobileTasks, /拍照上传/);
+  assert.match(mobileReports, /我的报告/);
+  assert.match(mobileReports, /查看报告/);
 });
