@@ -2585,11 +2585,17 @@ function TeacherClassDetailPage() {
         const allAssignments = await api(buildTeacherAssignmentsUrl(targetClassId, targetScope === 'system_test' ? 'system_test' : ''));
         assignments = Array.isArray(allAssignments) ? allAssignments : allAssignments?.items || allAssignments?.rows || [];
       } catch {}
+      let liveEssays = [];
+      try {
+        const targetClassId = klass?.id || klass?.classId || classKey;
+        const essayRows = await api(`/essays?classId=${encodeURIComponent(targetClassId)}`);
+        liveEssays = Array.isArray(essayRows) ? essayRows : essayRows?.items || essayRows?.rows || [];
+      } catch {}
       setData({
         klass,
         stats,
         students: students.items || [],
-        essays: essays.items || [],
+        essays: liveEssays.length ? liveEssays : (essays.items || essays.rows || []),
         assignments
       });
     }).catch((err) => setMessage(err.message));
@@ -2612,17 +2618,23 @@ function TeacherClassDetailPage() {
         const allAssignments = await api(buildTeacherAssignmentsUrl(targetClassId, targetScope === 'system_test' ? 'system_test' : ''));
         assignments = Array.isArray(allAssignments) ? allAssignments : allAssignments?.items || allAssignments?.rows || [];
       } catch {}
+      let liveEssays = [];
+      try {
+        const targetClassId = klass?.id || klass?.classId || classKey;
+        const essayRows = await api(`/essays?classId=${encodeURIComponent(targetClassId)}`);
+        liveEssays = Array.isArray(essayRows) ? essayRows : essayRows?.items || essayRows?.rows || [];
+      } catch {}
       setData({
         klass,
         stats,
         students: students.items || [],
-        essays: essays.items || [],
+        essays: liveEssays.length ? liveEssays : (essays.items || essays.rows || []),
         assignments
       });
     }).catch((err) => setMessage(err.message))} />
     <h3>学生</h3><div className="management-table">{data.students.map((student) => <a className="management-row" href={`/student-profiles/${encodeURIComponent(student.studentKey)}`} key={student.studentKey}><b>{student.studentName}<span>{student.studentId}</span></b><span>{student.essayCount}篇</span><span>{student.averageScore ?? '--'}分</span><span>{student.scoreTrend || '样本不足'}</span><span>{student.weakestAbility || '--'}</span></a>)}</div>
     <h3>任务</h3><div className="management-table">{data.assignments.length ? data.assignments.map((assignment) => <article className="management-row" key={assignment.id}><b>{assignment.title}<span>{assignment.public_id || assignment.id}</span></b><span>{assignment.status}</span><span>{formatDateTime(assignment.created_at)}</span><span>{assignment.submitted_count || 0} 已交</span><span>{assignment.missing_count || 0} 未交</span><span className="record-actions"><a href={buildTeacherAssignmentDetailUrl(assignment.id)}>查看详情</a></span></article>) : <p className="hint">当前班级暂无已发布任务。</p>}</div>
-    <h3>作文</h3><div className="management-table">{data.essays.slice(0, 10).map((essay) => <article className="management-row" key={essay.archiveId}><b>{essay.essayTitle}<span>{essay.studentName}</span></b><span>{essay.score ?? '--'}分</span><span>{essay.level || '--'}</span><code>{essay.nasPath}</code></article>)}</div></>}
+    <h3>作文</h3><div className="management-table">{data.essays.slice(0, 10).map((essay) => <article className="management-row" key={essay.id}><b>{essay.title || essay.assignment_title || '未命名作文'}<span>{essay.student_name || '未知学生'}</span></b><span>{essay.total_score ?? '--'}分</span><span>{essay.level || essay.grading_status || '待批改'}</span><span>{essay.class_name || '未知班级'}</span><span>{formatDateTime(essay.created_at)}</span><span className="record-actions"><a href={`/teacher/essays/${encodeURIComponent(essay.id)}`}>查看AI批阅</a></span></article>)}</div></>}
   </TeacherManagementShell>;
 }
 
@@ -3045,7 +3057,223 @@ function TeacherGradingPage() {
 }
 
 function TeacherSubmissionsPage() {
-  return <TeacherEssaysPage title="学生提交" />;
+  const location = useLocation();
+  const queryParams = new URLSearchParams(location.search);
+  const initialClassId = queryParams.get('classId') || 'all';
+  const initialAssignmentId = queryParams.get('assignmentId') || 'all';
+  const initialStatus = queryParams.get('status') || 'all';
+  const initialGradingStatus = queryParams.get('gradingStatus') || 'all';
+  const initialKeyword = queryParams.get('keyword') || '';
+  const nav = useNavigate();
+  const [classes, setClasses] = useState([]);
+  const [assignments, setAssignments] = useState([]);
+  const [essays, setEssays] = useState([]);
+  const [assignmentStatus, setAssignmentStatus] = useState(null);
+  const [filters, setFilters] = useState({
+    classId: initialClassId,
+    assignmentId: initialAssignmentId,
+    status: initialStatus,
+    gradingStatus: initialGradingStatus,
+    keyword: initialKeyword
+  });
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const activeClassId = filters.classId && filters.classId !== 'all' ? filters.classId : '';
+  const activeAssignmentId = filters.assignmentId && filters.assignmentId !== 'all' ? filters.assignmentId : '';
+
+  async function load() {
+    setLoading(true);
+    setMessage('');
+    try {
+      const [classRows, assignmentRows] = await Promise.all([
+        api('/classes'),
+        api(buildTeacherAssignmentsUrl(activeClassId))
+      ]);
+      const nextClasses = Array.isArray(classRows) ? classRows : classRows?.items || classRows?.rows || [];
+      const nextAssignments = Array.isArray(assignmentRows) ? assignmentRows : assignmentRows?.items || assignmentRows?.rows || [];
+      setClasses(nextClasses);
+      setAssignments(nextAssignments);
+
+      const essayQuery = new URLSearchParams();
+      if (activeClassId) essayQuery.set('classId', activeClassId);
+      if (activeAssignmentId) essayQuery.set('assignmentId', activeAssignmentId);
+      if (filters.status && filters.status !== 'all') essayQuery.set('status', filters.status);
+      if (filters.gradingStatus && filters.gradingStatus !== 'all') essayQuery.set('gradingStatus', filters.gradingStatus);
+      if (filters.keyword.trim()) essayQuery.set('keyword', filters.keyword.trim());
+      const essayRows = await api(`/essays${essayQuery.toString() ? `?${essayQuery.toString()}` : ''}`);
+      const nextEssays = Array.isArray(essayRows) ? essayRows : essayRows?.items || essayRows?.rows || [];
+      setEssays(nextEssays);
+
+      if (activeAssignmentId) {
+        const statusRows = await api(`/assignments/${encodeURIComponent(activeAssignmentId)}/status`);
+        setAssignmentStatus(statusRows);
+      } else {
+        setAssignmentStatus(null);
+      }
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load().catch((err) => setMessage(err.message));
+  }, [activeClassId, activeAssignmentId, filters.status, filters.gradingStatus, filters.keyword]);
+
+  const classMap = useMemo(() => new Map(classes.map((klass) => [String(klass.id), klass])), [classes]);
+  const assignmentMap = useMemo(() => new Map(assignments.map((assignment) => [String(assignment.id), assignment])), [assignments]);
+  const selectedAssignment = activeAssignmentId ? assignmentMap.get(String(activeAssignmentId)) : null;
+
+  const filteredEssays = essays.filter((essay) => {
+    const essayClassId = String(essay.class_id || essay.classId || essay.assignment_class_id || '');
+    const essayAssignmentId = String(essay.assignment_id || essay.assignmentId || '');
+    const essayStatus = String(essay.status || '').toLowerCase();
+    const gradingStatus = String(essay.grading_status || essay.review_status || '').toLowerCase();
+    const keyword = filters.keyword.trim();
+    const matchesClass = !activeClassId || essayClassId === String(activeClassId);
+    const matchesAssignment = !activeAssignmentId || essayAssignmentId === String(activeAssignmentId);
+    const matchesStatus = filters.status === 'all' || !filters.status || (
+      filters.status === 'completed'
+        ? (gradingStatus === 'graded' || essay.total_score != null || essayStatus === 'report_published')
+        : filters.status === 'grading'
+          ? gradingStatus === 'grading'
+          : filters.status === 'failed'
+            ? gradingStatus === 'failed' || essayStatus === 'failed'
+            : filters.status === 'submitted'
+              ? essayStatus === 'submitted' || essayStatus === 'late_submitted'
+              : essayStatus === filters.status || gradingStatus === filters.status
+    );
+    const matchesGradingStatus = filters.gradingStatus === 'all' || !filters.gradingStatus || gradingStatus === filters.gradingStatus;
+    const matchesKeyword = !keyword || `${essay.student_name || ''}${essay.assignment_title || ''}${essay.title || ''}${essay.class_name || ''}`.includes(keyword);
+    return matchesClass && matchesAssignment && matchesStatus && matchesGradingStatus && matchesKeyword;
+  });
+
+  const summary = useMemo(() => {
+    const totalMissing = assignments.reduce((sum, assignment) => sum + Number(assignment.missing_count || 0), 0);
+    return {
+      missing: totalMissing,
+      submitted: essays.length,
+      grading: essays.filter((essay) => String(essay.grading_status || '') === 'grading').length,
+      completed: essays.filter((essay) => essay.total_score != null || String(essay.grading_status || '') === 'graded' || String(essay.status || '') === 'report_published').length,
+      failed: essays.filter((essay) => String(essay.grading_status || '') === 'failed' || String(essay.status || '') === 'failed').length
+    };
+  }, [assignments, essays]);
+
+  async function refresh() {
+    await load();
+    window.dispatchEvent(new Event('assignments-changed'));
+  }
+
+  function updateFilters(patch) {
+    setFilters((current) => ({ ...current, ...patch }));
+  }
+
+  async function openAssignmentStatus(assignmentId) {
+    setFilters((current) => ({ ...current, assignmentId: String(assignmentId), classId: current.classId || 'all' }));
+  }
+
+  async function openEssay(essayId) {
+    nav(`/teacher/essays/${encodeURIComponent(essayId)}`);
+  }
+
+  const missingList = assignmentStatus?.missing || [];
+  return <TeacherManagementShell title="学生作文" icon={<FileText size={20} />}>
+    <div className="teacher-submissions-center">
+      <p className="hint">这里展示教师自己班级的真实作文提交、AI 批阅结果与待提交名单。点击任务可直达对应批阅结果。</p>
+      {message && <p className="error">{message}</p>}
+      <div className="teacher-kpis">
+        <span><b>{summary.missing}</b>待提交</span>
+        <span><b>{summary.submitted}</b>已提交</span>
+        <span><b>{summary.grading}</b>AI批改中</span>
+        <span><b>{summary.completed}</b>已完成</span>
+        <span><b>{summary.failed}</b>批改失败</span>
+      </div>
+      <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); refresh().catch((err) => setMessage(err.message)); }}>
+        <select value={filters.classId} onChange={(e) => updateFilters({ classId: e.target.value, assignmentId: 'all' })}>
+          <option value="all">全部班级</option>
+          {classes.map((klass) => <option key={klass.id} value={klass.id}>{klass.name}</option>)}
+        </select>
+        <select value={filters.assignmentId} onChange={(e) => updateFilters({ assignmentId: e.target.value })}>
+          <option value="all">全部任务</option>
+          {assignments.map((assignment) => <option key={assignment.id} value={assignment.id}>{assignment.title} · {assignment.class_name || classMap.get(String(assignment.class_id))?.name || '班级'}</option>)}
+        </select>
+        <select value={filters.status} onChange={(e) => updateFilters({ status: e.target.value })}>
+          <option value="all">全部提交</option>
+          <option value="submitted">已提交</option>
+          <option value="grading">AI批改中</option>
+          <option value="completed">已完成</option>
+          <option value="failed">批改失败</option>
+        </select>
+        <select value={filters.gradingStatus} onChange={(e) => updateFilters({ gradingStatus: e.target.value })}>
+          <option value="all">全部批阅状态</option>
+          <option value="grading">grading</option>
+          <option value="graded">graded</option>
+          <option value="failed">failed</option>
+        </select>
+        <label><Search size={18} /><input value={filters.keyword} onChange={(e) => updateFilters({ keyword: e.target.value })} placeholder="搜索学生、任务、班级" /></label>
+        <button type="submit" disabled={loading}>{loading ? '刷新中...' : '刷新'}</button>
+      </form>
+      <div className="grid">
+        <Card title="最近发布任务" icon={<BookOpen size={20} />}>
+          <div className="management-table">
+            {assignments.slice(0, 6).map((assignment) => <article className="management-row" key={assignment.id}>
+              <b>{assignment.title}<span>{assignment.class_name || classMap.get(String(assignment.class_id))?.name || '未知班级'}</span></b>
+              <span>{assignment.status || 'published'}</span>
+              <span>{formatDateTime(assignment.published_at || assignment.created_at)}</span>
+              <span>{assignment.submitted_count || 0} 已交</span>
+              <span>{assignment.missing_count || 0} 待交</span>
+              <span className="record-actions">
+                <a href={buildTeacherAssignmentDetailUrl(assignment.id)}>查看任务</a>
+                <button type="button" onClick={() => openAssignmentStatus(assignment.id)}>看提交</button>
+              </span>
+            </article>)}
+            {!assignments.length && <p className="hint">暂无发布任务。</p>}
+          </div>
+        </Card>
+        <Card title="最近批阅结果" icon={<FileText size={20} />}>
+          <div className="management-table">
+            {filteredEssays.slice(0, 8).map((essay) => <article className="management-row" key={essay.id}>
+              <b>{essay.student_name || '未知学生'}<span>{essay.assignment_title || essay.title || '未命名作文'}</span></b>
+              <span>{essay.class_name || classMap.get(String(essay.class_id || ''))?.name || '未知班级'}</span>
+              <span>{formatDateTime(essay.submitted_at || essay.created_at)}</span>
+              <span>{essay.word_count || 0} 字</span>
+              <span>{essay.total_score ?? '--'} 分</span>
+              <span>{essay.grading_status || essay.status || 'submitted'}</span>
+              <span className="record-actions">
+                <button type="button" onClick={() => openEssay(essay.id)}>查看报告</button>
+                <a href={buildTeacherAssignmentDetailUrl(essay.assignment_id)}>查看任务</a>
+              </span>
+            </article>)}
+            {!filteredEssays.length && <p className="hint">当前筛选条件下暂无作文提交。</p>}
+          </div>
+        </Card>
+      </div>
+      <div className="grid" style={{ marginTop: 16 }}>
+        <Card title="待提交名单" icon={<UserPlus size={20} />}>
+          {selectedAssignment ? <>
+            <p className="hint">{selectedAssignment.title} · {selectedAssignment.class_name || classMap.get(String(selectedAssignment.class_id))?.name || '班级'} · 待提交 {assignmentStatus?.assignment?.missing_count ?? selectedAssignment.missing_count ?? 0} 人</p>
+            <div className="management-table">
+              {missingList.length ? missingList.map((student) => <article className="management-row" key={student.student_id}>
+                <b>{student.student_name}<span>{student.student_no || '未填学号'}</span></b>
+                <span className="error-text">待提交</span>
+              </article>) : <p className="hint">当前任务暂无待提交名单。</p>}
+            </div>
+          </> : <p className="hint">请先选择一个任务查看待提交名单。</p>}
+        </Card>
+        <Card title="状态分布" icon={<ChartNoAxesCombined size={20} />}>
+          <div className="teacher-kpis">
+            <span><b>{summary.submitted}</b>已提交</span>
+            <span><b>{summary.grading}</b>批改中</span>
+            <span><b>{summary.completed}</b>已完成</span>
+            <span><b>{summary.failed}</b>失败</span>
+          </div>
+          <p className="hint">教师只读取自己负责班级的真实作文和 AI 结果，不再读取旧归档存储。</p>
+        </Card>
+      </div>
+    </div>
+  </TeacherManagementShell>;
 }
 
 function TeacherGrowthPage() {
@@ -3789,7 +4017,7 @@ function AssignmentManagement() {
         <div className="roster-actions">
           <button type="button" onClick={() => window.open(buildTeacherAssignmentDetailUrl(assignment.id), '_self')}>查看详情</button>
           <button type="button" onClick={() => showStatus(assignment)}>查看提交状态</button>
-          <button type="button" onClick={() => window.open('/teacher/submissions', '_self')}>查看报告</button>
+          <button type="button" onClick={() => window.open(`/teacher/submissions?classId=${encodeURIComponent(assignment.class_id)}&assignmentId=${encodeURIComponent(assignment.id)}`, '_self')}>查看报告</button>
           <button type="button" className="danger-button" onClick={() => deleteAssignment(assignment)}>删除任务</button>
         </div>
         <div className="actions">
@@ -3882,7 +4110,7 @@ function TeacherAssignmentDetailPage() {
             <span>未提交</span>
           </article>) : <p className="hint">暂无未提交名单。</p>}
         </div>
-        <div className="actions"><button type="button" onClick={() => nav('/teacher/submissions')}>打开学生提交中心</button></div>
+        <div className="actions"><button type="button" onClick={() => nav(`/teacher/submissions?classId=${encodeURIComponent(assignment.class_id)}&assignmentId=${encodeURIComponent(assignment.id)}`)}>打开学生提交中心</button></div>
       </Card>
     </div>
   </TeacherManagementShell>;

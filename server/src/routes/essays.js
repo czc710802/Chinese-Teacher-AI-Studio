@@ -162,16 +162,76 @@ async function createReviewedEssay({ assignment, studentId, title, essayText, im
 essayRouter.get('/', (req, res) => {
   const scope = resolveEssayListScope(db, req.user, req.query);
   if (scope.status !== 200) return res.status(scope.status).json({ message: scope.message });
+  const filters = [];
+  const params = [];
+  if (scope.studentId) {
+    filters.push('e.student_id = ?');
+    params.push(scope.studentId);
+  }
+  if (scope.classId) {
+    filters.push('a.class_id = ?');
+    params.push(scope.classId);
+  }
+  if (scope.teacherId) {
+    filters.push('c.teacher_id = ?');
+    params.push(scope.teacherId);
+  }
+  const assignmentId = Number(req.query.assignmentId || 0);
+  if (Number.isFinite(assignmentId) && assignmentId > 0) {
+    filters.push('e.assignment_id = ?');
+    params.push(assignmentId);
+  }
+  const status = String(req.query.status || '').trim().toLowerCase();
+  if (status) {
+    if (status === 'completed') {
+      filters.push('(e.grading_status = ? OR ar.total_score IS NOT NULL OR e.status = ?)');
+      params.push('graded', 'report_published');
+    } else if (status === 'grading') {
+      filters.push('e.grading_status = ?');
+      params.push('grading');
+    } else if (status === 'failed') {
+      filters.push('(e.grading_status = ? OR e.status = ?)');
+      params.push('failed', 'failed');
+    } else if (status === 'submitted') {
+      filters.push('(e.status = ? OR e.status = ?)');
+      params.push('submitted', 'late_submitted');
+    } else {
+      filters.push('(e.status = ? OR e.grading_status = ?)');
+      params.push(status, status);
+    }
+  }
+  const gradingStatus = String(req.query.gradingStatus || '').trim().toLowerCase();
+  if (gradingStatus) {
+    filters.push('LOWER(COALESCE(e.grading_status, \'\')) = ?');
+    params.push(gradingStatus);
+  }
+  const keyword = String(req.query.keyword || '').trim();
+  if (keyword) {
+    filters.push('(e.title LIKE ? OR a.title LIKE ? OR u.name LIKE ? OR c.name LIKE ? OR s.student_no LIKE ?)');
+    const like = `%${keyword}%`;
+    params.push(like, like, like, like, like);
+  }
+  const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   const rows = db.prepare(`
-    SELECT e.*, a.title AS assignment_title, u.name AS student_name, ar.total_score, ar.level
+    SELECT
+      e.*,
+      a.title AS assignment_title,
+      a.class_id AS class_id,
+      c.name AS class_name,
+      c.grade AS class_grade,
+      u.name AS student_name,
+      s.student_no,
+      ar.total_score,
+      ar.level
     FROM essays e
     JOIN assignments a ON a.id = e.assignment_id
+    JOIN classes c ON c.id = a.class_id
     JOIN students s ON s.id = e.student_id
     JOIN users u ON u.id = s.user_id
     LEFT JOIN ai_reviews ar ON ar.essay_id = e.id
-    WHERE (? IS NULL OR e.student_id = ?) AND (? IS NULL OR a.class_id = ?)
-    ORDER BY e.created_at DESC
-  `).all(scope.studentId || null, scope.studentId || null, scope.classId || null, scope.classId || null);
+    ${whereClause}
+    ORDER BY e.created_at DESC, e.id DESC
+  `).all(...params);
   res.json(rows);
 });
 

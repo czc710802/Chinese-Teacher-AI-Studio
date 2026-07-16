@@ -34,6 +34,21 @@ export function isStudentActiveInClass(database, studentId, classId) {
 
 export function resolveEssayListScope(database, user, query = {}) {
   if (user.role !== 'student') {
+    if (user.role === 'teacher') {
+      const teacher = database.prepare('SELECT id FROM teachers WHERE user_id = ?').get(user.id);
+      if (!teacher) return { status: 404, message: '教师档案不存在' };
+      const classId = query.classId || null;
+      if (classId) {
+        const ownsClass = database.prepare('SELECT 1 FROM classes WHERE id = ? AND teacher_id = ?').get(classId, teacher.id);
+        if (!ownsClass) return { status: 403, message: '没有查看该班级作文的权限' };
+      }
+      return {
+        status: 200,
+        teacherId: teacher.id,
+        studentId: null,
+        classId
+      };
+    }
     return {
       status: 200,
       studentId: query.studentId || null,

@@ -159,6 +159,26 @@ test('teacher essay workspace exposes version rail, report actions, scoring pane
   assert.doesNotMatch(teacherWorkspace, /Word：\{links\.docxUrl/);
 });
 
+test('teacher submissions page uses live essays and surfaces task and review filters', () => {
+  const submissionsPage = functionBody('TeacherSubmissionsPage');
+  assert.match(submissionsPage, /学生作文/);
+  assert.match(submissionsPage, /最近发布任务/);
+  assert.match(submissionsPage, /最近批阅结果/);
+  assert.match(submissionsPage, /待提交名单/);
+  assert.match(submissionsPage, /AI批改中/);
+  assert.match(submissionsPage, /批改失败/);
+  assert.match(submissionsPage, /const essayRows = await api\(`\/essays/);
+  assert.doesNotMatch(submissionsPage, /\/teacher\/essays\${/);
+});
+
+test('teacher class detail reads live essays for AI review visibility', () => {
+  const classDetail = functionBody('TeacherClassDetailPage');
+  assert.match(classDetail, /\/essays\?classId=/);
+  assert.match(classDetail, /查看AI批阅/);
+  assert.match(classDetail, /total_score/);
+  assert.match(classDetail, /grading_status/);
+});
+
 test('mobile student join flow and teacher class workbench expose code join, join requests and member operations', () => {
   assert.match(mainSource, /function StudentMobileJoinCodePage/);
   assert.match(mainSource, /\/student-mobile\/join\/code/);
