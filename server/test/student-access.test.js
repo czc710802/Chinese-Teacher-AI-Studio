@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { schemaSql } from '../src/db/schema.js';
 import { relaxInviteCodeConstraint } from '../src/db/init.js';
 import { deleteManagedEmptyClass, getClassRosterForUser, renameStudentForManagedClass } from '../src/services/class-access.js';
-import { canReadEssay, resolveEssayListScope, resolveEssaySubmitStudentId, resolveEssaySubmitTarget } from '../src/services/essay-access.js';
+import { canReadEssay, getEssayLengthBand, resolveEssayListScope, resolveEssaySubmitStudentId, resolveEssaySubmitTarget } from '../src/services/essay-access.js';
 
 function createFixtureDb() {
   const database = new DatabaseSync(':memory:');
@@ -240,6 +240,24 @@ test('student can submit a short essay and still enter grading flow when the ass
   assert.equal(result.assignment.id, assignmentId);
   assert.equal(result.wordCount > 0, true);
   assert.equal(result.submissionStatus, 'submitted');
+});
+
+test('student can submit essays longer than the old 1000-word ceiling and still enter grading flow', () => {
+  const fixture = createFixtureDb();
+  const assignmentId = fixture.database.prepare('SELECT id FROM assignments WHERE class_id = ? LIMIT 1').get(fixture.classId).id;
+  fixture.database.prepare('UPDATE assignments SET min_words = 800, max_words = 1000, allow_resubmit = 1 WHERE id = ?').run(assignmentId);
+  const longEssay = '这是长文段落。'.repeat(220);
+
+  const result = resolveEssaySubmitTarget(fixture.database, fixture.studentUser, {
+    assignment_id: assignmentId,
+    original_text: longEssay
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.assignment.id, assignmentId);
+  assert.ok(result.wordCount > 1000);
+  assert.equal(result.lengthBand, 'full');
+  assert.equal(getEssayLengthBand(longEssay), 'full');
 });
 
 test('student draft is saved and loaded per assignment without exposing other students', async () => {

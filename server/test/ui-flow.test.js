@@ -243,7 +243,7 @@ test('student photo upload sends images directly for AI recognition and review',
   assert.match(uploadPage, /nav\(buildStudentMobileReportUrl\(data\.essayId\)\)/);
   assert.match(uploadPage, /capture="environment"/);
   assert.match(uploadPage, /accept="image\/\*,\.heic"/);
-  assert.match(uploadPage, /确认文字/);
+  assert.match(uploadPage, /核对文字内容/);
   assert.doesNotMatch(uploadPage, /pendingEssayImages/);
   assert.doesNotMatch(mainSource, /function ConfirmPage|Route path="\/confirm"/);
 });

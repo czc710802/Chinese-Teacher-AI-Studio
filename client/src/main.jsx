@@ -747,7 +747,8 @@ function UploadPage() {
   }
   return <Layout><Card title="作文拍照上传" icon={<Camera size={20} />}>
     <input placeholder="作文标题（可选）" value={title} onChange={(e) => setTitle(e.target.value)} />
-    {needsConfirm && <p className="hint">OCR 识别后请在批改前确认文字。当前会先完成识别与批改；如识别不准，请返回文本提交页粘贴修正后的文字。</p>}
+    <p className="hint">上传作文后，系统将自动识别文字，请确认无误后提交 AI 批改。系统不设固定最高字数上限，长文会按篇幅分档处理。</p>
+    {needsConfirm && <p className="hint">OCR 识别后请核对文字内容；如识别不准，请返回文本提交页粘贴修正后的文字。篇幅较长也会继续批改，不会因为字数超出而失败。</p>}
     <div className="image-upload-options">
       <label className="upload-choice"><Camera size={18} />拍照上传<input type="file" accept="image/*,.heic" multiple capture="environment" onChange={chooseFiles} /></label>
       <label className="upload-choice"><FileText size={18} />选择图片<input type="file" accept="image/*,.heic" multiple onChange={chooseFiles} /></label>
@@ -785,11 +786,13 @@ function SubmitPage() {
     }
   }, [assignmentId]);
   const wordCount = text.replace(/\s+/g, '').length;
-  const lengthHint = wordCount >= 800
-    ? '当前作文已达到完整批改篇幅。'
-    : wordCount >= 300
-      ? '当前作文篇幅适中，AI 将进行片段评价与表达分析。'
-      : '当前作文篇幅较短，AI 将按照片段训练模式进行分析。';
+  const lengthHint = wordCount > 3000
+    ? '当前作文篇幅较长，AI 将按分段处理并综合批改。'
+    : wordCount >= 800
+      ? '当前作文篇幅充足，AI 将执行完整高中作文批改。'
+      : wordCount >= 300
+        ? '当前作文篇幅适中，AI 将进行片段评价与表达分析。'
+        : '当前作文篇幅较短，AI 将进行语言分析、结构建议和扩写指导。';
   async function submit() {
     if (!text.trim()) {
       setError('请先粘贴或输入作文正文');
@@ -813,7 +816,8 @@ function SubmitPage() {
       <p>{assignment.prompt}</p>
       {assignment.requirements && <p><b>写作要求：</b>{assignment.requirements}</p>}
       <p>当前约 {wordCount} 字</p>
-      <p className="hint">AI 会根据篇幅自动分档批改。</p>
+      <p className="hint">识别状态：✓ 文字识别完成</p>
+      <p className="hint">AI 会根据篇幅自动分档批改，篇幅较长也不会拒绝提交。</p>
       <p className="hint">{lengthHint}</p>
       <p>提交设置：{assignment.allow_resubmit ? '允许重新提交/二稿提交' : '正式提交后不可重复提交'} · {assignment.allow_late_submit ? '允许迟交并标记' : '截止后禁止提交'}</p>
     </div>}

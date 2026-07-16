@@ -10,6 +10,15 @@ export function countEssayWords(text = '') {
   return cjk + words;
 }
 
+export function getEssayLengthBand(text = '') {
+  const wordCount = countEssayWords(text);
+  if (wordCount <= 0) return 'empty';
+  if (wordCount < 300) return 'short';
+  if (wordCount < 800) return 'medium';
+  if (wordCount <= 3000) return 'full';
+  return 'long';
+}
+
 export function isStudentInClass(database, studentId, classId) {
   return !!database.prepare('SELECT 1 FROM class_students WHERE student_id = ? AND class_id = ?').get(studentId, classId);
 }
@@ -91,6 +100,7 @@ export function resolveEssaySubmitTarget(database, user, body = {}) {
   }
 
   const wordCount = countEssayWords(essayText);
+  const lengthBand = getEssayLengthBand(essayText);
 
   const existing = database.prepare(`
     SELECT MAX(submit_round) AS max_round, COUNT(*) AS count
@@ -105,6 +115,7 @@ export function resolveEssaySubmitTarget(database, user, body = {}) {
     ...resolved,
     essayText,
     wordCount,
+    lengthBand,
     nextSubmitRound: Number(existing.max_round || 0) + 1,
     submissionStatus: isPastDeadline ? 'late_submitted' : 'submitted'
   };

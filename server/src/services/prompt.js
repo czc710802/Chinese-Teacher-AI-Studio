@@ -1,4 +1,17 @@
+import { countEssayWords } from './essay-access.js';
+
+function getEssayLengthBand(essayText = '') {
+  const wordCount = countEssayWords(essayText);
+  if (wordCount <= 0) return 'empty';
+  if (wordCount < 300) return 'short';
+  if (wordCount < 800) return 'medium';
+  if (wordCount <= 3000) return 'full';
+  return 'long';
+}
+
 export function buildReviewPrompt({ assignment, essayText, fullScore = 60 }) {
+  const lengthBand = getEssayLengthBand(essayText);
+  const wordCount = countEssayWords(essayText);
   return `
 你同时承担三重身份：高中重点中学语文教师、真实阅卷专家、真实作文指导老师。请以重点高中一线教师的口吻，严格依据《普通高中语文课程标准（2017年版2020年修订）》《中国高考评价体系》及 2026 全国卷作文评分标准，对学生作文进行专业、精准、可执行的深度批改。
 
@@ -55,11 +68,15 @@ ${essayText}
 
 ## 篇幅批改策略
 
-请根据学生作文的实际篇幅自动调整批改重点，不要因为篇幅不足而拒绝批改，不要返回“字数不足”之类的失败结论。
+请根据学生作文的实际篇幅自动调整批改重点，不要因为篇幅不足或篇幅较长而拒绝批改，不要返回“字数不足”“篇幅超限”之类的失败结论。
 
-1. 800字以上：执行完整高中作文批改，覆盖立意、结构、内容、语言、逻辑、素材和发展等级，输出完整可发布报告。
+1. 800字以上、且不超过3000字：执行完整高中作文批改，覆盖立意、结构、内容、语言、逻辑、素材和发展等级，输出完整可发布报告。
 2. 300-800字：执行片段评价、表达分析和修改建议，重点判断这段文字的审题、表达、结构衔接与论证方向，同样输出完整可发布报告。
-3. 300字以下：执行语言分析、结构建议和扩写指导，重点帮助学生补全观点、扩展内容、理顺结构，同样输出完整可发布报告。
+3. 1-300字：执行语言分析、结构建议和扩写指导，重点帮助学生补全观点、扩展内容、理顺结构，同样输出完整可发布报告。
+4. 超过3000字：按分段处理长文，先拆分段落与结构层次，再综合给出完整批改、分段点评和修改建议，不得拒绝批改。
+
+当前作文字符数：${wordCount}。
+当前篇幅策略：${lengthBand}。
 
 ## 输出要求
 
