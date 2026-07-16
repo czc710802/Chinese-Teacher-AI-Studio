@@ -1651,36 +1651,39 @@ function TeacherLifecycleClassPage() {
   );
 
   const membersSection = (
-    <div className="management-table">
-      {members.map((member) => {
-        const targetClassId = transferTargets[member.id] || otherClasses[0]?.id || '';
-        return <article className="management-row" key={member.id}>
-          <b>{member.name}<span>{member.student_no || '未填学号'}</span></b>
-          <span>{member.username || '--'}</span>
-          <span>{member.binding_status || 'active'}</span>
-          <span className={Number(member.essay_count || 0) === 0 ? 'error-text' : ''}>{Number(member.essay_count || 0)} 篇{Number(member.essay_count || 0) === 0 ? ' · 未提交作文' : ''}</span>
-          <span>{member.latest_grading_status || '--'}</span>
-          <span>{formatDateTime(member.joined_at)}</span>
-          <span>{member.left_at ? `离开：${formatDateTime(member.left_at)}` : '当前有效'}</span>
-          <span className="record-actions">
-            <button type="button" onClick={() => changeMemberStatus(member.id, 'pause', { reason: '教师停用成员' })} disabled={busy === `pause-${member.id}` || member.binding_status !== 'active'}>停用</button>
-            <button type="button" onClick={() => changeMemberStatus(member.id, 'restore', { reason: '教师恢复成员' })} disabled={busy === `restore-${member.id}` || member.binding_status === 'active'}>恢复</button>
-            <button type="button" className="danger-button" onClick={() => changeMemberStatus(member.id, 'remove', { reason: '教师移出班级' })} disabled={busy === `remove-${member.id}`}>移出</button>
-            {member.latest_essay_id ? <a className="button-link" href={`/teacher/essays/${encodeURIComponent(member.latest_essay_id)}`}>查看批改</a> : <span className="hint error-text">未提交作文</span>}
-          </span>
-          <div className="assignment-share-panel">
-            <div className="row">
-              <select value={String(targetClassId || '')} onChange={(e) => setTransferTargets((current) => ({ ...current, [member.id]: e.target.value }))}>
-                <option value="">选择目标班级</option>
-                {otherClasses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-              <button type="button" onClick={() => changeMemberStatus(member.id, 'transfer', { targetClassId: Number(targetClassId), keepSourceMembership: false, reason: '教师转班' })} disabled={!targetClassId || busy === `transfer-${member.id}`}>转班</button>
+    <details className="collapsible-block">
+      <summary>点击展开学生名单（{members.length}）</summary>
+      <div className="management-table">
+        {members.map((member) => {
+          const targetClassId = transferTargets[member.id] || otherClasses[0]?.id || '';
+          return <article className="management-row" key={member.id}>
+            <b>{member.name}<span>{member.student_no || '未填学号'}</span></b>
+            <span>{member.username || '--'}</span>
+            <span>{member.binding_status || 'active'}</span>
+            <span className={Number(member.essay_count || 0) === 0 ? 'error-text' : ''}>{Number(member.essay_count || 0)} 篇{Number(member.essay_count || 0) === 0 ? ' · 未提交作文' : ''}</span>
+            <span>{member.latest_grading_status || '--'}</span>
+            <span>{formatDateTime(member.joined_at)}</span>
+            <span>{member.left_at ? `离开：${formatDateTime(member.left_at)}` : '当前有效'}</span>
+            <span className="record-actions">
+              <button type="button" onClick={() => changeMemberStatus(member.id, 'pause', { reason: '教师停用成员' })} disabled={busy === `pause-${member.id}` || member.binding_status !== 'active'}>停用</button>
+              <button type="button" onClick={() => changeMemberStatus(member.id, 'restore', { reason: '教师恢复成员' })} disabled={busy === `restore-${member.id}` || member.binding_status === 'active'}>恢复</button>
+              <button type="button" className="danger-button" onClick={() => changeMemberStatus(member.id, 'remove', { reason: '教师移出班级' })} disabled={busy === `remove-${member.id}`}>移出</button>
+              {member.latest_essay_id ? <a className="button-link" href={`/teacher/essays/${encodeURIComponent(member.latest_essay_id)}`}>查看批改</a> : <span className="hint error-text">未提交作文</span>}
+            </span>
+            <div className="assignment-share-panel">
+              <div className="row">
+                <select value={String(targetClassId || '')} onChange={(e) => setTransferTargets((current) => ({ ...current, [member.id]: e.target.value }))}>
+                  <option value="">选择目标班级</option>
+                  {otherClasses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+                <button type="button" onClick={() => changeMemberStatus(member.id, 'transfer', { targetClassId: Number(targetClassId), keepSourceMembership: false, reason: '教师转班' })} disabled={!targetClassId || busy === `transfer-${member.id}`}>转班</button>
+              </div>
             </div>
-          </div>
-        </article>;
-      })}
-      {!members.length && <p className="hint">当前班级还没有成员，或成员已全部停用。</p>}
-    </div>
+          </article>;
+        })}
+        {!members.length && <p className="hint">当前班级还没有成员，或成员已全部停用。</p>}
+      </div>
+    </details>
   );
 
   return <Layout>
@@ -2633,41 +2636,47 @@ function TeacherClassesPage() {
     {message && <p className="error">{message}</p>}
     <Card title="当前班级" icon={<School size={20} />}>
       <p className="hint">删除班级会级联清理该班的成员关系、任务和批改记录，需教师二次确认。</p>
-      <div className="management-table">
-        {liveRows.map((klass) => <article className="management-row" key={klass.id}>
-          <b>{klass.name}<span>{klass.grade || '未填写年级'} · {klass.data_scope || 'production'}</span></b>
-          <span>{klass.student_count ?? 0} 人</span>
-          <span>{klass.assignment_count ?? 0} 任务</span>
-          <span>{klass.pending_join_requests ?? 0} 待审核</span>
-          <span>{klass.status || 'active'}</span>
-          <span className="record-actions">
-            <a href={`/teacher/classes/${encodeURIComponent(klass.id)}`}>详情</a>
-            <a href={`/teacher/classes/${encodeURIComponent(klass.id)}/members`}>成员管理</a>
-            <a href={buildTeacherJoinRequestsUrl(klass.id)}>入班申请</a>
-            <button type="button" className="danger-button" disabled={busy === `delete-${klass.id}`} onClick={() => deleteClass(klass)}>{busy === `delete-${klass.id}` ? '删除中...' : '删除班级'}</button>
-          </span>
-        </article>)}
-        {!liveRows.length && <p className="hint">暂无可管理班级，可先创建一个班级。</p>}
-      </div>
+      <details className="collapsible-block">
+        <summary>点击展开当前班级（{liveRows.length}）</summary>
+        <div className="management-table">
+          {liveRows.map((klass) => <article className="management-row" key={klass.id}>
+            <b>{klass.name}<span>{klass.grade || '未填写年级'} · {klass.data_scope || 'production'}</span></b>
+            <span>{klass.student_count ?? 0} 人</span>
+            <span>{klass.assignment_count ?? 0} 任务</span>
+            <span>{klass.pending_join_requests ?? 0} 待审核</span>
+            <span>{klass.status || 'active'}</span>
+            <span className="record-actions">
+              <a href={`/teacher/classes/${encodeURIComponent(klass.id)}`}>详情</a>
+              <a href={`/teacher/classes/${encodeURIComponent(klass.id)}/members`}>成员管理</a>
+              <a href={buildTeacherJoinRequestsUrl(klass.id)}>入班申请</a>
+              <button type="button" className="danger-button" disabled={busy === `delete-${klass.id}`} onClick={() => deleteClass(klass)}>{busy === `delete-${klass.id}` ? '删除中...' : '删除班级'}</button>
+            </span>
+          </article>)}
+          {!liveRows.length && <p className="hint">暂无可管理班级，可先创建一个班级。</p>}
+        </div>
+      </details>
     </Card>
     <p className="hint">默认仅展示正式班级。切换到“全部历史数据”可以查看旧班级，但不会自动执行删除。</p>
-    <div className="management-table">
-      {rows.map((klass) => <article className="management-row" key={klass.classKey}>
-        <b>{klass.className}<span>{klass.grade} · {klass.schoolYear}</span></b>
-        <span>{klass.studentCount} 人</span>
-        <span>{klass.assignmentCount ?? klass.assignment_count ?? 0} 任务</span>
-        <span>{klass.essayCount} 篇</span>
-        <span>均分 {klass.averageScore ?? '--'}</span>
-        <span>优秀率 {klass.excellentRate == null ? '--' : `${Math.round(klass.excellentRate * 100)}%`}</span>
-        <span>{klass.status}</span>
-        <span className="record-actions">
-          <a href={`/teacher/classes/${encodeURIComponent(klass.classKey)}`}>详情</a>
-          <a href={`/teacher/classes/${encodeURIComponent(klass.classKey)}/members`}>成员管理</a>
-          {klass.status !== 'archived' ? <button type="button" onClick={() => archive(klass.classKey)}>归档</button> : <span className="hint">已归档</span>}
-        </span>
-      </article>)}
-      {!rows.length && <p className="hint">暂无班级数据，请先运行 classes:rebuild 或创建班级。</p>}
-    </div>
+    <details className="collapsible-block">
+      <summary>点击展开历史班级（{rows.length}）</summary>
+      <div className="management-table">
+        {rows.map((klass) => <article className="management-row" key={klass.classKey}>
+          <b>{klass.className}<span>{klass.grade} · {klass.schoolYear}</span></b>
+          <span>{klass.studentCount} 人</span>
+          <span>{klass.assignmentCount ?? klass.assignment_count ?? 0} 任务</span>
+          <span>{klass.essayCount} 篇</span>
+          <span>均分 {klass.averageScore ?? '--'}</span>
+          <span>优秀率 {klass.excellentRate == null ? '--' : `${Math.round(klass.excellentRate * 100)}%`}</span>
+          <span>{klass.status}</span>
+          <span className="record-actions">
+            <a href={`/teacher/classes/${encodeURIComponent(klass.classKey)}`}>详情</a>
+            <a href={`/teacher/classes/${encodeURIComponent(klass.classKey)}/members`}>成员管理</a>
+            {klass.status !== 'archived' ? <button type="button" onClick={() => archive(klass.classKey)}>归档</button> : <span className="hint">已归档</span>}
+          </span>
+        </article>)}
+        {!rows.length && <p className="hint">暂无班级数据，请先运行 classes:rebuild 或创建班级。</p>}
+      </div>
+    </details>
   </TeacherManagementShell>;
 }
 

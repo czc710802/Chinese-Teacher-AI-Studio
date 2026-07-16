@@ -554,6 +554,8 @@ test('teacher class management exposes live create and cascade delete controls w
   assert.match(teacherClassesPage, /新增班级/);
   assert.match(teacherClassesPage, /删除班级/);
   assert.match(teacherClassesPage, /级联删除/);
+  assert.match(teacherClassesPage, /点击展开当前班级/);
+  assert.match(teacherClassesPage, /点击展开历史班级/);
   assert.match(teacherClassesPage, /createClass/);
   assert.match(teacherClassesPage, /deleteClass/);
   assert.match(teacherStudentsPage, /scope: 'production'/);
@@ -576,6 +578,7 @@ test('teacher classroom workbench exposes student account creation and batch imp
   assert.match(enrollmentPanel, /导入中\.\.\./);
   assert.match(classWorkBench, /dataScope=\{klass\.data_scope \|\| 'production'\}/);
   assert.match(classWorkBench, /删除班级/);
+  assert.match(classWorkBench, /点击展开学生名单/);
   assert.match(classWorkBench, /未提交作文/);
   assert.match(classWorkBench, /查看批改/);
 });
