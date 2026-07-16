@@ -131,6 +131,24 @@ test('teacher assignment publishing creates a public submit link and submission 
   assert.match(assignment.qr_svg, /<svg/);
 });
 
+test('teacher assignment publishing can auto-fill task content from only grade and essay type', () => {
+  const fixture = createFixtureDb();
+  const result = createManagedAssignment(fixture.database, fixture.teacherUser, {
+    class_id: fixture.classId,
+    grade: '高二',
+    essay_type: '周练'
+  }, { publicOrigin: 'https://pi.zhenwanyue.icu' });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.assignment.status, 'published');
+  assert.equal(result.assignment.grade, '高二');
+  assert.equal(result.assignment.essay_type, '周练');
+  assert.match(result.assignment.title, /高二|周练/);
+  assert.match(result.assignment.prompt, /周练|写作/);
+  assert.equal(result.assignment.min_words, 0);
+  assert.equal(result.assignment.max_words, 0);
+});
+
 test('student assignment list is scoped to joined class and hides deleted assignments', () => {
   const fixture = createFixtureDb();
 

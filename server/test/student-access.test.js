@@ -226,6 +226,22 @@ test('student cannot submit the same assignment twice unless resubmission is all
   assert.equal(allowed.nextSubmitRound, 2);
 });
 
+test('student can submit a short essay and still enter grading flow when the assignment has a minimum word setting', () => {
+  const fixture = createFixtureDb();
+  const assignmentId = fixture.database.prepare('SELECT id FROM assignments WHERE class_id = ? LIMIT 1').get(fixture.classId).id;
+  fixture.database.prepare('UPDATE assignments SET min_words = 800, max_words = 1000, allow_resubmit = 1 WHERE id = ?').run(assignmentId);
+
+  const result = resolveEssaySubmitTarget(fixture.database, fixture.studentUser, {
+    assignment_id: assignmentId,
+    original_text: '这是短文，但也应进入 AI 批改流程。'
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.assignment.id, assignmentId);
+  assert.equal(result.wordCount > 0, true);
+  assert.equal(result.submissionStatus, 'submitted');
+});
+
 test('student draft is saved and loaded per assignment without exposing other students', async () => {
   const fixture = createFixtureDb();
   const module = await import('../src/services/essay-access.js');

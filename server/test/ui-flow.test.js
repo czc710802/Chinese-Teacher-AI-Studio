@@ -258,7 +258,7 @@ test('backend image upload route recognizes photos and creates a reviewed essay'
 
 test('student review page polls pending image submissions instead of showing a fake completed report', () => {
   const reviewPage = functionBody('ReviewPage');
-  assert.match(reviewPage, /图片已收到，AI 正在批改中，请稍候/);
+  assert.match(reviewPage, /作文已上传，AI正在识别并批改，请稍候/);
   assert.match(reviewPage, /gradingStatus/);
   assert.match(reviewPage, /setInterval\(load, 2000\)/);
 });
@@ -270,9 +270,11 @@ test('student submit page shows upload and review errors instead of failing sile
   assert.match(submitPage, /catch \(err\)/);
   assert.match(submitPage, /提交失败/);
   assert.match(submitPage, /请先粘贴或输入作文正文/);
-  assert.match(submitPage, /tooShort/);
-  assert.match(submitPage, /tooLong/);
-  assert.match(submitPage, /disabled=\{busy \|\| !text\.trim\(\) \|\| tooShort \|\| tooLong\}/);
+  assert.doesNotMatch(submitPage, /tooShort/);
+  assert.doesNotMatch(submitPage, /tooLong/);
+  assert.doesNotMatch(submitPage, /最低字数：不少于/);
+  assert.match(submitPage, /AI 会根据篇幅自动分档批改/);
+  assert.match(submitPage, /disabled=\{busy \|\| !text\.trim\(\)\}/);
 });
 
 test('student profile shows score changes with chart and summary metrics', () => {
@@ -521,6 +523,10 @@ test('teacher assignment management summarizes published tasks and deletes them'
   assert.match(assignmentPublish, /publishing/);
   assert.match(assignmentPublish, /disabled=\{publishing/);
   assert.match(assignmentPublish, /发布中/);
+  assert.match(assignmentPublish, /年级/);
+  assert.match(assignmentPublish, /作文训练类型/);
+  assert.match(assignmentPublish, /发布按钮/);
+  assert.doesNotMatch(assignmentPublish, /最低字数|最高字数|评分标准|允许学生重新提交/);
   assert.match(assignmentManagement, /发布任务管理/);
   assert.match(assignmentManagement, /publishedAssignments/);
   assert.match(assignmentManagement, /created_at/);

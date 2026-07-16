@@ -79,6 +79,9 @@ test('P1.5 prompt requires expert teacher identities, deep sections and JSON con
   assert.match(prompt, /结构分析[\s\S]*不少于500字/);
   assert.match(prompt, /逻辑分析[\s\S]*不少于600字/);
   assert.match(prompt, /语言分析[\s\S]*不少于500字/);
+  assert.match(prompt, /800字以上：执行完整高中作文批改/);
+  assert.match(prompt, /300-800字：执行片段评价、表达分析和修改建议/);
+  assert.match(prompt, /300字以下：执行语言分析、结构建议和扩写指导/);
   for (const field of [
     'overall_evaluation',
     'topic_intent_analysis',

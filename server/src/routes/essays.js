@@ -235,7 +235,7 @@ essayRouter.post('/images', upload.array('images', 8), async (req, res, next) =>
     if (assignmentAccess.status !== 200) return res.status(assignmentAccess.status).json({ message: assignmentAccess.message });
 
     const essayText = String(await recognizeImages(req.files || []) || '').trim();
-    if (!essayText) return res.status(422).json({ message: 'AI 未能识别出作文文字，请重新拍照或上传更清晰的图片' });
+    if (!essayText) return res.status(422).json({ message: '未能识别文字，请重新拍摄清晰图片。' });
     const resolved = resolveEssaySubmitTarget(db, req.user, { ...req.body, original_text: essayText });
     if (resolved.status !== 200) return res.status(resolved.status).json({ message: resolved.message });
 

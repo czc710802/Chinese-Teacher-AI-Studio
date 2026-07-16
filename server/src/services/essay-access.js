@@ -91,10 +91,6 @@ export function resolveEssaySubmitTarget(database, user, body = {}) {
   }
 
   const wordCount = countEssayWords(essayText);
-  const minWords = Number(resolved.assignment.min_words || 0);
-  const maxWords = Number(resolved.assignment.max_words || 0);
-  if (minWords && wordCount < minWords) return { status: 400, message: `作文字数不足，最低要求 ${minWords} 字` };
-  if (maxWords && wordCount > maxWords) return { status: 400, message: `作文字数超出，最高限制 ${maxWords} 字` };
 
   const existing = database.prepare(`
     SELECT MAX(submit_round) AS max_round, COUNT(*) AS count

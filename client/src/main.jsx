@@ -946,8 +946,11 @@ function SubmitPage() {
     }
   }, [assignmentId]);
   const wordCount = text.replace(/\s+/g, '').length;
-  const tooShort = assignment?.min_words && wordCount < Number(assignment.min_words);
-  const tooLong = assignment?.max_words && wordCount > Number(assignment.max_words);
+  const lengthHint = wordCount >= 800
+    ? '当前作文已达到完整批改篇幅。'
+    : wordCount >= 300
+      ? '当前作文篇幅适中，AI 将进行片段评价与表达分析。'
+      : '当前作文篇幅较短，AI 将按照片段训练模式进行分析。';
   async function submit() {
     if (!text.trim()) {
       setError('请先粘贴或输入作文正文');
@@ -970,7 +973,9 @@ function SubmitPage() {
       <p>{assignment.class_name || '未指定班级'} · {assignment.grade || '未指定年级'} · 截止 {formatDateTime(assignment.deadline)}</p>
       <p>{assignment.prompt}</p>
       {assignment.requirements && <p><b>写作要求：</b>{assignment.requirements}</p>}
-      <p>字数要求：{assignment.min_words || '不限'} - {assignment.max_words || '不限'} 字 · 当前约 {wordCount} 字</p>
+      <p>当前约 {wordCount} 字</p>
+      <p className="hint">AI 会根据篇幅自动分档批改。</p>
+      <p className="hint">{lengthHint}</p>
       <p>提交设置：{assignment.allow_resubmit ? '允许重新提交/二稿提交' : '正式提交后不可重复提交'} · {assignment.allow_late_submit ? '允许迟交并标记' : '截止后禁止提交'}</p>
     </div>}
     {submissionStatus && <div className="status-strip">
@@ -985,13 +990,11 @@ function SubmitPage() {
     <input placeholder="作文标题" value={title} onChange={(e) => setTitle(e.target.value)} />
     <textarea placeholder="请输入或粘贴/黏贴作文正文" value={text} onChange={(e) => setText(e.target.value)} rows="18" />
     <p className="hint">手机端请优先使用“拍照上传”或“OCR 后人工确认”。本页保留文字直接提交入口，文件上传入口已移除以避免误操作。</p>
-    {tooShort && <p className="error">当前字数低于最低要求。</p>}
-    {tooLong && <p className="error">当前字数超过最高限制。</p>}
     {error && <p className="error">{error}</p>}
     <div className="actions">
       <a className="ghost" href={`/upload?assignmentId=${assignmentId}`}>拍照上传</a>
       <a className="ghost" href={`/upload?assignmentId=${assignmentId}&confirm=ocr`}>OCR 后人工确认</a>
-      <button onClick={submit} disabled={busy || !text.trim() || tooShort || tooLong}><Send size={18} />{busy ? '提交批改中...' : '正式提交并批改'}</button>
+      <button onClick={submit} disabled={busy || !text.trim()}><Send size={18} />{busy ? '提交批改中...' : '正式提交并批改'}</button>
     </div>
   </Card></Layout>;
 }
@@ -1046,7 +1049,7 @@ function ReviewPage() {
   }, [essayId]);
   const gradingStatus = String(data?.essay?.grading_status || '');
   if (!data || (!data.review && ['grading', 'pending'].includes(gradingStatus))) {
-    return <div className="review-page"><p className="review-loading">图片已收到，AI 正在批改中，请稍候...</p></div>;
+    return <div className="review-page"><p className="review-loading">作文已上传，AI正在识别并批改，请稍候。</p></div>;
   }
   if (!data.review && gradingStatus === 'failed') {
     return <div className="review-page"><p className="review-loading">图片批改失败，请返回后重试或改用文字提交。</p></div>;
@@ -1465,7 +1468,7 @@ function StudentMobileTasksPage() {
         <p><b>{detail.title}</b></p>
         <p className="hint">{detail.class_name || ''} · {detail.essay_type || ''} · {detail.grade || ''}</p>
         <p className="hint">截止时间：{formatDateTime(detail.deadline)}</p>
-        <p className="hint">字数要求：不少于 {detail.min_words || 0} 字{detail.max_words ? ` · 不超过 ${detail.max_words} 字` : ''}</p>
+        <p className="hint">AI 会根据篇幅自动分档批改，提交后可直接查看进度。</p>
         <p>{detail.prompt || '暂无材料说明'}</p>
         <p>{detail.requirements || '暂无写作要求'}</p>
         <p className="hint">状态：{status?.state || '未查询'}</p>
@@ -3803,9 +3806,10 @@ function AssignmentPublish() {
   const location = useLocation();
   const query = new URLSearchParams(location.search);
   const classIdFilter = query.get('classId') || '';
-  const [form, setForm] = useState({ class_id: 1, title: '', prompt: '', requirements: '', essay_type: '材料作文', full_score: 60, grade: '', min_words: 800, max_words: 1000, scoring_standard: '内容、表达、发展等级综合评分', deadline: '', allow_resubmit: false });
+  const [form, setForm] = useState({ class_id: 1, essay_type: '周练', grade: '' });
   const [published, setPublished] = useState(null);
   const [publishing, setPublishing] = useState(false);
+  const selectedClass = classes.find((item) => String(item.id) === String(form.class_id));
   useEffect(() => { api('/classes').then((rows) => { setClasses(rows); setForm((f) => ({ ...f, class_id: Number(classIdFilter) || rows[0]?.id || 1 })); }); }, [classIdFilter]);
   async function copyLink(value) {
     try {
@@ -3828,15 +3832,20 @@ function AssignmentPublish() {
     }
   }
   return <Card title="作文任务发布" icon={<Plus size={20} />}>
-    <select value={form.class_id} onChange={(e) => setForm({ ...form, class_id: Number(e.target.value) })}>{classes.map((c) => <option value={c.id} key={c.id}>{c.name}</option>)}</select>
-    <input placeholder="题目" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-    <textarea placeholder="作文材料" value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} rows="5" />
-    <textarea placeholder="写作要求" value={form.requirements} onChange={(e) => setForm({ ...form, requirements: e.target.value })} rows="4" />
-    <div className="row"><input placeholder="年级" value={form.grade} onChange={(e) => setForm({ ...form, grade: e.target.value })} /><input value={form.essay_type} onChange={(e) => setForm({ ...form, essay_type: e.target.value })} /><input type="number" value={form.full_score} onChange={(e) => setForm({ ...form, full_score: Number(e.target.value) })} /></div>
-    <div className="row"><input type="number" placeholder="最低字数" value={form.min_words} onChange={(e) => setForm({ ...form, min_words: Number(e.target.value) })} /><input type="number" placeholder="最高字数" value={form.max_words} onChange={(e) => setForm({ ...form, max_words: Number(e.target.value) })} /><input type="datetime-local" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} /></div>
-    <textarea placeholder="评分标准" value={form.scoring_standard} onChange={(e) => setForm({ ...form, scoring_standard: e.target.value })} rows="3" />
-    <label className="checkbox-row"><input type="checkbox" checked={form.allow_resubmit} onChange={(e) => setForm({ ...form, allow_resubmit: e.target.checked })} />允许学生重新提交</label>
-    <button onClick={save} disabled={publishing}>{publishing ? '发布中...' : '发布'}</button>
+    <input type="hidden" value={form.class_id} readOnly />
+    <p className="hint">当前班级：{selectedClass?.name || '未选择班级'}</p>
+    <div className="row">
+      <input placeholder="年级" value={form.grade} onChange={(e) => setForm({ ...form, grade: e.target.value })} />
+      <select value={form.essay_type} onChange={(e) => setForm({ ...form, essay_type: e.target.value })} aria-label="作文训练类型">
+        <option value="周练">周练</option>
+        <option value="月考">月考</option>
+        <option value="单元测">单元测</option>
+        <option value="期中">期中</option>
+        <option value="期末">期末</option>
+        <option value="材料作文">材料作文</option>
+      </select>
+    </div>
+    <button aria-label="发布按钮" onClick={save} disabled={publishing}>{publishing ? '发布中...' : '发布'}</button>
     {published && <div className="assignment-share-panel">
       <p><b>学生提交链接：</b>{published.submission_url || published.share_url}</p>
       <div className="actions">
@@ -3954,7 +3963,7 @@ function TeacherAssignmentDetailPage() {
           <p><b>{assignment.title || '未命名任务'}</b></p>
           <p className="hint">{assignment.class_name || '未知班级'} · {assignment.essay_type || '材料作文'} · {assignment.grade || '未填写年级'}</p>
           <p className="hint">状态：{assignment.status || 'published'} · 发布时间：{formatDateTime(assignment.published_at || assignment.created_at)} · 截止：{formatDateTime(assignment.deadline)}</p>
-          <p className="hint">最低字数：{assignment.min_words || 0} · 最高字数：{assignment.max_words || '不限'} · 满分：{assignment.full_score || 60}</p>
+          <p className="hint">AI 将按篇幅自动分档批改 · 满分：{assignment.full_score || 60}</p>
           <p className="hint">AI 自动批改：{Number(assignment.auto_grading ?? 1) ? '开启' : '关闭'} · 教师审核：{Number(assignment.requires_teacher_review ?? 1) ? '需要' : '不需要'} · 学生查看结果：{Number(assignment.allow_student_view_result ?? 1) ? '允许' : '不允许'}</p>
           <div className="assignment-submit-summary">
             <h3>写作材料</h3>

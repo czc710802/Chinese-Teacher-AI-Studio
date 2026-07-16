@@ -118,6 +118,33 @@ function gradeCode(value, classId) {
   return mapped || `G${classId || 'X'}`;
 }
 
+function normalizedEssayType(value) {
+  return String(value || '材料作文').trim() || '材料作文';
+}
+
+function buildManagedAssignmentTitle({ grade, essayType, klass }) {
+  const gradeLabel = String(grade || klass.grade || '').trim();
+  const typeLabel = normalizedEssayType(essayType);
+  if (gradeLabel && typeLabel) return `${gradeLabel}${typeLabel}`;
+  if (gradeLabel) return `${gradeLabel}作文任务`;
+  if (typeLabel) return `${typeLabel}任务`;
+  return '作文任务';
+}
+
+function buildManagedAssignmentPrompt({ grade, essayType }) {
+  const gradeLabel = String(grade || '').trim();
+  const typeLabel = normalizedEssayType(essayType);
+  const context = gradeLabel ? `${gradeLabel}${typeLabel}` : typeLabel;
+  return `围绕“${context}”完成作文训练。请依据班级教学要求认真审题、组织材料、展开论证，并根据篇幅自动进入对应批改模式。`;
+}
+
+function buildManagedAssignmentRequirements({ grade, essayType }) {
+  const gradeLabel = String(grade || '').trim();
+  const typeLabel = normalizedEssayType(essayType);
+  const context = gradeLabel ? `${gradeLabel}${typeLabel}` : typeLabel;
+  return `完成一篇${context}作文。AI 将按篇幅自动分档批改，教师可在后续环节继续审核和发布结果。`;
+}
+
 export function buildSubmissionUrl(publicId, options = {}) {
   return `${normalizePublicOrigin(options)}/submit/${encodeURIComponent(String(publicId || ''))}`;
 }
@@ -309,15 +336,15 @@ export function createManagedAssignment(database, user, body, options = {}) {
 
   const next = {
     class_id: classId,
-    title: String(body.title || '').trim(),
-    prompt: String(body.prompt || '').trim(),
-    requirements: String(body.requirements || '').trim(),
-    essay_type: String(body.essay_type || body.essayType || '材料作文').trim(),
-    full_score: Number(body.full_score || body.fullScore || 60),
+    essay_type: normalizedEssayType(body.essay_type || body.essayType),
     grade: String(body.grade || klass.grade || '').trim(),
+    title: String(body.title || buildManagedAssignmentTitle({ grade: body.grade || klass.grade || '', essayType: body.essay_type || body.essayType, klass })).trim(),
+    prompt: String(body.prompt || buildManagedAssignmentPrompt({ grade: body.grade || klass.grade || '', essayType: body.essay_type || body.essayType })).trim(),
+    requirements: String(body.requirements || buildManagedAssignmentRequirements({ grade: body.grade || klass.grade || '', essayType: body.essay_type || body.essayType })).trim(),
+    full_score: Number(body.full_score || body.fullScore || 60),
     min_words: Math.max(0, Number(body.min_words ?? body.minWords ?? 0)),
     max_words: Math.max(0, Number(body.max_words ?? body.maxWords ?? 0)),
-    scoring_standard: String(body.scoring_standard || body.scoringStandard || '').trim(),
+    scoring_standard: String(body.scoring_standard || body.scoringStandard || '内容、表达、发展等级综合评分').trim(),
     deadline: String(body.deadline || '').trim(),
     status: String(body.status || 'published').trim() || 'published',
     data_scope: String(body.data_scope || body.dataScope || klass.data_scope || '').trim(),
@@ -331,8 +358,6 @@ export function createManagedAssignment(database, user, body, options = {}) {
     reminder_enabled: body.reminder_enabled === false || body.reminderEnabled === false ? 0 : 1,
     feishu_chat_id: String(body.feishu_chat_id || body.feishuChatId || '').trim()
   };
-  if (!next.title) return { status: 400, message: '请填写作文题目' };
-  if (!next.prompt) return { status: 400, message: '请填写作文材料或写作要求' };
   if (next.max_words && next.min_words && next.max_words < next.min_words) {
     return { status: 400, message: '最高字数不能小于最低字数' };
   }
