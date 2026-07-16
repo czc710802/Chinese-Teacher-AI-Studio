@@ -51,7 +51,7 @@ function buildTeacherAssignmentDetailUrl(assignmentId = '') {
 
 function buildTeacherStudentsUrl(classKey = '') {
   const id = String(classKey || '').trim();
-  return id ? `/teacher/students?classKey=${encodeURIComponent(id)}` : '/teacher/students';
+  return id ? `/teacher/classes/${encodeURIComponent(id)}/members` : '/teacher/classes';
 }
 
 function getClassDisplayName(klass) {
@@ -1716,7 +1716,7 @@ function TeacherLifecycleClassPage() {
         <p className="hint">邀请码：{currentInvite?.invite_code || klass.invite_code || '未配置'} · 有效期：{formatDateTime(currentInvite?.expires_at || klass.invite_code_expires_at)}</p>
         <div className="actions">
           <a className="button-link" href={detail.invite_url || '#'} target="_blank" rel="noreferrer">打开二维码链接</a>
-          <a className="button-link" href={buildTeacherStudentsUrl()}>学生管理</a>
+          <a className="button-link" href={buildTeacherStudentsUrl(classKey)}>学生名单</a>
           <button type="button" onClick={rotateInvite} disabled={busy === 'rotate'}>{busy === 'rotate' ? '生成中' : '重新生成邀请码'}</button>
           <button type="button" className="danger-button" onClick={deleteClass} disabled={busy === 'delete-class'}>{busy === 'delete-class' ? '删除中' : '删除班级'}</button>
         </div>
@@ -1965,7 +1965,7 @@ function TeacherEssayDetailPage() {
           </div>
           {message && <p className={message.includes('已重新批改') || message.includes('已保存') || message.includes('已提交') ? 'success' : 'hint'}>{message}</p>}
           <div className="workspace-actions">
-            <button type="button" className="secondary-button" onClick={() => nav(location.state?.returnTo || '/teacher/reviews')}><ArrowLeft size={16} />返回列表</button>
+            <button type="button" className="secondary-button" onClick={() => nav(location.state?.returnTo || '/teacher/submissions')}><ArrowLeft size={16} />返回列表</button>
             <button type="button" className="secondary-button" onClick={() => setRerunOpen((value) => !value)}>重新批改</button>
           </div>
         </Card>
@@ -2408,12 +2408,6 @@ function TeacherDashboardCard() {
         <span className="ok">生产 {data.services.production}</span>
         <span>队列 {data.queues.archivePending + data.queues.profilePending + data.queues.managementPending}</span>
       </div>
-      <div className="quick teacher-nav">
-        {teacherHomeHighlights.map((item) => {
-          const Icon = teacherIconMap[item.iconKey] || Home;
-          return <a key={item.id} href={item.route}><Icon size={18} />{item.title}</a>;
-        })}
-      </div>
     </>}
   </Card>;
 }
@@ -2743,33 +2737,7 @@ function TeacherClassDetailPage() {
 }
 
 function TeacherStudentsPage() {
-  const [rows, setRows] = useState([]);
-  const [filters, setFilters] = useState({ scope: 'production', keyword: '', classKey: '', trend: '', status: '' });
-  async function load() {
-    const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString();
-    const data = await api(`/teacher/students${query ? `?${query}` : ''}`);
-    setRows(data.items || []);
-  }
-  useEffect(() => { load().catch(() => {}); }, []);
-  return <TeacherManagementShell title="学生管理" icon={<GraduationCap size={20} />}>
-    <Card title="学生管理说明" icon={<UserPlus size={20} />}>
-      <p className="hint">学生账号创建与批量导入已集中到班级工作台。这里用于全局搜索、查看和进入学生档案。</p>
-      <div className="actions">
-        <a className="button-link" href="/teacher/classes">打开班级工作台</a>
-        <a className="button-link" href="/teacher/test-center">打开系统测试中心</a>
-      </div>
-    </Card>
-    <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
-      <select value={filters.scope} onChange={(e) => setFilters({ ...filters, scope: e.target.value })}><option value="production">仅正式数据</option><option value="">全部历史数据</option></select>
-      <label><Search size={18} /><input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="搜索姓名/学号" /></label>
-      <input value={filters.classKey} onChange={(e) => setFilters({ ...filters, classKey: e.target.value })} placeholder="classKey" />
-      <select value={filters.trend} onChange={(e) => setFilters({ ...filters, trend: e.target.value })}><option value="">全部趋势</option><option value="up">up</option><option value="stable">stable</option><option value="down">down</option></select>
-      <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="">全部状态</option><option value="active">active</option><option value="archived">archived</option></select>
-      <button><Filter size={18} />筛选</button>
-    </form>
-    <p className="hint">默认仅展示正式学生。切换到“全部历史数据”可以查看旧学生名单，但不会自动执行删除。</p>
-    <div className="management-table">{rows.map((student) => <a className="management-row" href={`/student-profiles/${encodeURIComponent(student.studentKey)}`} key={student.studentKey}><b>{student.studentName}<span>{student.studentId}</span></b><span>{student.className}</span><span>{student.essayCount}篇</span><span>均分 {student.averageScore ?? '--'}</span><span>最近 {student.latestScore ?? '--'}</span><span>{student.scoreTrend || '--'}</span><span>{student.weakestAbility || '--'}</span></a>)}</div>
-  </TeacherManagementShell>;
+  return <TeacherLegacyRedirect to="/teacher/classes" />;
 }
 
 function TeacherTestCenterPage() {
@@ -2991,9 +2959,7 @@ function TeacherTestCenterPage() {
             <p><b>{Number(report?.teacherManagement?.totals?.essays || 0)}</b> 测试作文</p>
             <p><b>{Number(report?.teacherManagement?.totals?.reports || report?.sqlite?.tables?.teacher_reports || 0)}</b> 批改结果</p>
             <p className="hint">检查 AI 批改、教师审核、报告与下载是否同步。</p>
-            <div className="actions">
-              <a className="button-link" href="/teacher/grading">打开 AI 批改中心</a>
-              <a className="button-link" href={data?.links?.teacherStudents || '/teacher/reviews'}>打开教师审核</a>
+      <div className="actions">
               <a className="button-link" href="/teacher/submissions">查看测试报告</a>
             </div>
           </section>
@@ -3175,7 +3141,7 @@ function TeacherAssignmentsPage() {
   return <TeacherManagementShell title="作文任务" icon={<BookOpen size={20} />}>
     <div className="teacher-task-context">
       {classIdFilter ? <p className="hint">当前班级：{classIdFilter}{dataScopeFilter ? ` · ${dataScopeFilter}` : ''}</p> : <p className="hint">查看全部已发布任务，或通过班级筛选定位系统测试班任务。</p>}
-      <div className="actions"><a className="button-link" href="/teacher/test-center">返回系统测试中心</a></div>
+      <div className="actions"><a className="button-link" href="/teacher/classes">返回班级工作台</a></div>
     </div>
     <div className="grid">
       <AssignmentPublish />
@@ -3185,7 +3151,7 @@ function TeacherAssignmentsPage() {
 }
 
 function TeacherGradingPage() {
-  return <TeacherTasksPage title="AI 批改中心" />;
+  return <TeacherLegacyRedirect to="/teacher/submissions" />;
 }
 
 function TeacherSubmissionsPage() {
@@ -3432,15 +3398,15 @@ function TeacherRerunTaskCard() {
       <span><b>{counts.processing || 0}</b>正在重新批改</span>
       <span><b>{counts.completed || 0}</b>重新批改完成</span>
     </div>
-    <p className="hint">状态来自教师批改任务队列，点击可进入 AI 批改中心。</p>
-    <div className="actions"><a className="button-link" href="/teacher/grading">查看全部任务</a></div>
+    <p className="hint">状态来自教师批改任务队列，点击可进入学生提交中心。</p>
+    <div className="actions"><a className="button-link" href="/teacher/submissions">查看全部任务</a></div>
   </Card>;
 }
 
 function QuickLinks({ role }) {
   const links = role === 'student'
     ? [['/upload', '拍照上传', Camera], ['/profile', '个人档案', ChartNoAxesCombined]]
-    : [['/teacher/reviews', '作文批改', FileText], ['/teacher/grading', 'AI 批改中心', RotateCcw], ['/teacher/classes', '我的班级', Users], ['/teacher/assignments', '发布任务', Plus], ['/teacher/test-center', '系统测试中心', TestTube2]];
+    : [['/teacher/classes', '我的班级', Users], ['/teacher/join-requests', '待审核', UserPlus], ['/teacher/assignments', '发布任务', Plus], ['/teacher/submissions', '学生提交', FileText]];
   return <Card title="快捷入口" icon={<Home size={20} />}><div className="quick">{links.map(([href, label, Icon]) => <a key={href} href={href}><Icon size={18} />{label}</a>)}</div></Card>;
 }
 
@@ -3708,16 +3674,7 @@ function RoleRoute({ roles, children }) {
 }
 
 function ClassManagement() {
-  const [message] = useState('');
-  return <Card title="班级管理" icon={<Users size={20} />}>
-    <p className="hint">默认班级管理已迁移到“教师工作台 → 班级管理 / 学生管理 / 系统测试中心”。这个旧入口保留兼容，不再展示删除按钮和冗长名单。</p>
-    <div className="actions">
-      <a className="button-link" href="/teacher/classes">打开班级管理</a>
-      <a className="button-link" href="/teacher/classes">打开学生管理</a>
-      <a className="button-link" href="/teacher/test-center">进入系统测试中心</a>
-    </div>
-    {message && <p className="hint">{message}</p>}
-  </Card>;
+  return <TeacherLegacyRedirect to="/teacher/classes" />;
 }
 
 function ClassRosterPanel({ klass, availableClasses = [], onChanged }) {
@@ -4246,16 +4203,16 @@ function App() {
     <Route path="/teacher/assignments" element={<RoleRoute roles={['teacher']}><TeacherAssignmentsPage /></RoleRoute>} />
     <Route path="/teacher/assignments/:assignmentId" element={<RoleRoute roles={['teacher']}><TeacherAssignmentDetailPage /></RoleRoute>} />
     <Route path="/teacher/submissions" element={<RoleRoute roles={['teacher']}><TeacherSubmissionsPage /></RoleRoute>} />
-    <Route path="/teacher/grading" element={<RoleRoute roles={['teacher']}><TeacherGradingPage /></RoleRoute>} />
+    <Route path="/teacher/grading" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/submissions" /></RoleRoute>} />
     <Route path="/teacher/growth" element={<RoleRoute roles={['teacher']}><TeacherGrowthPage /></RoleRoute>} />
     <Route path="/teacher/settings" element={<RoleRoute roles={['teacher']}><TeacherSettingsPage /></RoleRoute>} />
     <Route path="/teacher/classes/:classKey" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
     <Route path="/teacher/classes/:classKey/join-requests" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
     <Route path="/teacher/classes/:classKey/members" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
-    <Route path="/teacher/students" element={<RoleRoute roles={['teacher']}><TeacherStudentsPage /></RoleRoute>} />
-    <Route path="/teacher/test-center" element={<RoleRoute roles={['teacher']}><TeacherTestCenterPage /></RoleRoute>} />
+    <Route path="/teacher/students" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/classes" /></RoleRoute>} />
+    <Route path="/teacher/test-center" element={<RoleRoute roles={['admin']}><TeacherTestCenterPage /></RoleRoute>} />
     <Route path="/teacher/essays" element={<RoleRoute roles={['teacher']}><TeacherSubmissionsPage /></RoleRoute>} />
-    <Route path="/teacher/tasks" element={<RoleRoute roles={['teacher']}><TeacherGradingPage /></RoleRoute>} />
+    <Route path="/teacher/tasks" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/submissions" /></RoleRoute>} />
     <Route path="/teacher/benchmark" element={<RoleRoute roles={['teacher']}><BenchmarkCenterPage /></RoleRoute>} />
     <Route path="/teacher/essay/:essayId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
     <Route path="/teacher/essays/:essayId" element={<RoleRoute roles={['teacher']}><TeacherEssayDetailPage /></RoleRoute>} />
@@ -4264,7 +4221,7 @@ function App() {
     <Route path="/admin/integrations" element={<RoleRoute roles={['admin']}><AdminIntegrationsPage /></RoleRoute>} />
     <Route path="/admin/feishu/teachers" element={<RoleRoute roles={['admin']}><AdminFeishuTeachersPage /></RoleRoute>} />
     <Route path="/teacher/feishu/classes" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/settings" /></RoleRoute>} />
-    <Route path="/teacher/reviews" element={<RoleRoute roles={['teacher']}><Layout><TeacherReviewCenter /></Layout></RoleRoute>} />
+    <Route path="/teacher/reviews" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/submissions" /></RoleRoute>} />
     <Route path="/archive" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/growth" /></RoleRoute>} />
     <Route path="/student-profiles" element={<RoleRoute roles={['student', 'teacher']}><TeacherLegacyRedirect to="/teacher/growth" /></RoleRoute>} />
     <Route path="/student-profiles/:studentKey" element={<RoleRoute roles={['student', 'teacher']}><TeacherLegacyRedirect to="/teacher/growth" /></RoleRoute>} />

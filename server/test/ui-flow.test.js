@@ -14,6 +14,7 @@ const exporterSource = readFileSync(path.join(rootDir, 'server/src/services/expo
 const classRoutesSource = readFileSync(path.join(rootDir, 'server/src/routes/classes.js'), 'utf8');
 const profileSource = readFileSync(path.join(rootDir, 'server/src/services/profile.js'), 'utf8');
 const analyticsSource = readFileSync(path.join(rootDir, 'server/src/routes/analytics.js'), 'utf8');
+const teacherNavigationSource = readFileSync(path.join(rootDir, 'client/src/teacher-navigation.js'), 'utf8');
 
 function functionBody(name) {
   const start = mainSource.indexOf(`function ${name}`);
@@ -336,9 +337,15 @@ test('teacher home keeps only the canonical high-frequency entry cards', () => {
   assert.match(teacherHome, /teacherHomeHighlights/);
   assert.match(teacherHome, /teacher-banner/);
   assert.match(teacherHome, /GraduationCap/);
+  assert.doesNotMatch(teacherHome, /学生管理|打开 AI 批改中心|打开系统测试中心/);
   assert.doesNotMatch(teacherHome, /PublicAccessPanel|TeacherRerunTaskCard|ClassManagement|TeacherInsightPanel|AssignmentPublish|AssignmentManagement|TeacherReviewCenter/);
   assert.match(mainSource, /teacherHomeHighlights/);
   assert.match(mainSource, /teacherNavigationEntries/);
+  assert.match(teacherNavigationSource, /title: '查看我的班级'/);
+  assert.match(teacherNavigationSource, /title: '查看待审核'/);
+  assert.match(teacherNavigationSource, /title: '新建作文任务'/);
+  assert.match(teacherNavigationSource, /title: '查看学生提交'/);
+  assert.doesNotMatch(teacherNavigationSource, /学生管理|打开 AI 批改中心|打开系统测试中心/);
 });
 
 test('login page exposes public demo entry for mobile and external presentation', () => {
@@ -355,7 +362,8 @@ test('teacher and student class flows no longer expose invitation code entry or 
   const classRosterPanel = functionBody('ClassRosterPanel');
 
   assert.doesNotMatch(studentHome, /invite|邀请码|\/classes\/join/);
-  assert.doesNotMatch(classManagement, /invite|邀请码/);
+  assert.match(classManagement, /TeacherLegacyRedirect/);
+  assert.match(classManagement, /\/teacher\/classes/);
   assert.doesNotMatch(classRosterPanel, /invite|邀请码/);
   assert.match(classRoutesSource, /student-mobile\/join/);
   assert.match(classRoutesSource, /join-requests/);
@@ -546,14 +554,12 @@ test('teacher roster import panel lets teacher edit each student name', () => {
 
 test('teacher class management now points to safe management and test center entries', () => {
   const classManagement = functionBody('ClassManagement');
-  assert.match(classManagement, /默认班级管理已迁移/);
-  assert.match(classManagement, /打开班级管理/);
-  assert.match(classManagement, /打开学生管理/);
-  assert.match(classManagement, /进入系统测试中心/);
-  assert.doesNotMatch(classManagement, /删除班级/);
+  assert.match(classManagement, /TeacherLegacyRedirect/);
+  assert.match(classManagement, /\/teacher\/classes/);
+  assert.doesNotMatch(classManagement, /删除班级|打开班级管理|打开学生管理|进入系统测试中心/);
 });
 
-test('teacher class management exposes live create and cascade delete controls while student management stays scoped', () => {
+test('teacher class management exposes live create and cascade delete controls while student management redirects to classes', () => {
   const teacherClassesPage = functionBody('TeacherClassesPage');
   const teacherStudentsPage = functionBody('TeacherStudentsPage');
   const classManagement = functionBody('ClassManagement');
@@ -564,10 +570,8 @@ test('teacher class management exposes live create and cascade delete controls w
   assert.match(teacherClassesPage, /点击展开历史班级/);
   assert.match(teacherClassesPage, /createClass/);
   assert.match(teacherClassesPage, /deleteClass/);
-  assert.match(teacherStudentsPage, /scope: 'production'/);
-  assert.match(teacherStudentsPage, /仅正式数据/);
-  assert.match(teacherStudentsPage, /学生管理说明/);
-  assert.match(teacherStudentsPage, /打开班级工作台/);
+  assert.match(teacherStudentsPage, /TeacherLegacyRedirect/);
+  assert.match(teacherStudentsPage, /\/teacher\/classes/);
   assert.doesNotMatch(classManagement, /deleteClass/);
   assert.doesNotMatch(classManagement, /rosterText/);
 });
@@ -625,6 +629,7 @@ test('frontend exposes separated teacher, student and administrator entrances', 
   const adminHome = functionBody('AdminHome');
   assert.match(mainSource, /path="\/teacher"/);
   assert.match(mainSource, /path="\/teacher\/students"/);
+  assert.match(mainSource, /path="\/teacher\/test-center" element={<RoleRoute roles=\{\['admin'\]\}><TeacherTestCenterPage \/>/);
   assert.match(mainSource, /path="\/student"/);
   assert.match(mainSource, /path="\/submit\/:assignmentId"/);
   assert.match(mainSource, /path="\/admin"/);
