@@ -296,7 +296,7 @@ test('student submit page shows upload and review errors instead of failing sile
   assert.doesNotMatch(submitPage, /tooShort/);
   assert.doesNotMatch(submitPage, /tooLong/);
   assert.doesNotMatch(submitPage, /最低字数：不少于/);
-  assert.match(submitPage, /AI 会根据篇幅自动分档批改/);
+  assert.match(submitPage, /AI 会根据篇幅自动调整批改重点/);
   assert.match(submitPage, /disabled=\{busy \|\| !text\.trim\(\)\}/);
 });
 

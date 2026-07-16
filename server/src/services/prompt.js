@@ -1,13 +1,4 @@
-import { countEssayWords } from './essay-access.js';
-
-function getEssayLengthBand(essayText = '') {
-  const wordCount = countEssayWords(essayText);
-  if (wordCount <= 0) return 'empty';
-  if (wordCount < 300) return 'short';
-  if (wordCount < 800) return 'medium';
-  if (wordCount <= 3000) return 'full';
-  return 'long';
-}
+import { countEssayWords, getEssayLengthBand } from './essay-access.js';
 
 export function buildReviewPrompt({ assignment, essayText, fullScore = 60 }) {
   const lengthBand = getEssayLengthBand(essayText);
@@ -70,10 +61,9 @@ ${essayText}
 
 请根据学生作文的实际篇幅自动调整批改重点，不要因为篇幅不足或篇幅较长而拒绝批改，不要返回“字数不足”“篇幅超限”之类的失败结论。
 
-1. 800字以上、且不超过3000字：执行完整高中作文批改，覆盖立意、结构、内容、语言、逻辑、素材和发展等级，输出完整可发布报告。
-2. 300-800字：执行片段评价、表达分析和修改建议，重点判断这段文字的审题、表达、结构衔接与论证方向，同样输出完整可发布报告。
-3. 1-300字：执行语言分析、结构建议和扩写指导，重点帮助学生补全观点、扩展内容、理顺结构，同样输出完整可发布报告。
-4. 超过3000字：按分段处理长文，先拆分段落与结构层次，再综合给出完整批改、分段点评和修改建议，不得拒绝批改。
+1. 短篇作文：重点关注语言、结构和扩写方向，帮助学生补齐观点和展开内容，同样输出完整可发布报告。
+2. 常规篇幅作文：执行完整高中作文批改，覆盖立意、结构、内容、语言、逻辑、素材和发展等级，输出完整可发布报告。
+3. 长篇作文：按分段处理长文，先拆分段落与结构层次，再综合给出完整批改、分段点评和修改建议，不得拒绝批改。
 
 当前作文字符数：${wordCount}。
 当前篇幅策略：${lengthBand}。

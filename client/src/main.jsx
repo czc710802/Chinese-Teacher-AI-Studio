@@ -786,13 +786,11 @@ function SubmitPage() {
     }
   }, [assignmentId]);
   const wordCount = text.replace(/\s+/g, '').length;
-  const lengthHint = wordCount > 3000
-    ? '当前作文篇幅较长，AI 将按分段处理并综合批改。'
-    : wordCount >= 800
-      ? '当前作文篇幅充足，AI 将执行完整高中作文批改。'
-      : wordCount >= 300
-        ? '当前作文篇幅适中，AI 将进行片段评价与表达分析。'
-        : '当前作文篇幅较短，AI 将进行语言分析、结构建议和扩写指导。';
+  const lengthHint = wordCount > 1000
+    ? '当前作文篇幅较长，AI 将按段落综合处理并给出完整批改。'
+    : wordCount > 0
+      ? 'AI 将根据篇幅自动调整批改重点，字数只作展示，不影响提交。'
+      : '请先输入有效作文内容。';
   async function submit() {
     if (!text.trim()) {
       setError('请先粘贴或输入作文正文');
@@ -817,7 +815,7 @@ function SubmitPage() {
       {assignment.requirements && <p><b>写作要求：</b>{assignment.requirements}</p>}
       <p>当前约 {wordCount} 字</p>
       <p className="hint">识别状态：✓ 文字识别完成</p>
-      <p className="hint">AI 会根据篇幅自动分档批改，篇幅较长也不会拒绝提交。</p>
+      <p className="hint">AI 会根据篇幅自动调整批改重点，不设最低或最高字数门槛。</p>
       <p className="hint">{lengthHint}</p>
       <p>提交设置：{assignment.allow_resubmit ? '允许重新提交/二稿提交' : '正式提交后不可重复提交'} · {assignment.allow_late_submit ? '允许迟交并标记' : '截止后禁止提交'}</p>
     </div>}
@@ -1310,7 +1308,7 @@ function StudentMobileTasksPage() {
         <p><b>{detail.title}</b></p>
         <p className="hint">{detail.class_name || ''} · {detail.essay_type || ''} · {detail.grade || ''}</p>
         <p className="hint">截止时间：{formatDateTime(detail.deadline)}</p>
-        <p className="hint">AI 会根据篇幅自动分档批改，提交后可直接查看进度。</p>
+        <p className="hint">AI 会根据篇幅自动调整批改重点，提交后可直接查看进度。</p>
         <p>{detail.prompt || '暂无材料说明'}</p>
         <p>{detail.requirements || '暂无写作要求'}</p>
         <p className="hint">状态：{status?.state || '未查询'}</p>
@@ -4065,7 +4063,7 @@ function TeacherAssignmentDetailPage() {
           <p><b>{assignment.title || '未命名任务'}</b></p>
           <p className="hint">{assignment.class_name || '未知班级'} · {assignment.essay_type || '材料作文'} · {assignment.grade || '未填写年级'}</p>
           <p className="hint">状态：{assignment.status || 'published'} · 发布时间：{formatDateTime(assignment.published_at || assignment.created_at)} · 截止：{formatDateTime(assignment.deadline)}</p>
-          <p className="hint">AI 将按篇幅自动分档批改 · 满分：{assignment.full_score || 60}</p>
+          <p className="hint">AI 将根据作文实际篇幅自动调整批改重点 · 满分：{assignment.full_score || 60}</p>
           <p className="hint">AI 自动批改：{Number(assignment.auto_grading ?? 1) ? '开启' : '关闭'} · 教师审核：{Number(assignment.requires_teacher_review ?? 1) ? '需要' : '不需要'} · 学生查看结果：{Number(assignment.allow_student_view_result ?? 1) ? '允许' : '不允许'}</p>
           <div className="assignment-submit-summary">
             <h3>写作材料</h3>

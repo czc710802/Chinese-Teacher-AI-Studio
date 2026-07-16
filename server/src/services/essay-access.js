@@ -13,10 +13,9 @@ export function countEssayWords(text = '') {
 export function getEssayLengthBand(text = '') {
   const wordCount = countEssayWords(text);
   if (wordCount <= 0) return 'empty';
-  if (wordCount < 300) return 'short';
-  if (wordCount < 800) return 'medium';
-  if (wordCount <= 3000) return 'full';
-  return 'long';
+  if (wordCount <= 300) return '短篇';
+  if (wordCount <= 1000) return '常规';
+  return '长篇';
 }
 
 export function isStudentInClass(database, studentId, classId) {

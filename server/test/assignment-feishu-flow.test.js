@@ -43,8 +43,8 @@ function createFixtureDb() {
     '观点明确，论据充分，结构完整。',
     '材料作文',
     60,
-    800,
-    1000,
+    0,
+    0,
     '2026-07-20T20:00:00',
     'https://pi.zhenwanyue.icu/submit/G2-20260713-001'
   ).lastInsertRowid;
@@ -104,7 +104,7 @@ test('assignment Feishu card uses public submit URLs and exposes assignment subm
 
   assert.match(content, /青年选择与时代责任/);
   assert.match(content, /写作要求/);
-  assert.match(content, /最低\/最高字数/);
+  assert.match(content, /篇幅说明/);
   assert.match(content, /当前已交\/未交/);
   assert.match(content, /查看作业/);
   assert.match(content, /立即提交/);

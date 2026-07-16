@@ -142,7 +142,7 @@ function buildManagedAssignmentRequirements({ grade, essayType }) {
   const gradeLabel = String(grade || '').trim();
   const typeLabel = normalizedEssayType(essayType);
   const context = gradeLabel ? `${gradeLabel}${typeLabel}` : typeLabel;
-  return `完成一篇${context}作文。AI 将按篇幅自动分档批改，教师可在后续环节继续审核和发布结果。`;
+  return `完成一篇${context}作文。AI 将根据作文实际篇幅自动调整批改重点，教师可在后续环节继续审核和发布结果。`;
 }
 
 export function buildSubmissionUrl(publicId, options = {}) {
@@ -358,10 +358,6 @@ export function createManagedAssignment(database, user, body, options = {}) {
     reminder_enabled: body.reminder_enabled === false || body.reminderEnabled === false ? 0 : 1,
     feishu_chat_id: String(body.feishu_chat_id || body.feishuChatId || '').trim()
   };
-  if (next.max_words && next.min_words && next.max_words < next.min_words) {
-    return { status: 400, message: '最高字数不能小于最低字数' };
-  }
-
   const existing = database.prepare(`
     SELECT a.*, COUNT(e.id) AS essay_count
     FROM assignments a
@@ -472,7 +468,7 @@ export function ensureSystemTestAssignment(database, { classId, actorId = 'syste
       essay_type: '材料作文',
       full_score: 60,
       grade: klass.grade || '测试',
-      min_words: 300,
+      min_words: 0,
       max_words: 0,
       scoring_standard: '内容、表达、发展等级综合评分',
       data_scope: 'system_test',
@@ -594,7 +590,7 @@ export function buildAssignmentFeishuCard(assignment) {
       { tag: 'div', text: { tag: 'lark_md', content: `**作文标题**：${assignment.title}` } },
       { tag: 'div', text: { tag: 'lark_md', content: `**写作材料摘要**：${promptSummary || '见作业详情'}` } },
       { tag: 'div', text: { tag: 'lark_md', content: `**写作要求**：${assignment.requirements || assignment.prompt}` } },
-      { tag: 'div', text: { tag: 'lark_md', content: `**最低/最高字数**：${assignment.min_words || 0} / ${assignment.max_words || '不限'}` } },
+      { tag: 'div', text: { tag: 'lark_md', content: `**篇幅说明**：AI 会根据作文实际长度自动调整批改重点` } },
       { tag: 'div', text: { tag: 'lark_md', content: `**截止时间**：${deadline}` } },
       { tag: 'div', text: { tag: 'lark_md', content: `**班级**：${assignment.class_name || assignment.grade || '未填写'}` } },
       { tag: 'div', text: { tag: 'lark_md', content: `**当前已交/未交**：${assignment.submitted_count || 0}/${assignment.missing_count || 0}` } },

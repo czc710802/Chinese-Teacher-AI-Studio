@@ -110,8 +110,8 @@ test('teacher assignment publishing creates a public submit link and submission 
     essay_type: '材料作文',
     full_score: 60,
     grade: '高二',
-    min_words: 800,
-    max_words: 1000,
+    min_words: 0,
+    max_words: 0,
     scoring_standard: '按内容、表达、发展等级评分。',
     deadline: '2026-07-20T20:00:00'
   }, { publicOrigin: 'https://pi.zhenwanyue.icu' });
@@ -122,8 +122,8 @@ test('teacher assignment publishing creates a public submit link and submission 
   assert.equal(result.status, 200);
   assert.match(result.assignment.public_id, /^G[A-Z0-9-]+-\d{8}-\d{3}$/);
   assert.equal(result.assignment.requirements, '观点明确，论据充分，结构完整。');
-  assert.equal(result.assignment.min_words, 800);
-  assert.equal(result.assignment.max_words, 1000);
+  assert.equal(result.assignment.min_words, 0);
+  assert.equal(result.assignment.max_words, 0);
   assert.equal(result.assignment.status, 'published');
   assert.equal(assignment.submitted_count, 0);
   assert.equal(assignment.missing_count, 1);
@@ -203,7 +203,7 @@ test('system test assignment initialization creates one live task and preserves 
   assert.deepEqual(liveRows.map((row) => row.title), ['师生闭环测试作文']);
   assert.equal(liveRows[0].status, 'published');
   assert.equal(liveRows[0].data_scope, 'system_test');
-  assert.equal(liveRows[0].min_words, 300);
+  assert.equal(liveRows[0].min_words, 0);
   assert.equal(liveRows[0].submitted_count, 0);
   assert.equal(liveRows[0].missing_count, 1);
   assert.equal(studentRows.length, 1);
