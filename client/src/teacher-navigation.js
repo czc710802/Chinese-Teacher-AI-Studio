@@ -1,6 +1,7 @@
 export const teacherNavigationEntries = [
   { id: 'dashboard', title: '首页', route: '/teacher', iconKey: 'home' },
   { id: 'classes', title: '我的班级', route: '/teacher/classes', iconKey: 'users' },
+  { id: 'students', title: '学生管理', route: '/teacher/students', iconKey: 'userPlus' },
   { id: 'joinRequests', title: '入班申请', route: '/teacher/join-requests', iconKey: 'userPlus' },
   { id: 'assignments', title: '作文任务', route: '/teacher/assignments', iconKey: 'bookOpen' },
   { id: 'submissions', title: '学生提交', route: '/teacher/submissions', iconKey: 'fileText' },
@@ -14,6 +15,7 @@ export const teacherNavigationEntries = [
 
 export const teacherHomeHighlights = [
   { id: 'classes', title: '查看我的班级', route: '/teacher/classes', iconKey: 'users', intro: '查看班级、成员与班级详情。' },
+  { id: 'students', title: '学生管理', route: '/teacher/students', iconKey: 'userPlus', intro: '创建学生账号、导入学生名单、维护成员。' },
   { id: 'joinRequests', title: '查看待审核', route: '/teacher/join-requests', iconKey: 'userPlus', intro: '集中查看班级入班申请。' },
   { id: 'assignments', title: '新建作文任务', route: '/teacher/assignments', iconKey: 'bookOpen', intro: '发布任务、管理作业与提交链接。' },
   { id: 'submissions', title: '查看学生提交', route: '/teacher/submissions', iconKey: 'fileText', intro: '查看提交记录与批改进度。' },

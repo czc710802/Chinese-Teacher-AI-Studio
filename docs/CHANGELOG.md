@@ -2,6 +2,13 @@
 
 格式：日期时间｜版本｜修改内容｜修改原因｜涉及文件。
 
+## 2026-07-16 12:51（Asia/Shanghai）｜11.0.1
+
+- **修改内容：** 教师端新增“学生管理”一级入口，教师班级工作台补入学生账号创建与批量导入面板，统一承接 live 班级与 legacy 班级两种学生维护模式；`/teacher/students` 从旧兼容跳转页改为真实学生管理页，教师首页增加学生管理快捷入口。
+- **修改原因：** 按班级管理模式升级要求，把学生账号创建、名单导入和成员维护收口到教师工作台，补齐班级教学闭环的教师端能力。
+- **验证结果：** `node --test server/test/ui-flow.test.js server/test/teacher-management.test.js server/test/student-access.test.js` 通过 75/75。
+- **涉及文件：** `client/src/main.jsx`、`client/src/teacher-navigation.js`、`server/test/ui-flow.test.js`、`docs/classroom-mode-upgrade-report.md`、`docs/CHANGELOG.md`。
+
 ## 2026-07-13 16:55（Asia/Shanghai）｜11.0.0
 
 - **修改内容：** 完成 P1.5.1 Benchmark 收尾版：Benchmark Runner 增加 `run-history.json` 历史运行记录，`/api/benchmark/status` 返回 `latestRun/recentRuns`；教师后台 Benchmark 页面增加最近运行时间、历史运行记录、重新运行 Benchmark、Word/PDF/Excel/Markdown 一键下载；新增 `npm run benchmark:check`，检查 Benchmark 目录、Provider Adapter、导出、图表、飞书通知开关、Word/PDF 和 WebDAV 写读删；补充测试锁定本机 4000 CORS 与 `fileURLToPath()` 路径处理规则。

@@ -546,7 +546,6 @@ test('teacher class management now points to safe management and test center ent
   assert.match(classManagement, /进入系统测试中心/);
   assert.doesNotMatch(classManagement, /删除班级/);
   assert.doesNotMatch(classManagement, /新增班级/);
-  assert.doesNotMatch(classManagement, /批量导入学生名单/);
 });
 
 test('teacher class and student management default to production scope and avoid destructive controls', () => {
@@ -557,8 +556,23 @@ test('teacher class and student management default to production scope and avoid
   assert.match(teacherClassesPage, /仅正式数据/);
   assert.match(teacherStudentsPage, /scope: 'production'/);
   assert.match(teacherStudentsPage, /仅正式数据/);
+  assert.match(teacherStudentsPage, /学生管理说明/);
+  assert.match(teacherStudentsPage, /打开班级工作台/);
   assert.doesNotMatch(classManagement, /deleteClass/);
   assert.doesNotMatch(classManagement, /rosterText/);
+});
+
+test('teacher classroom workbench exposes student account creation and batch import controls', () => {
+  const classWorkBench = functionBody('TeacherLifecycleClassPage');
+  const enrollmentPanel = functionBody('StudentEnrollmentPanel');
+  assert.match(classWorkBench, /StudentEnrollmentPanel/);
+  assert.match(mainSource, /function StudentEnrollmentPanel/);
+  assert.match(enrollmentPanel, /学生账号管理/);
+  assert.match(enrollmentPanel, /创建学生账号/);
+  assert.match(enrollmentPanel, /批量导入学生/);
+  assert.match(enrollmentPanel, /创建中\.\.\./);
+  assert.match(enrollmentPanel, /导入中\.\.\./);
+  assert.match(classWorkBench, /dataScope=\{klass\.data_scope \|\| 'production'\}/);
 });
 
 test('teacher test center exposes reset and legacy cleanup dry-run actions', () => {
@@ -594,6 +608,7 @@ test('student home and workspace prefer named classes and safely label blank one
 test('frontend exposes separated teacher, student and administrator entrances', () => {
   const adminHome = functionBody('AdminHome');
   assert.match(mainSource, /path="\/teacher"/);
+  assert.match(mainSource, /path="\/teacher\/students"/);
   assert.match(mainSource, /path="\/student"/);
   assert.match(mainSource, /path="\/submit\/:assignmentId"/);
   assert.match(mainSource, /path="\/admin"/);

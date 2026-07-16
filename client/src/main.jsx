@@ -49,6 +49,11 @@ function buildTeacherAssignmentDetailUrl(assignmentId = '') {
   return id ? `/teacher/assignments/${encodeURIComponent(id)}` : '/teacher/assignments';
 }
 
+function buildTeacherStudentsUrl(classKey = '') {
+  const id = String(classKey || '').trim();
+  return id ? `/teacher/students?classKey=${encodeURIComponent(id)}` : '/teacher/students';
+}
+
 function getClassDisplayName(klass) {
   const trimmed = String(klass?.name || '').trim();
   if (trimmed) return trimmed;
@@ -86,6 +91,148 @@ function Layout({ children }) {
 
 function Card({ title, icon, children, action, className = '' }) {
   return <section className={`card ${className}`.trim()}><div className="card-head"><h2>{title}</h2>{icon}{action}</div>{children}</section>;
+}
+
+function parseStudentBatchRows(text = '') {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^姓名[，,\t]/.test(line) && !/^student/i.test(line))
+    .map((line) => line.split(/[，,\t]/).map((part) => part.trim()))
+    .filter((parts) => parts[0])
+    .map(([name, studentNo = '', grade = '', school = '']) => ({
+      name,
+      student_no: studentNo,
+      grade,
+      school
+    }));
+}
+
+function StudentEnrollmentPanel({ classId, classKey = '', className = '', grade = '', schoolYear = '', dataScope = 'production', mode = 'live', onChanged }) {
+  const [singleForm, setSingleForm] = useState({ name: '', studentNo: '', grade: grade || '', school: '', schoolYear: schoolYear || '' });
+  const [batchText, setBatchText] = useState('');
+  const [busy, setBusy] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const currentSchoolYear = schoolYear || String(new Date().getFullYear());
+
+  async function submitSingle() {
+    const name = singleForm.name.trim();
+    if (!name) return setError('请填写学生姓名');
+    setBusy('single');
+    setError('');
+    setMessage('');
+    try {
+      let result;
+      if (mode === 'legacy') {
+        result = await api('/teacher/students', {
+          method: 'POST',
+          body: {
+            studentId: singleForm.studentNo.trim(),
+            studentName: name,
+            classKey,
+            className,
+            grade: singleForm.grade.trim() || grade,
+            schoolYear: singleForm.schoolYear.trim() || currentSchoolYear,
+            dataScope
+          }
+        });
+      } else {
+        result = await api(`/classes/${encodeURIComponent(classId)}/students`, {
+          method: 'POST',
+          body: {
+            students: [{
+              name,
+              student_no: singleForm.studentNo.trim(),
+              grade: singleForm.grade.trim() || grade,
+              school: singleForm.school.trim(),
+              dataScope
+            }]
+          }
+        });
+      }
+      const created = Array.isArray(result?.created) ? result.created : [];
+      setMessage(`已创建 ${created.length || 1} 个学生账号，初始密码统一为 123456。`);
+      setSingleForm({ name: '', studentNo: '', grade: grade || '', school: '', schoolYear: schoolYear || '' });
+      onChanged?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function submitBatch() {
+    const rows = parseStudentBatchRows(batchText);
+    if (!rows.length) return setError('请粘贴至少一行学生信息');
+    setBusy('batch');
+    setError('');
+    setMessage('');
+    try {
+      let result;
+      if (mode === 'legacy') {
+        const csv = [
+          'studentId,studentName,gender,className,grade,schoolYear',
+          ...rows.map((row) => [row.student_no || row.studentId || '', row.name || row.studentName || '', '', className || '', row.grade || grade || '', row.schoolYear || currentSchoolYear].map((cell) => String(cell || '').replace(/"/g, '""')).join(','))
+        ].join('\n');
+        result = await api(`/teacher/classes/${encodeURIComponent(classKey)}/import-students`, {
+          method: 'POST',
+          body: { content: csv, fileName: 'students.csv', dryRun: false }
+        });
+      } else {
+        result = await api(`/classes/${encodeURIComponent(classId)}/students`, {
+          method: 'POST',
+          body: { students: rows.map((row) => ({ ...row, dataScope })) }
+        });
+      }
+      const created = Array.isArray(result?.created) ? result.created : [];
+      setMessage(`已批量创建 ${created.length || rows.length} 个学生账号，初始密码统一为 123456。`);
+      setBatchText('');
+      onChanged?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  return <Card title="学生账号管理" icon={<UserPlus size={20} />}>
+    <div className="form-stack">
+      <p className="hint">支持为当前班级创建学生账号。提交后系统会自动生成登录账号，默认初始密码为 123456。</p>
+      {className && <p className="hint">当前班级：{className}</p>}
+      <div className="teacher-review-columns">
+        <label>学生姓名
+          <input value={singleForm.name} onChange={(e) => setSingleForm({ ...singleForm, name: e.target.value })} placeholder="例如：测试学生一" />
+        </label>
+        <label>学号
+          <input value={singleForm.studentNo} onChange={(e) => setSingleForm({ ...singleForm, studentNo: e.target.value })} placeholder="例如：TEST001" />
+        </label>
+      </div>
+      <div className="teacher-review-columns">
+        <label>年级
+          <input value={singleForm.grade} onChange={(e) => setSingleForm({ ...singleForm, grade: e.target.value })} placeholder="例如：高一" />
+        </label>
+        <label>学校
+          <input value={singleForm.school} onChange={(e) => setSingleForm({ ...singleForm, school: e.target.value })} placeholder="例如：惠安一中" />
+        </label>
+      </div>
+      {mode === 'legacy' && <label>学年
+        <input value={singleForm.schoolYear} onChange={(e) => setSingleForm({ ...singleForm, schoolYear: e.target.value })} placeholder={`例如：${currentSchoolYear}`} />
+      </label>}
+      <div className="actions">
+        <button type="button" className="primary-button" onClick={submitSingle} disabled={busy === 'single'}>{busy === 'single' ? '创建中...' : '创建学生账号'}</button>
+      </div>
+      <label>批量导入（每行：姓名,学号,年级,学校）
+        <textarea rows="5" value={batchText} onChange={(e) => setBatchText(e.target.value)} placeholder="测试学生一,TEST001,高一,测试中学" />
+      </label>
+      <div className="actions">
+        <button type="button" onClick={submitBatch} disabled={busy === 'batch'}>{busy === 'batch' ? '导入中...' : '批量导入学生'}</button>
+      </div>
+      {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
+    </div>
+  </Card>;
 }
 
 function TeacherRouteLink({ to, children, className = '' }) {
@@ -1505,11 +1652,13 @@ function TeacherLifecycleClassPage() {
         <p className="hint">邀请码：{currentInvite?.invite_code || klass.invite_code || '未配置'} · 有效期：{formatDateTime(currentInvite?.expires_at || klass.invite_code_expires_at)}</p>
         <div className="actions">
           <a className="button-link" href={detail.invite_url || '#'} target="_blank" rel="noreferrer">打开二维码链接</a>
+          <a className="button-link" href={buildTeacherStudentsUrl()}>学生管理</a>
           <button type="button" onClick={rotateInvite} disabled={busy === 'rotate'}>{busy === 'rotate' ? '生成中' : '重新生成邀请码'}</button>
         </div>
         {detail.qr_svg && <div className="qr-preview" dangerouslySetInnerHTML={{ __html: detail.qr_svg }} />}
         {message && <p className={message.includes('失败') ? 'error' : 'success'}>{message}</p>}
       </Card>
+      <StudentEnrollmentPanel classId={klass.id} className={klass.name || ''} dataScope={klass.data_scope || 'production'} onChanged={load} />
       <Card title="页面切换" icon={<Bookmark size={20} />}>
         <div className="actions">
           <button type="button" className={tab === 'overview' ? 'primary-button' : ''} onClick={() => setTab('overview')}>总览</button>
@@ -2385,6 +2534,27 @@ function TeacherClassDetailPage() {
     {message && <p className="error">{message}</p>}
     {data.klass && <><div className="teacher-kpis"><span><b>{data.stats.studentTotal}</b>学生</span><span><b>{data.stats.essayTotal}</b>作文</span><span><b>{data.stats.averageScore ?? '--'}</b>均分</span><span><b>{Math.round((data.stats.gradingCompletionRate || 0) * 100)}%</b>完成率</span></div>
     {trendRows.length ? <ResponsiveContainer width="100%" height={180}><LineChart data={trendRows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><Tooltip /><Line dataKey="count" stroke="#226b5f" strokeWidth={3} /></LineChart></ResponsiveContainer> : <p className="hint">暂无提交趋势。</p>}
+    <StudentEnrollmentPanel classKey={classKey} className={data.klass.className || data.klass.name || ''} grade={data.klass.grade || ''} schoolYear={data.klass.schoolYear || ''} mode="legacy" onChanged={() => Promise.all([
+      api(`/teacher/classes/${encodeURIComponent(classKey)}`),
+      api(`/teacher/classes/${encodeURIComponent(classKey)}/statistics`),
+      api(`/teacher/classes/${encodeURIComponent(classKey)}/students`),
+      api(`/teacher/classes/${encodeURIComponent(classKey)}/essays`)
+    ]).then(async ([klass, stats, students, essays]) => {
+      let assignments = [];
+      try {
+        const targetClassId = klass?.id || klass?.classId || classKey;
+        const targetScope = klass?.data_scope || klass?.dataScope || '';
+        const allAssignments = await api(buildTeacherAssignmentsUrl(targetClassId, targetScope === 'system_test' ? 'system_test' : ''));
+        assignments = Array.isArray(allAssignments) ? allAssignments : allAssignments?.items || allAssignments?.rows || [];
+      } catch {}
+      setData({
+        klass,
+        stats,
+        students: students.items || [],
+        essays: essays.items || [],
+        assignments
+      });
+    }).catch((err) => setMessage(err.message))} />
     <h3>学生</h3><div className="management-table">{data.students.map((student) => <a className="management-row" href={`/student-profiles/${encodeURIComponent(student.studentKey)}`} key={student.studentKey}><b>{student.studentName}<span>{student.studentId}</span></b><span>{student.essayCount}篇</span><span>{student.averageScore ?? '--'}分</span><span>{student.scoreTrend || '样本不足'}</span><span>{student.weakestAbility || '--'}</span></a>)}</div>
     <h3>任务</h3><div className="management-table">{data.assignments.length ? data.assignments.map((assignment) => <article className="management-row" key={assignment.id}><b>{assignment.title}<span>{assignment.public_id || assignment.id}</span></b><span>{assignment.status}</span><span>{formatDateTime(assignment.created_at)}</span><span>{assignment.submitted_count || 0} 已交</span><span>{assignment.missing_count || 0} 未交</span><span className="record-actions"><a href={buildTeacherAssignmentDetailUrl(assignment.id)}>查看详情</a></span></article>) : <p className="hint">当前班级暂无已发布任务。</p>}</div>
     <h3>作文</h3><div className="management-table">{data.essays.slice(0, 10).map((essay) => <article className="management-row" key={essay.archiveId}><b>{essay.essayTitle}<span>{essay.studentName}</span></b><span>{essay.score ?? '--'}分</span><span>{essay.level || '--'}</span><code>{essay.nasPath}</code></article>)}</div></>}
@@ -2401,6 +2571,13 @@ function TeacherStudentsPage() {
   }
   useEffect(() => { load().catch(() => {}); }, []);
   return <TeacherManagementShell title="学生管理" icon={<GraduationCap size={20} />}>
+    <Card title="学生管理说明" icon={<UserPlus size={20} />}>
+      <p className="hint">学生账号创建与批量导入已集中到班级工作台。这里用于全局搜索、查看和进入学生档案。</p>
+      <div className="actions">
+        <a className="button-link" href="/teacher/classes">打开班级工作台</a>
+        <a className="button-link" href="/teacher/test-center">打开系统测试中心</a>
+      </div>
+    </Card>
     <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
       <select value={filters.scope} onChange={(e) => setFilters({ ...filters, scope: e.target.value })}><option value="production">仅正式数据</option><option value="">全部历史数据</option></select>
       <label><Search size={18} /><input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="搜索姓名/学号" /></label>
@@ -3880,7 +4057,7 @@ function App() {
     <Route path="/teacher/classes/:classKey" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
     <Route path="/teacher/classes/:classKey/join-requests" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
     <Route path="/teacher/classes/:classKey/members" element={<RoleRoute roles={['teacher']}><TeacherLifecycleClassPage /></RoleRoute>} />
-    <Route path="/teacher/students" element={<RoleRoute roles={['teacher']}><TeacherLegacyRedirect to="/teacher/classes" /></RoleRoute>} />
+    <Route path="/teacher/students" element={<RoleRoute roles={['teacher']}><TeacherStudentsPage /></RoleRoute>} />
     <Route path="/teacher/test-center" element={<RoleRoute roles={['teacher']}><TeacherTestCenterPage /></RoleRoute>} />
     <Route path="/teacher/essays" element={<RoleRoute roles={['teacher']}><TeacherSubmissionsPage /></RoleRoute>} />
     <Route path="/teacher/tasks" element={<RoleRoute roles={['teacher']}><TeacherGradingPage /></RoleRoute>} />
