@@ -1129,7 +1129,43 @@ function StudentEssayReportPage() {
 }
 
 function StudentMobileLoginPage() {
-  return <Navigate to="/login" replace state={{ returnTo: '/student-mobile/home', role: 'student' }} />;
+  const nav = useNavigate();
+  const location = useLocation();
+  const [form, setForm] = useState({ username: '', password: '123456' });
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!form.username.trim()) {
+      setError('请填写学号或登录账号');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const data = await api('/auth/login', { method: 'POST', body: form });
+      setSession(data.user);
+      nav(location.state?.returnTo || '/student-mobile/home', { replace: true });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <Layout><div className="login-stage">
+    <form className="login" onSubmit={submit}>
+      <GraduationCap size={42} />
+      <h2>学生登录</h2>
+      <input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="学号 / 登录账号" />
+      <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="密码" />
+      {error && <p className="error">{error}</p>}
+      <button disabled={busy}><Send size={18} />{busy ? '登录中...' : '登录'}</button>
+      <p className="hint">默认初始密码为 123456。登录后可在个人中心修改密码。</p>
+    </form>
+    <PublicAccessPanel title="学生手机端入口" intro="使用学号和密码登录后，可进入班级、任务、提交与批改结果页面。" compact />
+  </div></Layout>;
 }
 
 function StudentMobileJoinPage() {
@@ -1528,6 +1564,25 @@ function TeacherLifecycleClassPage() {
     }
   }
 
+  async function deleteClass() {
+    const confirmName = window.prompt(`请输入班级名称“${klass.name || ''}”确认删除，系统会级联清理该班成员、任务和批改记录。`, klass.name || '');
+    if (confirmName !== klass.name) return;
+    if (!window.confirm(`确认永久删除班级“${klass.name || ''}”？`)) return;
+    setBusy('delete-class');
+    try {
+      await api(`/classes/${encodeURIComponent(classKey)}?cascade=1`, {
+        method: 'DELETE',
+        body: { cascade: true, confirmName: klass.name, reason: '教师删除班级' }
+      });
+      setMessage('已删除班级。');
+      window.location.href = '/teacher/classes';
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function approveRequest(requestId) {
     setBusy(`approve-${requestId}`);
     try {
@@ -1603,12 +1658,15 @@ function TeacherLifecycleClassPage() {
           <b>{member.name}<span>{member.student_no || '未填学号'}</span></b>
           <span>{member.username || '--'}</span>
           <span>{member.binding_status || 'active'}</span>
+          <span className={Number(member.essay_count || 0) === 0 ? 'error-text' : ''}>{Number(member.essay_count || 0)} 篇{Number(member.essay_count || 0) === 0 ? ' · 未提交作文' : ''}</span>
+          <span>{member.latest_grading_status || '--'}</span>
           <span>{formatDateTime(member.joined_at)}</span>
           <span>{member.left_at ? `离开：${formatDateTime(member.left_at)}` : '当前有效'}</span>
           <span className="record-actions">
             <button type="button" onClick={() => changeMemberStatus(member.id, 'pause', { reason: '教师停用成员' })} disabled={busy === `pause-${member.id}` || member.binding_status !== 'active'}>停用</button>
             <button type="button" onClick={() => changeMemberStatus(member.id, 'restore', { reason: '教师恢复成员' })} disabled={busy === `restore-${member.id}` || member.binding_status === 'active'}>恢复</button>
             <button type="button" className="danger-button" onClick={() => changeMemberStatus(member.id, 'remove', { reason: '教师移出班级' })} disabled={busy === `remove-${member.id}`}>移出</button>
+            {member.latest_essay_id ? <a className="button-link" href={`/teacher/essays/${encodeURIComponent(member.latest_essay_id)}`}>查看批改</a> : <span className="hint error-text">未提交作文</span>}
           </span>
           <div className="assignment-share-panel">
             <div className="row">
@@ -1654,6 +1712,7 @@ function TeacherLifecycleClassPage() {
           <a className="button-link" href={detail.invite_url || '#'} target="_blank" rel="noreferrer">打开二维码链接</a>
           <a className="button-link" href={buildTeacherStudentsUrl()}>学生管理</a>
           <button type="button" onClick={rotateInvite} disabled={busy === 'rotate'}>{busy === 'rotate' ? '生成中' : '重新生成邀请码'}</button>
+          <button type="button" className="danger-button" onClick={deleteClass} disabled={busy === 'delete-class'}>{busy === 'delete-class' ? '删除中' : '删除班级'}</button>
         </div>
         {detail.qr_svg && <div className="qr-preview" dangerouslySetInnerHTML={{ __html: detail.qr_svg }} />}
         {message && <p className={message.includes('失败') ? 'error' : 'success'}>{message}</p>}
@@ -2458,12 +2517,19 @@ function BenchmarkCenterPage() {
 
 function TeacherClassesPage() {
   const [rows, setRows] = useState([]);
+  const [liveRows, setLiveRows] = useState([]);
   const [filters, setFilters] = useState({ scope: 'production', keyword: '', grade: '', schoolYear: '', status: '' });
+  const [form, setForm] = useState({ name: '', grade: '', joinMode: 'approval', dataScope: 'production', maxStudents: 40 });
   const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState('');
   async function load() {
     const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString();
-    const data = await api(`/teacher/classes${query ? `?${query}` : ''}`);
-    setRows(data.items || []);
+    const [legacyRows, liveClasses] = await Promise.all([
+      api(`/teacher/classes${query ? `?${query}` : ''}`),
+      api('/classes').catch(() => [])
+    ]);
+    setRows(legacyRows.items || []);
+    setLiveRows(Array.isArray(liveClasses) ? liveClasses : liveClasses?.items || liveClasses?.rows || []);
   }
   useEffect(() => { load().catch((err) => setMessage(err.message)); }, []);
   async function archive(classKey) {
@@ -2471,7 +2537,91 @@ function TeacherClassesPage() {
     await api(`/teacher/classes/${encodeURIComponent(classKey)}/archive`, { method: 'POST', body: {} });
     await load();
   }
+  async function createClass(e) {
+    e.preventDefault();
+    if (!form.name.trim()) {
+      setMessage('请填写班级名称');
+      return;
+    }
+    setBusy('create');
+    setMessage('');
+    try {
+      await api('/classes', {
+        method: 'POST',
+        body: {
+          name: form.name.trim(),
+          grade: form.grade.trim(),
+          joinMode: form.joinMode,
+          dataScope: form.dataScope,
+          maxStudents: Number(form.maxStudents || 0),
+          status: 'active'
+        }
+      });
+      setForm({ name: '', grade: '', joinMode: 'approval', dataScope: 'production', maxStudents: 40 });
+      await load();
+      window.dispatchEvent(new Event('classes-changed'));
+      setMessage('已创建班级。');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy('');
+    }
+  }
+  async function deleteClass(klass) {
+    const confirmName = window.prompt(`请输入班级名称“${klass.name}”确认删除，系统会连同学生名单和批改记录一起清理。`, klass.name);
+    if (confirmName !== klass.name) return;
+    if (!window.confirm(`确认永久删除班级“${klass.name}”？这会级联删除该班成员、任务和批改记录。`)) return;
+    setBusy(`delete-${klass.id}`);
+    setMessage('');
+    try {
+      await api(`/classes/${encodeURIComponent(klass.id)}?cascade=1`, {
+        method: 'DELETE',
+        body: { cascade: true, confirmName: klass.name, reason: '教师删除班级' }
+      });
+      await load();
+      window.dispatchEvent(new Event('classes-changed'));
+      setMessage(`已删除班级：${klass.name}`);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy('');
+    }
+  }
   return <TeacherManagementShell title="班级管理" icon={<Users size={20} />}>
+    <Card title="新增班级" icon={<Plus size={20} />}>
+      <form className="form-stack" onSubmit={createClass}>
+        <div className="teacher-review-columns">
+          <label>班级名称
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如：高一（3）班" />
+          </label>
+          <label>年级
+            <input value={form.grade} onChange={(e) => setForm({ ...form, grade: e.target.value })} placeholder="例如：高一" />
+          </label>
+        </div>
+        <div className="teacher-review-columns">
+          <label>加入模式
+            <select value={form.joinMode} onChange={(e) => setForm({ ...form, joinMode: e.target.value })}>
+              <option value="approval">approval</option>
+              <option value="open">open</option>
+              <option value="closed">closed</option>
+            </select>
+          </label>
+          <label>数据作用域
+            <select value={form.dataScope} onChange={(e) => setForm({ ...form, dataScope: e.target.value })}>
+              <option value="production">production</option>
+              <option value="system_test">system_test</option>
+              <option value="migrated_legacy">migrated_legacy</option>
+            </select>
+          </label>
+        </div>
+        <label>最大人数
+          <input type="number" min="0" value={form.maxStudents} onChange={(e) => setForm({ ...form, maxStudents: Number(e.target.value) })} />
+        </label>
+        <div className="actions">
+          <button type="submit" className="primary-button" disabled={busy === 'create'}>{busy === 'create' ? '创建中...' : '新增班级'}</button>
+        </div>
+      </form>
+    </Card>
     <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
       <select value={filters.scope} onChange={(e) => setFilters({ ...filters, scope: e.target.value })}><option value="production">仅正式数据</option><option value="">全部历史数据</option></select>
       <label><Search size={18} /><input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="搜索班级/教师" /></label>
@@ -2480,8 +2630,27 @@ function TeacherClassesPage() {
       <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="">全部状态</option><option value="active">active</option><option value="archived">archived</option></select>
       <button><Filter size={18} />筛选</button>
     </form>
-    <p className="hint">默认仅展示正式班级。切换到“全部历史数据”可以查看旧班级，但不会自动执行删除。</p>
     {message && <p className="error">{message}</p>}
+    <Card title="当前班级" icon={<School size={20} />}>
+      <p className="hint">删除班级会级联清理该班的成员关系、任务和批改记录，需教师二次确认。</p>
+      <div className="management-table">
+        {liveRows.map((klass) => <article className="management-row" key={klass.id}>
+          <b>{klass.name}<span>{klass.grade || '未填写年级'} · {klass.data_scope || 'production'}</span></b>
+          <span>{klass.student_count ?? 0} 人</span>
+          <span>{klass.assignment_count ?? 0} 任务</span>
+          <span>{klass.pending_join_requests ?? 0} 待审核</span>
+          <span>{klass.status || 'active'}</span>
+          <span className="record-actions">
+            <a href={`/teacher/classes/${encodeURIComponent(klass.id)}`}>详情</a>
+            <a href={`/teacher/classes/${encodeURIComponent(klass.id)}/members`}>成员管理</a>
+            <a href={buildTeacherJoinRequestsUrl(klass.id)}>入班申请</a>
+            <button type="button" className="danger-button" disabled={busy === `delete-${klass.id}`} onClick={() => deleteClass(klass)}>{busy === `delete-${klass.id}` ? '删除中...' : '删除班级'}</button>
+          </span>
+        </article>)}
+        {!liveRows.length && <p className="hint">暂无可管理班级，可先创建一个班级。</p>}
+      </div>
+    </Card>
+    <p className="hint">默认仅展示正式班级。切换到“全部历史数据”可以查看旧班级，但不会自动执行删除。</p>
     <div className="management-table">
       {rows.map((klass) => <article className="management-row" key={klass.classKey}>
         <b>{klass.className}<span>{klass.grade} · {klass.schoolYear}</span></b>
@@ -2596,6 +2765,7 @@ function TeacherTestCenterPage() {
   const [assignments, setAssignments] = useState([]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState('');
+  const [taskError, setTaskError] = useState('');
   const [qrExpanded, setQrExpanded] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
@@ -2697,7 +2867,14 @@ function TeacherTestCenterPage() {
     }
   }
 
-  useEffect(() => { load().catch(() => {}); }, []);
+  useEffect(() => {
+    load().catch(() => {});
+    const handleAssignmentsChanged = () => {
+      load().catch(() => {});
+    };
+    window.addEventListener('assignments-changed', handleAssignmentsChanged);
+    return () => window.removeEventListener('assignments-changed', handleAssignmentsChanged);
+  }, []);
 
   async function resetFixture() {
     const confirmed = window.prompt('请输入确认文本 RESET SYSTEM TEST 以重置系统测试环境');

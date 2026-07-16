@@ -9,6 +9,7 @@ import {
   archiveLifecycleClass,
   buildQrSvg,
   createLifecycleClass,
+  deleteLifecycleClassCascade,
   listClassMembers,
   listJoinRequests,
   listLifecycleClasses,
@@ -256,6 +257,12 @@ classRouter.patch('/:classKey', roleGuard('teacher'), (req, res, next) => {
 });
 
 classRouter.delete('/:classId', roleGuard('teacher'), (req, res) => {
+  const cascade = String(req.query.cascade || req.body?.cascade || '').toLowerCase();
+  if (cascade === '1' || cascade === 'true' || cascade === 'yes') {
+    const result = deleteLifecycleClassCascade(db, req.user, req.params.classId, req.body || {});
+    if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+    return res.json({ ok: true, class: result.class, cascade: true, deletedStudents: result.deletedStudents || 0, deletedUsers: result.deletedUsers || 0 });
+  }
   const result = deleteManagedEmptyClass(db, req.user, req.params.classId);
   if (result.status !== 200) return res.status(result.status).json({ message: result.message });
   res.json({ ok: true, class: result.class });
@@ -296,10 +303,10 @@ classRouter.post('/:id/students', roleGuard('teacher'), (req, res) => {
     let student = studentNo
       ? db.prepare('SELECT * FROM students WHERE student_no = ?').get(studentNo)
       : null;
-    let username;
     if (!student) {
-      const base = `s${(studentNo || name).replace(/[^a-zA-Z0-9]/g, '') || Date.now()}`.slice(0, 28);
-      username = base;
+      const exactUsername = studentNo && !db.prepare('SELECT 1 FROM users WHERE username = ?').get(studentNo) ? studentNo : '';
+      const base = exactUsername || `student_${(studentNo || name).replace(/[^a-zA-Z0-9]/g, '') || Date.now()}`.slice(0, 28);
+      let username = base;
       let suffix = 1;
       while (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) {
         username = `${base}${suffix++}`;

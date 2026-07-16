@@ -545,15 +545,17 @@ test('teacher class management now points to safe management and test center ent
   assert.match(classManagement, /打开学生管理/);
   assert.match(classManagement, /进入系统测试中心/);
   assert.doesNotMatch(classManagement, /删除班级/);
-  assert.doesNotMatch(classManagement, /新增班级/);
 });
 
-test('teacher class and student management default to production scope and avoid destructive controls', () => {
+test('teacher class management exposes live create and cascade delete controls while student management stays scoped', () => {
   const teacherClassesPage = functionBody('TeacherClassesPage');
   const teacherStudentsPage = functionBody('TeacherStudentsPage');
   const classManagement = functionBody('ClassManagement');
-  assert.match(teacherClassesPage, /scope: 'production'/);
-  assert.match(teacherClassesPage, /仅正式数据/);
+  assert.match(teacherClassesPage, /新增班级/);
+  assert.match(teacherClassesPage, /删除班级/);
+  assert.match(teacherClassesPage, /级联删除/);
+  assert.match(teacherClassesPage, /createClass/);
+  assert.match(teacherClassesPage, /deleteClass/);
   assert.match(teacherStudentsPage, /scope: 'production'/);
   assert.match(teacherStudentsPage, /仅正式数据/);
   assert.match(teacherStudentsPage, /学生管理说明/);
@@ -573,6 +575,9 @@ test('teacher classroom workbench exposes student account creation and batch imp
   assert.match(enrollmentPanel, /创建中\.\.\./);
   assert.match(enrollmentPanel, /导入中\.\.\./);
   assert.match(classWorkBench, /dataScope=\{klass\.data_scope \|\| 'production'\}/);
+  assert.match(classWorkBench, /删除班级/);
+  assert.match(classWorkBench, /未提交作文/);
+  assert.match(classWorkBench, /查看批改/);
 });
 
 test('teacher test center exposes reset and legacy cleanup dry-run actions', () => {
@@ -581,6 +586,8 @@ test('teacher test center exposes reset and legacy cleanup dry-run actions', () 
   assert.match(testCenter, /重置测试环境/);
   assert.match(testCenter, /重新生成 dry-run/);
   assert.match(testCenter, /拟物理删除/);
+  assert.match(testCenter, /assignments-changed/);
+  assert.match(testCenter, /查看测试任务/);
 });
 
 test('student roster displays a deduplicated list while preserving workspace links', () => {
@@ -620,6 +627,7 @@ test('frontend exposes separated teacher, student and administrator entrances', 
 });
 
 test('student mobile entry exposes login join home task detail and profile routes', () => {
+  const mobileLogin = functionBody('StudentMobileLoginPage');
   const mobileHome = functionBody('StudentMobileHomePage');
   const mobileTasks = functionBody('StudentMobileTasksPage');
   assert.match(mainSource, /path="\/student-mobile"/);
@@ -630,6 +638,9 @@ test('student mobile entry exposes login join home task detail and profile route
   assert.match(mainSource, /path="\/student-mobile\/tasks"/);
   assert.match(mainSource, /path="\/student-mobile\/tasks\/:assignmentId"/);
   assert.match(mainSource, /path="\/student-mobile\/profile"/);
+  assert.match(mobileLogin, /学号/);
+  assert.match(mobileLogin, /修改密码/);
+  assert.match(mobileLogin, /登录/);
   assert.match(mobileHome, /自由作文 AI 批改/);
   assert.match(mobileHome, /我的任务/);
   assert.match(mobileHome, /加入班级/);

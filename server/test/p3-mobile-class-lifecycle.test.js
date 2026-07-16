@@ -10,10 +10,12 @@ import {
   createJoinRequest,
   createJoinRequestByCode,
   createLifecycleClass,
+  deleteLifecycleClassCascade,
   getJoinPreview,
   getJoinPreviewByCode,
   getJoinRequestStatus,
   listLifecycleClasses,
+  listClassMembers,
   listTeacherJoinRequests,
   listStudentMobileAssignments,
   listStudentMobileClasses,
@@ -43,6 +45,8 @@ function createFixtureDb() {
     INSERT INTO assignments (class_id, public_id, title, prompt, requirements, essay_type, full_score, status, deadline)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(classId, 'G2-20260715-001', '青年选择与时代责任', '围绕青年选择与时代责任写作。', '观点明确。', '材料作文', 60, 'published', '2030-01-01T00:00:00').lastInsertRowid;
+  const essayId = database.prepare('INSERT INTO essays (assignment_id, student_id, title, original_text, grading_status, status) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(assignmentId, studentId, '青年选择', '正文', 'completed', 'submitted').lastInsertRowid;
 
   return {
     database,
@@ -51,7 +55,8 @@ function createFixtureDb() {
     teacherId,
     studentId,
     classId,
-    assignmentId
+    assignmentId,
+    essayId
   };
 }
 
@@ -111,6 +116,16 @@ test('teacher class lifecycle includes live assignment counts for class overview
 
   assert.ok(managedClass);
   assert.equal(managedClass.assignment_count, 1);
+});
+
+test('teacher class lifecycle member rows expose essay summary and latest essay id for roster jumps', () => {
+  const fixture = createFixtureDb();
+  const members = listClassMembers(fixture.database, fixture.teacherUser, fixture.classId).rows;
+
+  assert.equal(members.length, 1);
+  assert.equal(members[0].essay_count, 1);
+  assert.equal(Number(members[0].latest_essay_id), Number(fixture.essayId));
+  assert.equal(members[0].latest_grading_status, 'completed');
 });
 
 test('approval and archive restore flows preserve membership and student mobile visibility', () => {
@@ -278,7 +293,40 @@ test('approval can create a student identity for legacy join requests without st
   assert.ok(savedRequest.student_id);
   assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM class_students WHERE class_id = ? AND student_id = ?').get(created.class.id, savedRequest.student_id).count, 1);
   assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM student_class_bindings WHERE class_id = ? AND student_id = ? AND status = ?').get(created.class.id, savedRequest.student_id, 'active').count, 1);
-  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM users WHERE name = ?').get('测试学生一').count, 1);
+  const createdUser = fixture.database.prepare('SELECT username, password FROM users WHERE name = ?').get('测试学生一');
+  assert.equal(createdUser.username, 'TEST001');
+  assert.equal(createdUser.password, '123456');
+});
+
+test('teacher can cascade delete a live class and remove orphaned student accounts safely', () => {
+  const fixture = createFixtureDb();
+  const cascadeClass = createLifecycleClass(fixture.database, fixture.teacherUser, {
+    name: '高二9班',
+    grade: '高二',
+    join_mode: 'approval',
+    max_students: 45
+  });
+  const request = createJoinRequest(fixture.database, {
+    token: cascadeClass.inviteToken,
+    studentName: '测试学生一',
+    studentNo: 'TEST001',
+    source: 'student-mobile'
+  });
+  assert.equal(request.status, 200);
+  const approved = approveJoinRequest(fixture.database, fixture.teacherUser, cascadeClass.class.id, request.request.id);
+  assert.equal(approved.status, 200);
+  fixture.database.prepare('INSERT INTO essays (assignment_id, student_id, title, original_text, grading_status, status) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(fixture.assignmentId, fixture.studentId, '原有作文', '正文', 'completed', 'submitted');
+
+  const deleted = deleteLifecycleClassCascade(fixture.database, fixture.teacherUser, cascadeClass.class.id, { cascade: true, confirmName: '高二9班' });
+
+  assert.equal(deleted.status, 200);
+  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM classes WHERE id = ?').get(cascadeClass.class.id).count, 0);
+  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM class_students WHERE class_id = ?').get(cascadeClass.class.id).count, 0);
+  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM assignments WHERE class_id = ?').get(cascadeClass.class.id).count, 0);
+  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM users WHERE name = ?').get('测试学生一').count, 0);
+  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM students WHERE student_no = ?').get('TEST001').count, 0);
+  assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM users WHERE id = ?').get(fixture.studentUser.id).count, 1);
 });
 
 test('teacher can pause, restore, remove and transfer memberships without deleting historical bindings', () => {

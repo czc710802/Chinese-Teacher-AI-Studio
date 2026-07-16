@@ -4,6 +4,49 @@ import { requireUser } from '../middleware/auth.js';
 
 export const authRouter = Router();
 
+export function resolveLoginUser(database, credential = '', password = '') {
+  const loginInput = credential && typeof credential === 'object'
+    ? credential.username ?? credential.studentNo ?? credential.student_no ?? credential.account ?? ''
+    : credential;
+  const secretInput = credential && typeof credential === 'object'
+    ? credential.password ?? password ?? ''
+    : password;
+  const login = String(loginInput || '').trim();
+  const secret = String(secretInput || '').trim();
+  if (!login || !secret) return { status: 401, message: '账号或密码错误' };
+
+  const byUsername = database.prepare('SELECT id, username, role, name FROM users WHERE username = ? AND password = ?').get(login, secret);
+  if (byUsername) {
+    const student = byUsername.role === 'student' ? database.prepare('SELECT id FROM students WHERE user_id = ?').get(byUsername.id) : null;
+    const teacher = byUsername.role === 'teacher' ? database.prepare('SELECT id FROM teachers WHERE user_id = ?').get(byUsername.id) : null;
+    return { status: 200, user: { ...byUsername, studentId: student?.id, teacherId: teacher?.id } };
+  }
+
+  const byStudentNo = database.prepare(`
+    SELECT u.id, u.username, u.role, u.name, s.id AS student_id
+    FROM students s
+    JOIN users u ON u.id = s.user_id
+    WHERE s.student_no = ? AND u.password = ? AND u.role = 'student'
+    ORDER BY s.id DESC
+    LIMIT 1
+  `).get(login, secret);
+  if (byStudentNo) {
+    return {
+      status: 200,
+      user: {
+        id: byStudentNo.id,
+        username: byStudentNo.username,
+        role: byStudentNo.role,
+        name: byStudentNo.name,
+        studentId: byStudentNo.student_id,
+        teacherId: null
+      }
+    };
+  }
+
+  return { status: 401, message: '账号或密码错误' };
+}
+
 authRouter.post('/change-password', requireUser, (req, res) => {
   const currentPassword = String(req.body.current_password || '');
   const newPassword = String(req.body.new_password || '');
@@ -17,10 +60,8 @@ authRouter.post('/change-password', requireUser, (req, res) => {
 
 authRouter.post('/login', (req, res) => {
   const { username, password } = req.body;
-  const user = db.prepare('SELECT id, username, role, name FROM users WHERE username = ? AND password = ?').get(username, password);
-  if (!user) return res.status(401).json({ message: '账号或密码错误' });
-  if (!['student', 'teacher', 'admin'].includes(user.role)) return res.status(403).json({ message: '该账号角色已停用' });
-  const student = user.role === 'student' ? db.prepare('SELECT id FROM students WHERE user_id = ?').get(user.id) : null;
-  const teacher = user.role === 'teacher' ? db.prepare('SELECT id FROM teachers WHERE user_id = ?').get(user.id) : null;
-  res.json({ user: { ...user, studentId: student?.id, teacherId: teacher?.id } });
+  const result = resolveLoginUser(db, username, password);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  if (!['student', 'teacher', 'admin'].includes(result.user.role)) return res.status(403).json({ message: '该账号角色已停用' });
+  res.json({ user: result.user });
 });

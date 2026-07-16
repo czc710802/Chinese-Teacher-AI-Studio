@@ -471,8 +471,13 @@ function findStudentByIdentity(database, payload = {}) {
   return null;
 }
 
-function uniqueStudentUsername(database, studentNo, studentName) {
-  const baseRaw = studentNo || studentName || `student_${Date.now()}`;
+export function buildStudentLoginUsername(database, studentNo, studentName) {
+  const normalizedStudentNo = String(studentNo || '').trim();
+  if (normalizedStudentNo) {
+    const existing = database.prepare('SELECT id, role FROM users WHERE username = ?').get(normalizedStudentNo);
+    if (!existing || existing.role === 'student') return normalizedStudentNo;
+  }
+  const baseRaw = studentName || normalizedStudentNo || `student_${Date.now()}`;
   const base = `student_${String(baseRaw).replace(/[^a-zA-Z0-9]/g, '').slice(0, 18) || Date.now()}`;
   let username = base;
   let index = 1;
@@ -488,8 +493,8 @@ function createStudentIdentity(database, klass, payload = {}) {
   const studentNo = String(payload.studentNo || payload.student_no || '').trim();
   const existing = findStudentByIdentity(database, payload);
   if (existing) return existing;
-  const username = uniqueStudentUsername(database, studentNo, studentName);
-  const password = studentNo || '123456';
+  const username = buildStudentLoginUsername(database, studentNo, studentName);
+  const password = '123456';
   const addUser = database.prepare('INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)');
   const addStudent = database.prepare('INSERT INTO students (user_id, student_no, grade, school, data_scope) VALUES (?, ?, ?, ?, ?)');
   const userId = addUser.run(username, password, 'student', studentName).lastInsertRowid;
@@ -758,7 +763,45 @@ export function listClassMembers(database = db, user, classId) {
            b.join_mode AS binding_join_mode,
            b.joined_at,
            b.left_at,
-           CASE WHEN COALESCE(b.status, 'active') = 'active' THEN 1 ELSE 0 END AS is_active
+           CASE WHEN COALESCE(b.status, 'active') = 'active' THEN 1 ELSE 0 END AS is_active,
+           COALESCE((
+             SELECT COUNT(*)
+             FROM essays e
+             JOIN assignments a ON a.id = e.assignment_id
+             WHERE e.student_id = s.id AND a.class_id = cs.class_id
+           ), 0) AS essay_count,
+           (
+             SELECT e2.id
+             FROM essays e2
+             JOIN assignments a2 ON a2.id = e2.assignment_id
+             WHERE e2.student_id = s.id AND a2.class_id = cs.class_id
+             ORDER BY COALESCE(e2.submitted_at, e2.created_at) DESC, e2.id DESC
+             LIMIT 1
+           ) AS latest_essay_id,
+           (
+             SELECT e2.report_id
+             FROM essays e2
+             JOIN assignments a2 ON a2.id = e2.assignment_id
+             WHERE e2.student_id = s.id AND a2.class_id = cs.class_id
+             ORDER BY COALESCE(e2.submitted_at, e2.created_at) DESC, e2.id DESC
+             LIMIT 1
+           ) AS latest_report_id,
+           (
+             SELECT e2.grading_status
+             FROM essays e2
+             JOIN assignments a2 ON a2.id = e2.assignment_id
+             WHERE e2.student_id = s.id AND a2.class_id = cs.class_id
+             ORDER BY COALESCE(e2.submitted_at, e2.created_at) DESC, e2.id DESC
+             LIMIT 1
+           ) AS latest_grading_status,
+           (
+             SELECT COALESCE(e2.submitted_at, e2.created_at)
+             FROM essays e2
+             JOIN assignments a2 ON a2.id = e2.assignment_id
+             WHERE e2.student_id = s.id AND a2.class_id = cs.class_id
+             ORDER BY COALESCE(e2.submitted_at, e2.created_at) DESC, e2.id DESC
+             LIMIT 1
+           ) AS latest_submitted_at
     FROM class_students cs
     JOIN students s ON s.id = cs.student_id
     JOIN users u ON u.id = s.user_id
@@ -767,6 +810,90 @@ export function listClassMembers(database = db, user, classId) {
     ORDER BY CAST(s.student_no AS INTEGER), s.student_no, u.name
   `).all(classId);
   return { status: 200, rows };
+}
+
+export function deleteLifecycleClassCascade(database = db, user, classId, input = {}) {
+  if (!teacherOwnsClass(database, user, classId)) return { status: 403, message: '没有管理该班级的权限' };
+  const klass = database.prepare('SELECT * FROM classes WHERE id = ?').get(classId);
+  if (!klass) return { status: 404, message: '班级不存在' };
+  const confirmName = String(input.confirmName || input.confirm_name || '').trim();
+  if (confirmName && confirmName !== String(klass.name || '').trim()) {
+    return { status: 400, message: '班级名称确认不匹配' };
+  }
+  const cascade = Boolean(input.cascade || input.cascadeDelete || input.forceDelete);
+  if (!cascade) {
+    const studentCount = database.prepare('SELECT COUNT(*) AS count FROM class_students WHERE class_id = ?').get(classId).count;
+    const assignmentCount = database.prepare('SELECT COUNT(*) AS count FROM assignments WHERE class_id = ?').get(classId).count;
+    if (studentCount > 0 || assignmentCount > 0) {
+      return { status: 409, message: '请先删除学生名单和作文任务后再删除班级' };
+    }
+    database.prepare('DELETE FROM classes WHERE id = ?').run(classId);
+    return { status: 200, class: klass, cascade: false, deletedStudents: 0, deletedUsers: 0 };
+  }
+
+  const members = database.prepare(`
+    SELECT DISTINCT s.id AS student_id, s.user_id, s.student_no, u.username, u.name
+    FROM class_students cs
+    JOIN students s ON s.id = cs.student_id
+    JOIN users u ON u.id = s.user_id
+    WHERE cs.class_id = ?
+  `).all(classId);
+  const deletableUsers = [];
+  for (const student of members) {
+    const otherClassCount = database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM class_students
+      WHERE student_id = ? AND class_id != ?
+    `).get(student.student_id, classId).count;
+    const otherEssayCount = database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM essays e
+      JOIN assignments a ON a.id = e.assignment_id
+      WHERE e.student_id = ? AND a.class_id != ?
+    `).get(student.student_id, classId).count;
+    if (Number(otherClassCount || 0) === 0 && Number(otherEssayCount || 0) === 0) {
+      deletableUsers.push(student.user_id);
+    }
+  }
+
+  const before = {
+    class: klass,
+    members,
+    deletableUsers
+  };
+
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database.prepare('DELETE FROM classes WHERE id = ?').run(classId);
+    for (const userId of deletableUsers) {
+      database.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    }
+    ensureAudit(database, {
+      operatorId: user.id,
+      operatorRole: user.role,
+      targetType: 'class',
+      targetId: String(classId),
+      action: 'class.delete.cascade',
+      before,
+      after: {
+        classId: Number(classId),
+        deletedUsers: deletableUsers.length,
+        removedMembers: members.length
+      },
+      reason: String(input.reason || 'teacher delete class cascade')
+    });
+    database.exec('COMMIT');
+    return {
+      status: 200,
+      class: klass,
+      cascade: true,
+      deletedStudents: members.length,
+      deletedUsers: deletableUsers.length
+    };
+  } catch (error) {
+    try { database.exec('ROLLBACK'); } catch {}
+    return { status: 500, message: error?.message || '删除班级失败' };
+  }
 }
 
 export function getJoinRequestStatus(database = db, user, requestId) {
