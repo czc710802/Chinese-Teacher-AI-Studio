@@ -157,6 +157,26 @@ test('student essay scope ignores spoofed student_id and only allows own essay',
   assert.equal(canReadEssay(fixture.database, fixture.studentUser, fixture.otherEssayId), false);
 });
 
+test('student submission requires an active membership even if roster data still exists', () => {
+  const fixture = createFixtureDb();
+  fixture.database.prepare(`
+    INSERT INTO student_class_bindings (student_id, class_id, join_mode, status, joined_at, updated_at, left_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).run(fixture.studentId, fixture.classId, 'approval', 'removed');
+  const assignmentId = fixture.database.prepare('SELECT id FROM assignments WHERE class_id = ? LIMIT 1').get(fixture.classId).id;
+
+  const scope = resolveEssayListScope(fixture.database, fixture.studentUser, { classId: fixture.classId });
+  const submitTarget = resolveEssaySubmitTarget(fixture.database, fixture.studentUser, {
+    assignment_id: assignmentId,
+    original_text: '这是一篇需要活跃 membership 才能提交的作文。'
+  });
+
+  assert.equal(scope.status, 403);
+  assert.equal(scope.message, '没有查看该班级作文的权限');
+  assert.equal(submitTarget.status, 403);
+  assert.equal(submitTarget.message, '没有提交该作文任务的权限');
+});
+
 test('student text submission validates assignment and class membership before insert', () => {
   const fixture = createFixtureDb();
   const otherClassId = fixture.database.prepare('INSERT INTO classes (name, grade, teacher_id) VALUES (?, ?, ?)')

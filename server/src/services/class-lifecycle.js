@@ -647,6 +647,43 @@ export function listJoinRequests(database = db, user, classId) {
   };
 }
 
+export function listTeacherJoinRequests(database = db, user, filters = {}) {
+  const teacherId = getTeacherId(database, user);
+  if (!teacherId) return { status: 403, message: '没有管理班级的权限', rows: [] };
+
+  const classId = String(filters.classId || '').trim();
+  const status = String(filters.status || 'pending').trim().toLowerCase();
+  if (classId) {
+    if (!teacherOwnsClass(database, user, classId)) return { status: 403, message: '没有管理该班级的权限', rows: [] };
+    return listJoinRequests(database, user, classId);
+  }
+
+  const conditions = ['c.teacher_id = ?'];
+  const params = [teacherId];
+  if (status && status !== 'all') {
+    conditions.push('LOWER(COALESCE(r.status, \'\')) = ?');
+    params.push(status);
+  }
+
+  return {
+    status: 200,
+    rows: database.prepare(`
+      SELECT r.*, c.name AS class_name, c.grade AS class_grade, c.teacher_id, c.data_scope AS class_data_scope,
+             i.invite_code, i.join_mode AS invite_join_mode,
+             s.id AS linked_student_id, u.name AS linked_student_name, s.student_no AS linked_student_no,
+             COALESCE(b.status, '') AS membership_status
+      FROM class_join_requests r
+      JOIN classes c ON c.id = r.class_id
+      LEFT JOIN class_invites i ON i.id = r.invite_id
+      LEFT JOIN students s ON s.id = r.student_id
+      LEFT JOIN users u ON u.id = s.user_id
+      LEFT JOIN student_class_bindings b ON b.student_id = r.student_id AND b.class_id = r.class_id
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY CASE WHEN r.status = 'pending' THEN 0 ELSE 1 END, r.requested_at DESC, r.id DESC
+    `).all(...params)
+  };
+}
+
 export function approveJoinRequest(database = db, user, classId, requestId) {
   if (!teacherOwnsClass(database, user, classId)) return { status: 403, message: '没有管理该班级的权限' };
   const request = database.prepare('SELECT * FROM class_join_requests WHERE id = ? AND class_id = ?').get(requestId, classId);

@@ -2753,52 +2753,49 @@ function TeacherJoinRequestsPage() {
         setRows(data || []);
         return;
       }
-      const data = await api('/teacher/classes');
+      const params = new URLSearchParams();
+      if (statusFilter) params.set('status', statusFilter);
+      const data = await api(`/teacher/join-requests${params.toString() ? `?${params.toString()}` : ''}`);
       setRows(data.items || data || []);
     } catch (err) {
       setMessage(err.message);
     } finally {
       setLoading(false);
     }
-  }, [classIdFilter]);
+  }, [classIdFilter, statusFilter]);
   useEffect(() => {
     loadRequests().catch(() => {});
   }, [loadRequests]);
-  const visibleRows = classIdFilter && statusFilter !== 'all' ? rows.filter((row) => String(row.status || '') === statusFilter) : rows;
+  const visibleRows = statusFilter && statusFilter !== 'all' ? rows.filter((row) => String(row.status || '').toLowerCase() === statusFilter) : rows;
   return <TeacherManagementShell title="入班申请" icon={<UserPlus size={20} />}>
-    <p className="hint">{classIdFilter ? `当前班级 ${classIdFilter} 的待审核申请。` : '这里按班级汇总所有待审核申请；进入班级详情后可以完成批准或拒绝。'}</p>
-    {classIdFilter && <div className="actions">
+    <p className="hint">{classIdFilter ? `当前班级 ${classIdFilter} 的待审核申请。` : '这里汇总当前教师负责班级的真实入班申请。'}</p>
+    <div className="actions">
       <button type="button" className={statusFilter === 'pending' ? 'primary-button' : ''} onClick={() => setStatusFilter('pending')}>待审核</button>
       <button type="button" className={statusFilter === 'approved' ? 'primary-button' : ''} onClick={() => setStatusFilter('approved')}>已批准</button>
       <button type="button" className={statusFilter === 'rejected' ? 'primary-button' : ''} onClick={() => setStatusFilter('rejected')}>已拒绝</button>
       <button type="button" className={statusFilter === 'duplicate' ? 'primary-button' : ''} onClick={() => setStatusFilter('duplicate')}>重复申请</button>
       <button type="button" className={statusFilter === 'all' ? 'primary-button' : ''} onClick={() => setStatusFilter('all')}>全部</button>
       <button type="button" onClick={() => loadRequests().catch(() => {})} disabled={loading}>{loading ? '刷新中...' : '刷新'}</button>
-    </div>}
+    </div>
     {message && <p className="error">{message}</p>}
     <div className="management-table">
-      {classIdFilter
-        ? visibleRows.map((request) => <article className="management-row" key={request.id}>
-          <b>{request.student_name}<span>{request.student_no || '未填学号'}</span></b>
+      {visibleRows.map((request) => {
+        const requestClassId = request.class_id || request.classId || classIdFilter;
+        const requestKey = request.id || `${requestClassId}-${request.student_id || request.linked_student_id || request.student_name}`;
+        return <article className="management-row" key={requestKey}>
+          <b>{request.student_name || request.linked_student_name || '未填写姓名'}<span>{request.student_no || request.linked_student_no || '未填学号'}</span></b>
+          <span>{request.class_name || request.class_grade || '系统测试班'}</span>
           <span>{request.source || 'student-mobile'}</span>
-          <span>{request.status || 'pending'}</span>
+          <span>{String(request.status || 'pending')}</span>
           <span>{formatDateTime(request.requested_at)}</span>
-          <span>{request.class_name || '系统测试班'}</span>
           <span className="record-actions">
-            <button type="button" onClick={() => api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests/${encodeURIComponent(request.id)}/approve`, { method: 'POST', body: {} }).then(() => api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests`).then((data) => setRows(data || []))).catch((err) => setMessage(err.message))}>批准</button>
-            <button type="button" onClick={() => api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests/${encodeURIComponent(request.id)}/reject`, { method: 'POST', body: {} }).then(() => api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests`).then((data) => setRows(data || []))).catch((err) => setMessage(err.message))}>拒绝</button>
+            <a href={`/teacher/join-requests?classId=${encodeURIComponent(String(requestClassId || ''))}`}>查看班级申请</a>
+            <button type="button" onClick={() => api(`/classes/${encodeURIComponent(String(requestClassId || classIdFilter))}/join-requests/${encodeURIComponent(request.id)}/approve`, { method: 'POST', body: {} }).then(() => loadRequests().catch(() => {})).catch((err) => setMessage(err.message))}>批准</button>
+            <button type="button" onClick={() => api(`/classes/${encodeURIComponent(String(requestClassId || classIdFilter))}/join-requests/${encodeURIComponent(request.id)}/reject`, { method: 'POST', body: {} }).then(() => loadRequests().catch(() => {})).catch((err) => setMessage(err.message))}>拒绝</button>
           </span>
-        </article>)
-        : rows.map((klass) => <article className="management-row" key={klass.classKey || klass.id}>
-          <b>{klass.className || klass.name}<span>{klass.grade || '未填写年级'} · {klass.schoolYear || klass.school_year || '当前学年'}</span></b>
-          <span>待审核 {klass.pendingJoinRequests ?? klass.pending_join_requests ?? 0}</span>
-          <span>主群 {klass.inviteStatus || klass.status || 'active'}</span>
-          <span className="record-actions">
-            <a href={buildTeacherJoinRequestsUrl(klass.classId || klass.id || klass.classKey)}>打开申请</a>
-            <a href={`/teacher/classes/${encodeURIComponent(klass.classId || klass.id || klass.classKey)}/members`}>成员管理</a>
-          </span>
-        </article>)}
-      {!visibleRows.length && !loading && <p className="hint">{classIdFilter ? '当前班级暂无符合条件的申请。' : '暂无班级或暂无待审核申请。'}</p>}
+        </article>;
+      })}
+      {!visibleRows.length && !loading && <p className="hint">{message ? '申请数据加载失败，请重试。' : '暂无待审核申请。'}</p>}
       {loading && <p className="hint">申请列表加载中...</p>}
     </div>
   </TeacherManagementShell>;

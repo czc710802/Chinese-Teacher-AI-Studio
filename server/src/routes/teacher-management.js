@@ -42,7 +42,7 @@ import { recordReviewArtifact } from '../services/storage-artifacts.js';
 import { archiveEssayToZSpaceAsync } from '../services/zspace-storage.js';
 import { buildLegacyCleanupDryRun, buildSystemTestCenterSnapshot, writeLegacyCleanupReport } from '../services/legacy-cleanup.js';
 import { resetSystemTestEnvironment } from '../services/test-environment.js';
-import { buildQrSvg } from '../services/class-lifecycle.js';
+import { buildQrSvg, listTeacherJoinRequests } from '../services/class-lifecycle.js';
 import { buildPublicUrl } from '../services/public-access.js';
 
 function actor(req) {
@@ -255,6 +255,12 @@ teacherManagementRouter.get('/test-center', (req, res) => {
     req.app.locals.logger?.warn?.('test-center live snapshot merge failed', { message: error?.message || String(error) });
   }
   res.json(snapshot);
+});
+
+teacherManagementRouter.get('/join-requests', (req, res) => {
+  const result = listTeacherJoinRequests(db, req.user, req.query);
+  if (result.status !== 200) return res.status(result.status).json({ message: result.message });
+  res.json(result.rows);
 });
 
 teacherManagementRouter.post('/test-center/reset-fixture', (req, res) => {

@@ -14,6 +14,7 @@ import {
   getJoinPreviewByCode,
   getJoinRequestStatus,
   listLifecycleClasses,
+  listTeacherJoinRequests,
   listStudentMobileAssignments,
   listStudentMobileClasses,
   approveJoinRequest,
@@ -212,6 +213,43 @@ test('invite code join keeps a single pending request, supports status lookup an
   assert.equal(approved.status, 200);
   assert.equal(approved.request.status, 'approved');
   assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM student_class_bindings WHERE class_id = ? AND student_id = ? AND status = ?').get(created.class.id, fixture.studentId, 'active').count, 1);
+});
+
+test('teacher-wide join request listing returns pending requests for all managed classes', () => {
+  const fixture = createFixtureDb();
+  const firstClass = createLifecycleClass(fixture.database, fixture.teacherUser, {
+    name: '高二8班',
+    grade: '高二',
+    join_mode: 'approval',
+    max_students: 45
+  });
+  const secondClass = createLifecycleClass(fixture.database, fixture.teacherUser, {
+    name: '高二9班',
+    grade: '高二',
+    join_mode: 'approval',
+    max_students: 45
+  });
+  const firstJoin = createJoinRequest(fixture.database, {
+    token: firstClass.inviteToken,
+    studentName: '测试学生A',
+    studentNo: 'TESTA',
+    source: 'student-mobile'
+  });
+  const secondJoin = createJoinRequest(fixture.database, {
+    token: secondClass.inviteToken,
+    studentName: '测试学生B',
+    studentNo: 'TESTB',
+    source: 'student-mobile'
+  });
+
+  const result = listTeacherJoinRequests(fixture.database, fixture.teacherUser, {});
+
+  assert.equal(firstJoin.status, 200);
+  assert.equal(secondJoin.status, 200);
+  assert.equal(result.status, 200);
+  assert.equal(result.rows.length, 2);
+  assert.deepEqual(result.rows.map((row) => Number(row.class_id)).sort(), [Number(firstClass.class.id), Number(secondClass.class.id)].sort());
+  assert.ok(result.rows.every((row) => row.status === 'pending'));
 });
 
 test('approval can create a student identity for legacy join requests without student_id', () => {

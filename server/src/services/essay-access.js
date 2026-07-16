@@ -14,6 +14,15 @@ export function isStudentInClass(database, studentId, classId) {
   return !!database.prepare('SELECT 1 FROM class_students WHERE student_id = ? AND class_id = ?').get(studentId, classId);
 }
 
+export function isStudentActiveInClass(database, studentId, classId) {
+  return !!database.prepare(`
+    SELECT 1
+    FROM class_students cs
+    LEFT JOIN student_class_bindings b ON b.student_id = cs.student_id AND b.class_id = cs.class_id
+    WHERE cs.student_id = ? AND cs.class_id = ? AND COALESCE(b.status, 'active') = 'active'
+  `).get(studentId, classId);
+}
+
 export function resolveEssayListScope(database, user, query = {}) {
   if (user.role !== 'student') {
     return {
@@ -27,7 +36,7 @@ export function resolveEssayListScope(database, user, query = {}) {
   if (!student) return { status: 404, message: '学生档案不存在' };
 
   const classId = query.classId || null;
-  if (classId && !isStudentInClass(database, student.id, classId)) {
+  if (classId && !isStudentActiveInClass(database, student.id, classId)) {
     return { status: 403, message: '没有查看该班级作文的权限' };
   }
 
@@ -60,7 +69,7 @@ export function resolveEssayAssignmentTarget(database, user, body = {}) {
   if (resolved.status !== 200) return resolved;
   if (!resolved.studentId) return { status: 400, message: '学生档案不存在' };
 
-  if (user.role === 'student' && !isStudentInClass(database, resolved.studentId, assignment.class_id)) {
+  if (user.role === 'student' && !isStudentActiveInClass(database, resolved.studentId, assignment.class_id)) {
     return { status: 403, message: '没有提交该作文任务的权限' };
   }
 
