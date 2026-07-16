@@ -786,7 +786,7 @@ function SubmitPage() {
     }
   }, [assignmentId]);
   const wordCount = text.replace(/\s+/g, '').length;
-  const lengthHint = wordCount > 1000
+  const lengthHint = wordCount > 3000
     ? '当前作文篇幅较长，AI 将按段落综合处理并给出完整批改。'
     : wordCount > 0
       ? 'AI 将根据篇幅自动调整批改重点，字数只作展示，不影响提交。'

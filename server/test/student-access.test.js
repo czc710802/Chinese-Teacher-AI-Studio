@@ -246,7 +246,7 @@ test('student can submit long essays and still enter grading flow without a ceil
   const fixture = createFixtureDb();
   const assignmentId = fixture.database.prepare('SELECT id FROM assignments WHERE class_id = ? LIMIT 1').get(fixture.classId).id;
   fixture.database.prepare('UPDATE assignments SET min_words = 0, max_words = 0, allow_resubmit = 1 WHERE id = ?').run(assignmentId);
-  const longEssay = '这是长文段落。'.repeat(220);
+  const longEssay = '这是长文段落。'.repeat(520);
 
   const result = resolveEssaySubmitTarget(fixture.database, fixture.studentUser, {
     assignment_id: assignmentId,
@@ -255,9 +255,9 @@ test('student can submit long essays and still enter grading flow without a ceil
 
   assert.equal(result.status, 200);
   assert.equal(result.assignment.id, assignmentId);
-  assert.ok(result.wordCount > 1000);
-  assert.equal(result.lengthBand, '长篇');
-  assert.equal(getEssayLengthBand(longEssay), '长篇');
+  assert.ok(result.wordCount > 3000);
+  assert.equal(result.lengthBand, '超长篇');
+  assert.equal(getEssayLengthBand(longEssay), '超长篇');
 });
 
 test('student draft is saved and loaded per assignment without exposing other students', async () => {
