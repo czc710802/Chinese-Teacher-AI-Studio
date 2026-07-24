@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { sectionsToDocxBuffer, sectionsToPdfBuffer } from './exporter.js';
 import { createZSpaceClient, queueZSpaceUploadArtifacts, sanitizePathSegment } from './zspace-storage.js';
 import { updateStudentGrowthProfileAsync } from './student-profile/profile-service.js';
+import { selectCanonicalEssayReview } from './essay-grading/review-history.js';
 import { parseJson } from '../utils/json.js';
 
 const ARCHIVE_VERSION = '1.1';
@@ -396,10 +397,10 @@ function collectArchiveContext(database, essayId) {
     WHERE e.id = ?
   `).get(essayId);
   if (!essay) throw new Error('作文不存在，无法归档');
-  const review = database.prepare('SELECT * FROM ai_reviews WHERE essay_id = ? ORDER BY id DESC LIMIT 1').get(essayId);
+  const review = selectCanonicalEssayReview(database, essayId);
   if (!review) throw new Error('批改结果不存在，无法归档');
   const images = database.prepare('SELECT file_path, ocr_text FROM essay_images WHERE essay_id = ? ORDER BY sort_order, id').all(essayId);
-  const reviewRaw = review.raw_json ? JSON.parse(review.raw_json) : {};
+  const reviewRaw = typeof review.raw_json === 'string' ? parseJson(review.raw_json, {}) : (review.raw_json || {});
   return { essay, review, reviewRaw, images };
 }
 

@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { sectionsToDocxBuffer, sectionsToPdfBuffer } from '../exporter.js';
 import { listStudentProfiles, resolveStudentKey } from '../student-profile/profile-service.js';
 import { sanitizePathSegment } from '../zspace-storage.js';
+import { canonicalEssayIdsSql } from '../essay-submission.js';
+import { selectCanonicalEssayReview } from '../essay-grading/review-history.js';
 
 export const TEACHER_MANAGEMENT_VERSION = '1.0';
 export const teacherStatsConfig = {
@@ -124,6 +126,84 @@ function pendingJoinRequestCount(database, classId) {
 
 function assignmentCount(database, classId) {
   return database.prepare('SELECT COUNT(*) AS count FROM assignments WHERE class_id = ?').get(classId).count;
+}
+
+function essayNormalizedScore(row = {}) {
+  const score = asNumber(row.score ?? row.total_score);
+  if (score == null) return null;
+  const maxScore = asNumber(row.maxScore ?? row.fullScore ?? row.full_score ?? 60) || 60;
+  if (maxScore <= 0) return null;
+  return Number(((score / maxScore) * 100).toFixed(2));
+}
+
+function canonicalLiveEssayRows(database, classId = null) {
+  if (!database?.prepare) return [];
+  const params = [];
+  let where = '';
+  if (classId != null && classId !== '') {
+    where = 'WHERE a.class_id = ?';
+    params.push(classId);
+  }
+  const rows = database.prepare(`
+    ${canonicalEssayIdsSql('e')}
+    SELECT
+      e.id AS essayId,
+      e.student_id AS studentId,
+      s.student_no AS studentNo,
+      u.name AS studentName,
+      a.class_id AS classId,
+      c.name AS className,
+      c.grade AS grade,
+      e.assignment_id AS assignmentId,
+      a.title AS assignmentTitle,
+      e.submitted_at AS submittedAt,
+      e.grading_status AS gradingStatus,
+      e.created_at AS createdAt,
+      a.full_score AS fullScore
+    FROM canonical_essays canonical
+    JOIN essays e ON e.id = canonical.id
+    JOIN assignments a ON a.id = e.assignment_id
+    JOIN classes c ON c.id = a.class_id
+    JOIN students s ON s.id = e.student_id
+    JOIN users u ON u.id = s.user_id
+    ${where}
+    ORDER BY e.submitted_at DESC, e.id DESC
+  `).all(...params);
+  return rows.map((row) => {
+    const review = selectCanonicalEssayReview(database, row.essayId);
+    return {
+      ...row,
+      score: review?.total_score ?? review?.totalScore ?? null,
+      level: review?.level || review?.grade || '',
+      reviewId: review?.id || null,
+      normalizedGradingResult: review || null
+    };
+  });
+}
+
+function canonicalArchiveRecordKey(record = {}) {
+  const essayId = String(record.essayId || '').trim();
+  if (essayId) return `essay:${essayId}`;
+  const archiveId = String(record.id || '').trim();
+  if (archiveId) return `archive:${archiveId}`;
+  return '';
+}
+
+function canonicalizeArchiveRecords(records = []) {
+  const merged = new Map();
+  for (const record of records) {
+    const key = canonicalArchiveRecordKey(record);
+    if (!key) continue;
+    const current = merged.get(key);
+    if (!current) {
+      merged.set(key, record);
+      continue;
+    }
+    const currentStamp = String(current.updatedAt || current.archivedAt || current.createdAt || '');
+    const incomingStamp = String(record.updatedAt || record.archivedAt || record.createdAt || '');
+    if (incomingStamp >= currentStamp) merged.set(key, record);
+  }
+  return [...merged.values()].sort((a, b) => String(b.updatedAt || b.archivedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.archivedAt || a.createdAt || '')));
 }
 
 function isTrue(value) {
@@ -333,6 +413,7 @@ function upsertByKey(items, key, item) {
 
 export async function rebuildTeacherManagement({ appDir = process.cwd(), logger = console } = {}) {
   const archiveRecords = archiveStore(appDir).records || [];
+  const canonicalArchiveRecords = canonicalizeArchiveRecords(archiveRecords);
   const profileRows = listStudentProfiles(appDir, { pageSize: 10000 }).items || [];
   const classes = new Map();
   const students = new Map();
@@ -348,9 +429,10 @@ export async function rebuildTeacherManagement({ appDir = process.cwd(), logger 
       students.set(profile.studentKey, studentFromProfile(profile, klass.classKey));
     }
 
-    for (const record of archiveRecords) {
-      if (!record?.id || seenEssays.has(record.id)) continue;
-      seenEssays.add(record.id);
+    for (const record of canonicalArchiveRecords) {
+      const recordKey = canonicalArchiveRecordKey(record);
+      if (!recordKey || seenEssays.has(recordKey)) continue;
+      seenEssays.add(recordKey);
       try {
         const klass = buildClassFromRecord(record);
         classes.set(klass.classKey, { ...(classes.get(klass.classKey) || klass), ...klass });
@@ -647,14 +729,16 @@ function distribution(normalizedScores) {
   return buckets;
 }
 
-export function getClassStatistics(appDir, classKey) {
+export function getClassStatistics(appDir, classKey, liveDatabase = null) {
+  const classEntry = readStore(appDir, 'classes').items.find((item) => item.classKey === classKey) || null;
   const students = readStore(appDir, 'students').items.filter((item) => item.classKey === classKey);
-  const essays = readStore(appDir, 'essays').items.filter((item) => item.classKey === classKey);
-  const scores = essays.map((item) => asNumber(item.score)).filter((value) => value != null);
-  const normalized = essays.map((item) => item.normalizedScore).filter((value) => value != null);
+  const liveClass = classEntry && liveDatabase?.prepare ? resolveLiveClassSummary(liveDatabase, classEntry) : null;
+  const essays = liveClass ? canonicalLiveEssayRows(liveDatabase, liveClass.id) : readStore(appDir, 'essays').items.filter((item) => item.classKey === classKey);
+  const scores = essays.map((item) => asNumber(item.score ?? item.total_score)).filter((value) => value != null);
+  const normalized = essays.map((item) => item.normalizedScore ?? essayNormalizedScore(item)).filter((value) => value != null);
   const byDay = new Map();
   for (const essay of essays) {
-    const day = String(essay.submittedAt || '').slice(0, 10);
+    const day = String(essay.submittedAt || essay.submitted_at || essay.createdAt || essay.created_at || '').slice(0, 10);
     if (day) byDay.set(day, (byDay.get(day) || 0) + 1);
   }
   const improvingStudents = students.filter((item) => item.scoreTrend === 'up');
@@ -674,9 +758,9 @@ export function getClassStatistics(appDir, classKey) {
     topIssues: [],
     improvingStudents,
     decliningStudents,
-    missingStudents: students.filter((student) => !essays.some((essay) => essay.studentKey === student.studentKey)),
+    missingStudents: students.filter((student) => !essays.some((essay) => String(essay.studentId || essay.student_id || essay.studentKey || '') === String(student.studentId || student.student_id || student.studentKey || ''))),
     activeStudents: students.filter((item) => item.status === 'active'),
-    gradingCompletionRate: essays.length ? Number((essays.filter((item) => item.gradingStatus === 'graded').length / essays.length).toFixed(2)) : 0
+    gradingCompletionRate: essays.length ? Number((essays.filter((item) => String(item.gradingStatus || item.grading_status || '') === 'graded').length / essays.length).toFixed(2)) : 0
   };
 }
 
@@ -878,17 +962,19 @@ function pendingCount(file, statusField = 'status') {
   return rows.filter((item) => item[statusField] !== 'synced' && item.status !== 'completed').length;
 }
 
-export function getTeacherDashboard({ appDir = process.cwd(), aiStatus = {}, nasStatus = {} } = {}) {
+export function getTeacherDashboard({ appDir = process.cwd(), aiStatus = {}, nasStatus = {}, liveDatabase = null } = {}) {
   const classes = readStore(appDir, 'classes').items;
   const students = readStore(appDir, 'students').items;
   const essays = readStore(appDir, 'essays').items;
+  const liveEssays = liveDatabase?.prepare ? canonicalLiveEssayRows(liveDatabase) : [];
+  const essayRows = liveEssays.length ? liveEssays : essays;
   const testClasses = classes.filter((item) => isTrue(item.isTestData) || normalizeDataScope(item.dataScope, 'production') === 'system_test');
   const visibleClassRows = classes.filter((item) => normalizeDataScope(item.dataScope, 'production') === 'production' && item.status === 'active');
   const visibleStudentRows = students.filter((item) => normalizeDataScope(item.dataScope, 'production') === 'production' && item.status === 'active');
   const today = new Date().toISOString().slice(0, 10);
   const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
-  const recentScores = essays.filter((item) => new Date(item.submittedAt || 0).getTime() >= sevenDaysAgo).map((item) => asNumber(item.score)).filter((value) => value != null);
-  const normalized = essays.map((item) => item.normalizedScore).filter((value) => value != null);
+  const recentScores = essayRows.filter((item) => new Date(item.submittedAt || item.submitted_at || item.createdAt || item.created_at || 0).getTime() >= sevenDaysAgo).map((item) => asNumber(item.score ?? item.total_score)).filter((value) => value != null);
+  const normalized = essayRows.map((item) => item.normalizedScore ?? essayNormalizedScore(item)).filter((value) => value != null);
   return {
     classes: {
       total: classes.length,
@@ -903,10 +989,10 @@ export function getTeacherDashboard({ appDir = process.cwd(), aiStatus = {}, nas
       test: students.filter((item) => isTrue(item.isTestData) || normalizeDataScope(item.dataScope, 'production') === 'system_test').length
     },
     essays: {
-      total: essays.length,
-      todaySubmitted: essays.filter((item) => String(item.submittedAt || '').startsWith(today)).length,
-      todayGraded: essays.filter((item) => String(item.submittedAt || '').startsWith(today) && item.gradingStatus === 'graded').length,
-      pending: essays.filter((item) => item.gradingStatus !== 'graded').length
+      total: essayRows.length,
+      todaySubmitted: essayRows.filter((item) => String(item.submittedAt || item.submitted_at || item.createdAt || item.created_at || '').startsWith(today)).length,
+      todayGraded: essayRows.filter((item) => String(item.submittedAt || item.submitted_at || item.createdAt || item.created_at || '').startsWith(today) && String(item.gradingStatus || item.grading_status || '') === 'graded').length,
+      pending: essayRows.filter((item) => String(item.gradingStatus || item.grading_status || '') !== 'graded').length
     },
     scores: {
       average7d: recentScores.length ? Number((recentScores.reduce((a, b) => a + b, 0) / recentScores.length).toFixed(2)) : null,

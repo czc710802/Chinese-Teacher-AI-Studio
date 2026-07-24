@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { safeJson } from '../utils/json.js';
+import { selectCanonicalEssayReview } from './essay-grading/review-history.js';
 
 function normalizeText(value = '') {
   return String(value || '').trim();
@@ -155,7 +156,7 @@ export function createOrReuseEssaySubmission(database, {
       LIMIT 1
     `).get(assignment.id, studentId, submissionKey);
     if (existing?.id) {
-      const reviewRow = database.prepare('SELECT * FROM ai_reviews WHERE essay_id = ? ORDER BY version_number DESC, id DESC LIMIT 1').get(existing.id);
+      const reviewRow = selectCanonicalEssayReview(database, existing.id);
       database.exec('ROLLBACK');
       return {
         duplicate: true,

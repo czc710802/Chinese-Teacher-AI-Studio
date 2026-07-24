@@ -5,6 +5,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import PDFDocument from 'pdfkit';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
+import { parseJson } from '../utils/json.js';
+import { selectCanonicalEssayReview } from './essay-grading/review-history.js';
 
 const DEFAULT_ROOT_DIR = 'Chinese Teacher AI Studio';
 const DEFAULT_TIMEOUT_MS = 15000;
@@ -227,7 +229,7 @@ export function queueZSpaceUploadArtifacts({ appDir, artifacts, error, metadata 
 }
 
 function markdownReport({ essay = {}, review = {} }) {
-  const raw = review.raw_json ? JSON.parse(review.raw_json) : review;
+  const raw = typeof review.raw_json === 'string' ? JSON.parse(review.raw_json) : (review.raw_json || review);
   const strengths = Array.isArray(raw.strengths) ? raw.strengths : [];
   const problems = Array.isArray(raw.problems) ? raw.problems : [];
   const suggestions = Array.isArray(raw.suggestions) ? raw.suggestions : [];
@@ -310,7 +312,7 @@ function makeArchiveContext(database, essayId) {
     WHERE e.id = ?
   `).get(essayId);
   if (!essay) throw new Error('作文不存在，无法归档到极空间');
-  const review = database.prepare('SELECT * FROM ai_reviews WHERE essay_id = ? ORDER BY id DESC LIMIT 1').get(essayId);
+  const review = selectCanonicalEssayReview(database, essayId);
   if (!review) throw new Error('批改结果不存在，无法归档到极空间');
   const images = database.prepare('SELECT file_path, ocr_text FROM essay_images WHERE essay_id = ? ORDER BY sort_order, id').all(essayId);
   const comments = database.prepare(`
@@ -322,12 +324,17 @@ function makeArchiveContext(database, essayId) {
     ORDER BY tc.created_at ASC, tc.id ASC
   `).all(essayId);
   const scoreTrend = database.prepare(`
-    SELECT e.id AS essay_id, e.title, e.created_at, ar.total_score, ar.level
+    SELECT e.id AS essay_id, e.title, e.created_at
     FROM essays e
-    LEFT JOIN ai_reviews ar ON ar.essay_id = e.id
     WHERE e.student_id = ?
     ORDER BY e.created_at ASC, e.id ASC
   `).all(essay.student_id);
+  const scoreTrendWithCanonicalReview = scoreTrend.map((row) => {
+    const canonicalReview = selectCanonicalEssayReview(database, row.essay_id);
+    return canonicalReview
+      ? { ...row, total_score: canonicalReview.total_score ?? null, level: canonicalReview.level || '' }
+      : row;
+  });
   const grade = sanitizePathSegment(essay.student_grade || essay.class_grade || '未填写');
   const className = sanitizePathSegment(essay.class_name || '未填写');
   const studentName = sanitizePathSegment(essay.student_name || '未填写');
@@ -349,11 +356,13 @@ function makeArchiveContext(database, essayId) {
     archivedAt: new Date().toISOString(),
     storageProvider: 'zspace-webdav'
   };
-  return { essay, review, images, comments, scoreTrend, essayBasePath, ocrBasePath, studentFolder, metadata };
+  return { essay, review, images, comments, scoreTrend: scoreTrendWithCanonicalReview, essayBasePath, ocrBasePath, studentFolder, metadata };
 }
 
 async function archiveArtifacts(context) {
-  const reviewRaw = context.review.raw_json ? JSON.parse(context.review.raw_json) : context.review;
+  const reviewRaw = typeof context.review.raw_json === 'string'
+    ? parseJson(context.review.raw_json, context.review || {})
+    : (context.review.raw_json || context.review);
   const stem = essayFileStem(context);
   const reportMarkdown = markdownReport({ essay: context.essay, review: context.review });
   const docxBuffer = await makeDocxBuffer('作文自动批改报告', [

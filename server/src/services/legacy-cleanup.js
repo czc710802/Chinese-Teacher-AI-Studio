@@ -482,7 +482,7 @@ function summarizeSqlite(database) {
         COALESCE((SELECT COUNT(*) FROM class_students cs WHERE cs.class_id = c.id), 0) AS student_count,
         COALESCE((SELECT COUNT(*) FROM assignments a WHERE a.class_id = c.id), 0) AS assignment_count,
         COALESCE((SELECT COUNT(*) FROM essays e JOIN assignments a ON a.id = e.assignment_id WHERE a.class_id = c.id), 0) AS essay_count,
-        COALESCE((SELECT COUNT(*) FROM ai_reviews r JOIN essays e ON e.id = r.essay_id JOIN assignments a ON a.id = e.assignment_id WHERE a.class_id = c.id), 0) AS report_count,
+        COALESCE((SELECT COUNT(DISTINCT e.id) FROM ai_reviews r JOIN essays e ON e.id = r.essay_id JOIN assignments a ON a.id = e.assignment_id WHERE a.class_id = c.id), 0) AS report_count,
         COALESCE((SELECT COUNT(*) FROM student_class_bindings b WHERE b.class_id = c.id), 0) AS binding_count
       FROM classes c
       ORDER BY c.id
@@ -501,7 +501,7 @@ function summarizeSqlite(database) {
         u.username,
         COALESCE((SELECT COUNT(*) FROM class_students cs WHERE cs.student_id = s.id), 0) AS class_count,
         COALESCE((SELECT COUNT(*) FROM essays e WHERE e.student_id = s.id), 0) AS essay_count,
-        COALESCE((SELECT COUNT(*) FROM ai_reviews r JOIN essays e ON e.id = r.essay_id WHERE e.student_id = s.id), 0) AS report_count,
+        COALESCE((SELECT COUNT(DISTINCT e.id) FROM ai_reviews r JOIN essays e ON e.id = r.essay_id WHERE e.student_id = s.id), 0) AS report_count,
         COALESCE((SELECT COUNT(*) FROM student_profiles p WHERE p.student_id = s.id), 0) AS profile_count
       FROM students s
       JOIN users u ON u.id = s.user_id

@@ -8,7 +8,7 @@ import { db } from '../db/connection.js';
 import { requireUser } from '../middleware/auth.js';
 import { recognizeImages } from '../services/openai.js';
 import { gradeEssay } from '../services/essay-grading/grading-service.js';
-import { buildReviewHistoryComparison, listEssayReviewHistory, saveEssayReviewVersion } from '../services/essay-grading/review-history.js';
+import { buildReviewHistoryComparison, listVisibleEssayReviewHistory, saveEssayReviewVersion, selectCanonicalEssayReview } from '../services/essay-grading/review-history.js';
 import { canReadEssay, getSubmissionDraft, resolveEssayAssignmentTarget, resolveEssayListScope, saveSubmissionDraft } from '../services/essay-access.js';
 import { materializeMiniProgramEssayImages, promoteMaterializedEssayImages } from '../services/essay-image-batch.js';
 import { buildEssayResultCard } from '../integrations/feishu/cards.js';
@@ -205,7 +205,7 @@ essayRouter.get('/', (req, res) => {
   const status = String(req.query.status || '').trim().toLowerCase();
   if (status) {
     if (status === 'completed') {
-      filters.push('(e.grading_status = ? OR ar.total_score IS NOT NULL OR e.status = ?)');
+      filters.push('(e.grading_status = ? OR EXISTS (SELECT 1 FROM ai_reviews r WHERE r.essay_id = e.id AND r.total_score IS NOT NULL) OR e.status = ?)');
       params.push('graded', 'report_published');
     } else if (status === 'grading') {
       filters.push('e.grading_status = ?');
@@ -242,20 +242,26 @@ essayRouter.get('/', (req, res) => {
       c.name AS class_name,
       c.grade AS class_grade,
       u.name AS student_name,
-      s.student_no,
-      ar.total_score,
-      ar.level
+      s.student_no
     FROM canonical_essays ce
     JOIN essays e ON e.id = ce.id
     JOIN assignments a ON a.id = e.assignment_id
     JOIN classes c ON c.id = a.class_id
     JOIN students s ON s.id = e.student_id
     JOIN users u ON u.id = s.user_id
-    LEFT JOIN ai_reviews ar ON ar.essay_id = e.id
     ${whereClause}
     ORDER BY e.created_at DESC, e.id DESC
   `).all(...params);
-  res.json(rows);
+  res.json(rows.map((row) => {
+    const review = selectCanonicalEssayReview(db, row.id);
+    return {
+      ...row,
+      total_score: review?.total_score ?? null,
+      level: review?.level || '',
+      review_id: review?.id || null,
+      normalizedGradingResult: review ? normalizeGradingResult(review) : null
+    };
+  }));
 });
 
 essayRouter.get('/drafts/:assignmentId', (req, res) => {
@@ -281,11 +287,11 @@ essayRouter.get('/:id', (req, res) => {
     WHERE e.id = ?
   `).get(req.params.id);
   if (!essay) return res.status(404).json({ message: '作文不存在' });
-  const review = db.prepare('SELECT * FROM ai_reviews WHERE essay_id = ? ORDER BY id DESC LIMIT 1').get(req.params.id);
+  const review = selectCanonicalEssayReview(db, req.params.id);
   const comments = db.prepare('SELECT * FROM teacher_comments WHERE essay_id = ? ORDER BY created_at DESC').all(req.params.id);
   const images = db.prepare('SELECT id, file_path, ocr_text, sort_order FROM essay_images WHERE essay_id = ? ORDER BY sort_order, id').all(req.params.id);
   const interactions = db.prepare('SELECT role, message, created_at FROM ai_tutor_conversations WHERE student_id = ? AND essay_id = ? ORDER BY created_at, id').all(essay.student_id, essay.id);
-  const reviewPayload = review ? { ...review, raw: JSON.parse(review.raw_json || '{}') } : null;
+  const reviewPayload = review ? { ...review, raw: typeof review.raw_json === 'string' ? JSON.parse(review.raw_json || '{}') : (review.raw_json || {}) } : null;
   const normalizedGradingResult = normalizeGradingResult(review || null);
   const latestComment = comments[0]?.comment || '';
   if (latestComment) normalizedGradingResult.teacherComment = latestComment;
@@ -480,11 +486,11 @@ essayRouter.post('/:id/publish-report', async (req, res, next) => {
       WHERE e.id = ?
     `).get(req.params.id);
     if (!essay) return res.status(404).json({ message: '作文不存在' });
-    const reviewRow = db.prepare('SELECT * FROM ai_reviews WHERE essay_id = ? ORDER BY id DESC LIMIT 1').get(essay.id);
+    const reviewRow = selectCanonicalEssayReview(db, essay.id);
     if (!reviewRow) return res.status(409).json({ message: 'AI 批改尚未完成，不能发布报告' });
 
     db.prepare('UPDATE essays SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('report_published', essay.id);
-    const raw = JSON.parse(reviewRow.raw_json || '{}');
+    const raw = typeof reviewRow.raw_json === 'string' ? JSON.parse(reviewRow.raw_json || '{}') : (reviewRow.raw_json || {});
     const publicOrigin = String(req.app.locals.env?.PUBLIC_APP_ORIGIN || 'https://pi.zhenwanyue.icu').replace(/\/+$/, '');
     const binding = getActiveStudentBinding(db, essay.student_id, essay.class_id);
     let sent = false;
@@ -598,6 +604,6 @@ essayRouter.post('/:id/review', async (req, res, next) => {
 
 essayRouter.get('/:id/history', (req, res) => {
   if (!canReadEssay(db, req.user, req.params.id)) return res.status(403).json({ message: '没有查看该作文历史的权限' });
-  const history = listEssayReviewHistory(db, req.params.id);
+  const history = listVisibleEssayReviewHistory(db, req.params.id);
   res.json({ items: history, total: history.length, comparison: buildReviewHistoryComparison(history) });
 });

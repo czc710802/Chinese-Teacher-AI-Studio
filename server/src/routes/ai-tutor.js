@@ -4,6 +4,7 @@ import { requireUser } from '../middleware/auth.js';
 import { safeJson } from '../utils/json.js';
 import { tutorChat, generateWritingExercise, upgradeEssay, mockMark, arbitrateMark, generateDailyBriefing, generateClassInsight } from '../services/ai-tutor.js';
 import { uploadFormalArtifactAsync } from '../services/zspace-storage.js';
+import { selectCanonicalEssayReview } from '../services/essay-grading/review-history.js';
 
 export const aiTutorRouter = Router();
 aiTutorRouter.use(requireUser);
@@ -24,21 +25,21 @@ function archiveTeacherReport(req, reportType, reportData) {
   });
 }
 
-// ===== AI 辅导老师 =====
+// ===== 师生互动交流 =====
 aiTutorRouter.post('/tutor/chat', async (req, res, next) => {
   try {
     const { essay_id, question, history } = req.body;
     const student = db.prepare('SELECT id FROM students WHERE user_id = ?').get(req.user.id);
     if (!student) return res.status(403).json({ message: '仅学生可使用' });
-    if (!essay_id) return res.status(400).json({ message: '请先打开一篇已提交的作文，再向辅导老师提问' });
-    if (typeof question !== 'string' || !question.trim()) return res.status(400).json({ message: '请输入想咨询的问题' });
+    if (!essay_id) return res.status(400).json({ message: '请先打开一篇已提交的作文，再进行师生互动交流' });
+    if (typeof question !== 'string' || !question.trim()) return res.status(400).json({ message: '请输入想和陈老师交流的问题' });
 
     const essay = db.prepare(`
       SELECT e.*, a.title AS assignment_title, a.essay_type
       FROM essays e JOIN assignments a ON a.id = e.assignment_id WHERE e.id = ?
     `).get(essay_id);
-    if (!essay || essay.student_id !== student.id) return res.status(404).json({ message: '未找到可辅导的作文' });
-    const review = essay ? db.prepare('SELECT * FROM ai_reviews WHERE essay_id = ? ORDER BY id DESC LIMIT 1').get(essay_id) : null;
+    if (!essay || essay.student_id !== student.id) return res.status(404).json({ message: '未找到可交流的作文' });
+    const review = essay ? selectCanonicalEssayReview(db, essay_id) : null;
     const reviewObj = review ? { ...review, problems: JSON.parse(review.problems || '[]'), strengths: JSON.parse(review.strengths || '[]') } : null;
 
     const answer = await tutorChat({ essay, review: reviewObj, studentQuestion: question.trim(), history: Array.isArray(history) ? history.slice(-6) : [] });
@@ -53,13 +54,34 @@ aiTutorRouter.post('/tutor/chat', async (req, res, next) => {
 });
 
 aiTutorRouter.get('/tutor/history/:essayId', (req, res) => {
+  const essay = db.prepare(`
+    SELECT e.id, e.student_id, e.assignment_id, a.class_id
+    FROM essays e
+    JOIN assignments a ON a.id = e.assignment_id
+    WHERE e.id = ?
+  `).get(req.params.essayId);
+  if (!essay) return res.status(404).json({ message: '未找到可查看的作文' });
   const student = db.prepare('SELECT id FROM students WHERE user_id = ?').get(req.user.id);
-  if (!student) return res.status(403).json({ message: '仅学生可查看' });
+  const teacher = db.prepare('SELECT id FROM teachers WHERE user_id = ?').get(req.user.id);
+  const isStudentOwner = student && Number(student.id) === Number(essay.student_id);
+  const isTeacherOwner = teacher && db.prepare('SELECT teacher_id FROM classes WHERE id = ?').get(Number(essay.class_id || 0))?.teacher_id === teacher.id;
+  const isAdmin = req.user?.role === 'admin';
+  if (!isStudentOwner && !isTeacherOwner && !isAdmin) return res.status(403).json({ message: '没有查看这段交流记录的权限' });
   const history = db.prepare(`
     SELECT role, message, created_at FROM ai_tutor_conversations
     WHERE student_id = ? AND essay_id = ? ORDER BY created_at ASC
-  `).all(student.id, req.params.essayId);
-  res.json(history);
+  `).all(Number(essay.student_id), req.params.essayId);
+  res.json(history.map((item) => ({
+    ...item,
+    student_id: essay.student_id,
+    submission_id: essay.id,
+    essay_id: essay.id,
+    assignment_id: essay.assignment_id,
+    studentId: essay.student_id,
+    submissionId: essay.id,
+    essayId: essay.id,
+    assignmentId: essay.assignment_id
+  })));
 });
 
 // ===== AI 仿写训练 =====

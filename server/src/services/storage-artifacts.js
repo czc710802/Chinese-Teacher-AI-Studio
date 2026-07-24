@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import PDFDocument from 'pdfkit';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
+import { canonicalizeGradingResult } from './essay-grading/review-history.js';
 
 function isEnabled(storageService) {
   return Boolean(storageService?.rawConfig?.enabled);
@@ -29,12 +30,13 @@ function safeJson(value) {
 }
 
 function reviewMarkdown({ context = {}, review = {} } = {}) {
-  const score = review.total_score ?? review.totalScore ?? '';
-  const full = review.full_score ?? review.fullScore ?? 60;
-  const level = review.level || '';
-  const strengths = Array.isArray(review.strengths) ? review.strengths : review.coreAdvantages || [];
-  const problems = Array.isArray(review.problems) ? review.problems : review.mainProblems || [];
-  const suggestions = Array.isArray(review.suggestions) ? review.suggestions : [];
+  const normalized = canonicalizeGradingResult(review);
+  const score = normalized.totalScore ?? normalized.total_score ?? '';
+  const full = normalized.fullScore ?? normalized.full_score ?? 60;
+  const level = normalized.level || '';
+  const strengths = Array.isArray(normalized.strengths) ? normalized.strengths : [];
+  const problems = Array.isArray(normalized.weakSpots) ? normalized.weakSpots : [];
+  const suggestions = Array.isArray(normalized.revisionSuggestions) ? normalized.revisionSuggestions : [];
   const suggestionText = suggestions.map((item) => typeof item === 'string' ? item : (item.focus || item.diagnosis || item.action || JSON.stringify(item))).join('\n- ');
   return `# 作文自动批改报告
 
@@ -196,18 +198,19 @@ export async function recordReviewArtifact({ storageService, database, essayId, 
   try {
     const context = getEssayStorageContext(database, essayId);
     if (!context) return null;
+    const normalizedReview = canonicalizeGradingResult(review);
     const baseRemotePath = path.posix.join(essayBaseRemotePath(storageService, context), 'review');
     const saved = await storageService.saveFile({
       content: JSON.stringify({
         essayId,
         savedAt: new Date().toISOString(),
-        review
+        review: normalizedReview
       }, null, 2),
       remotePath: path.posix.join(baseRemotePath, 'ai-review.json'),
       originalName: 'ai-review.json',
       metadata: { stage: 'review', essayId }
     });
-    await recordReviewReportArtifacts({ storageService, database, essayId, review, logger });
+    await recordReviewReportArtifacts({ storageService, database, essayId, review: normalizedReview, logger });
     return saved;
   } catch (error) {
     warn(logger, 'NAS 批改结果归档失败，已保留本地业务数据', error);

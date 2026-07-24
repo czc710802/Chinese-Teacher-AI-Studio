@@ -2,18 +2,27 @@ import { db } from '../db/connection.js';
 import { parseJson, safeJson } from '../utils/json.js';
 import { recordStudentProfileSnapshot } from './storage-artifacts.js';
 import { canonicalEssayIdsSql } from './essay-submission.js';
+import { selectCanonicalEssayReview } from './essay-grading/review-history.js';
 
 export function refreshStudentProfile(studentId, { storageService, logger = console } = {}) {
   const rows = db.prepare(`
     ${canonicalEssayIdsSql('e')}
-    SELECT e.id, e.title, e.created_at, a.title AS assignment_title, ar.total_score, ar.problems, ar.next_training, ar.raw_json
+    SELECT e.id, e.title, e.created_at, a.title AS assignment_title
     FROM canonical_essays ce
     JOIN essays e ON e.id = ce.id
     LEFT JOIN assignments a ON a.id = e.assignment_id
-    LEFT JOIN ai_reviews ar ON ar.essay_id = e.id
     WHERE e.student_id = ?
     ORDER BY e.created_at ASC, e.id ASC
-  `).all(studentId);
+  `).all(studentId).map((row) => {
+    const review = selectCanonicalEssayReview(db, row.id);
+    return {
+      ...row,
+      total_score: review?.total_score ?? review?.totalScore ?? null,
+      problems: review?.problems || review?.weakSpots || [],
+      next_training: review?.next_training || review?.nextTraining || review?.revisionSuggestions || [],
+      raw_json: review?.raw_json || {}
+    };
+  });
 
   const scoreTrend = rows.filter((row) => row.total_score !== null).map((row) => ({
     essay_id: row.id,

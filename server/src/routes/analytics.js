@@ -3,22 +3,14 @@ import { db } from '../db/connection.js';
 import { requireUser } from '../middleware/auth.js';
 import { parseJson } from '../utils/json.js';
 import { canonicalEssayIdsSql } from '../services/essay-submission.js';
+import { selectCanonicalEssayReview } from '../services/essay-grading/review-history.js';
 
 export const analyticsRouter = Router();
 analyticsRouter.use(requireUser);
 
 export function classAnalytics(classId, assignmentId) {
   const canonicalSql = canonicalEssayIdsSql('e');
-  const scores = db.prepare(`
-    ${canonicalSql}
-    SELECT ar.total_score
-    FROM canonical_essays ce
-    JOIN essays e ON e.id = ce.id
-    JOIN ai_reviews ar ON ar.essay_id = e.id
-    JOIN assignments a ON a.id = e.assignment_id
-    WHERE a.class_id = ? AND (? IS NULL OR a.id = ?)
-  `).all(classId, assignmentId || null, assignmentId || null).map((x) => x.total_score);
-  const submitted = db.prepare(`
+  const essayRows = db.prepare(`
     ${canonicalSql}
     SELECT DISTINCT e.student_id
     FROM canonical_essays ce
@@ -26,27 +18,32 @@ export function classAnalytics(classId, assignmentId) {
     JOIN assignments a ON a.id = e.assignment_id
     WHERE a.class_id = ? AND (? IS NULL OR a.id = ?)
   `).all(classId, assignmentId || null, assignmentId || null).map((x) => x.student_id);
+  const essays = db.prepare(`
+    ${canonicalSql}
+    SELECT e.id, e.student_id
+    FROM canonical_essays ce
+    JOIN essays e ON e.id = ce.id
+    JOIN assignments a ON a.id = e.assignment_id
+    WHERE a.class_id = ? AND (? IS NULL OR a.id = ?)
+  `).all(classId, assignmentId || null, assignmentId || null);
+  const reviewRows = essays
+    .map((essay) => ({ essay, review: selectCanonicalEssayReview(db, essay.id) }))
+    .filter((item) => item.review);
+  const scores = reviewRows.map((item) => Number(item.review.total_score ?? item.review.totalScore ?? 0)).filter(Number.isFinite);
   const students = db.prepare(`
     SELECT s.id, u.name FROM class_students cs
     JOIN students s ON s.id = cs.student_id
     JOIN users u ON u.id = s.user_id
     WHERE cs.class_id = ?
   `).all(classId);
-  const reviews = db.prepare(`
-    ${canonicalSql}
-    SELECT ar.problems, ar.strengths, ar.raw_json FROM ai_reviews ar
-    JOIN canonical_essays ce ON ce.id = ar.essay_id
-    JOIN essays e ON e.id = ce.id
-    JOIN assignments a ON a.id = e.assignment_id
-    WHERE a.class_id = ? AND (? IS NULL OR a.id = ?)
-  `).all(classId, assignmentId || null, assignmentId || null);
   const counts = {};
   const strengthCounts = {};
   const thinkingBuckets = {};
   const abilityTotals = {};
   const thinkingDepthCounts = {};
-  for (const row of reviews) {
-    for (const problem of parseJson(row.problems, [])) counts[problem] = (counts[problem] || 0) + 1;
+  for (const item of reviewRows) {
+    const row = item.review;
+    for (const problem of parseJson(row.problems || row.weakSpots || [], [])) counts[problem] = (counts[problem] || 0) + 1;
     for (const strength of parseJson(row.strengths, [])) strengthCounts[strength] = (strengthCounts[strength] || 0) + 1;
     const raw = parseJson(row.raw_json, {});
     const depthLabel = raw?.thinking_depth?.label || raw?.thinking_depth?.current_layer;
@@ -79,7 +76,7 @@ export function classAnalytics(classId, assignmentId) {
     averageScore: scores.length ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)) : 0,
     maxScore: scores.length ? Math.max(...scores) : 0,
     minScore: scores.length ? Math.min(...scores) : 0,
-    missingStudents: students.filter((s) => !submitted.includes(s.id)).map((s) => s.name),
+    missingStudents: students.filter((s) => !essayRows.includes(s.id)).map((s) => s.name),
     commonProblems: Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 8),
     commonStrengths: Object.entries(strengthCounts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 8),
     thinkingWeaknesses,
@@ -110,13 +107,20 @@ analyticsRouter.get('/classes/:classId/insights', (req, res) => {
   const analytics = classAnalytics(req.params.classId, req.query.assignmentId);
   const excellentEssays = db.prepare(`
     ${canonicalEssayIdsSql('e')}
-    SELECT e.id, e.title, u.name AS student_name, ar.total_score, ar.strengths, e.original_text
+    SELECT e.id, e.title, u.name AS student_name, e.original_text
     FROM canonical_essays ce
     JOIN essays e ON e.id = ce.id
-    JOIN assignments a ON a.id=e.assignment_id JOIN students s ON s.id=e.student_id
-    JOIN users u ON u.id=s.user_id JOIN ai_reviews ar ON ar.essay_id=e.id
-    WHERE a.class_id=? ORDER BY ar.total_score DESC LIMIT 5
-  `).all(req.params.classId).map((row) => ({ ...row, strengths: parseJson(row.strengths, []) }));
+    JOIN assignments a ON a.id=e.assignment_id
+    JOIN students s ON s.id=e.student_id
+    JOIN users u ON u.id=s.user_id
+    WHERE a.class_id=?
+    ORDER BY e.created_at DESC, e.id DESC
+  `).all(req.params.classId)
+    .map((row) => ({ ...row, review: selectCanonicalEssayReview(db, row.id) }))
+    .filter((row) => Number.isFinite(Number(row.review?.total_score ?? row.review?.totalScore ?? null)))
+    .sort((a, b) => Number(b.review.total_score ?? b.review.totalScore ?? 0) - Number(a.review.total_score ?? a.review.totalScore ?? 0))
+    .slice(0, 5)
+    .map((row) => ({ ...row, total_score: row.review.total_score ?? row.review.totalScore ?? null, strengths: parseJson(row.review.strengths, []) }));
   const focus = analytics.commonProblems.slice(0, 3).map((item, index) => ({
     theme: item.name,
     guidance: [`先用一则具体材料建立论题，再补充因果分析。`, `围绕核心概念做“是什么、为什么、怎么办”三层追问。`, `以段落中心句统领事例与议论，避免材料堆砌。`][index] || '以一篇限时修改稿完成针对性训练。'
@@ -132,13 +136,15 @@ analyticsRouter.get('/students/:studentId', (req, res) => {
   const profile = db.prepare('SELECT * FROM student_profiles WHERE student_id = ?').get(req.params.studentId);
   const essays = db.prepare(`
     ${canonicalEssayIdsSql('e')}
-    SELECT e.id, e.title, e.created_at, a.title AS assignment_title, ar.total_score, ar.level
+    SELECT e.id, e.title, e.created_at, a.title AS assignment_title
     FROM canonical_essays ce
     JOIN essays e ON e.id = ce.id
     JOIN assignments a ON a.id = e.assignment_id
-    LEFT JOIN ai_reviews ar ON ar.essay_id = e.id
     WHERE e.student_id = ?
     ORDER BY e.created_at DESC, e.id DESC
-  `).all(req.params.studentId);
+  `).all(req.params.studentId).map((row) => {
+    const review = selectCanonicalEssayReview(db, row.id);
+    return { ...row, total_score: review?.total_score ?? review?.totalScore ?? null, level: review?.level || '' };
+  });
   res.json({ profile, essays });
 });

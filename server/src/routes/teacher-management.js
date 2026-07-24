@@ -3,7 +3,7 @@ import { db } from '../db/connection.js';
 import { requireUser } from '../middleware/auth.js';
 import { getAiStatus } from '../services/openai.js';
 import { gradeEssay } from '../services/essay-grading/grading-service.js';
-import { buildReviewHistoryComparison, getLatestEssayReview, listEssayReviewHistory, saveEssayReviewVersion, saveTeacherReview } from '../services/essay-grading/review-history.js';
+import { buildReviewHistoryComparison, getLatestEssayReview, listVisibleEssayReviewHistory, saveEssayReviewVersion, saveTeacherReview, selectCanonicalEssayReview } from '../services/essay-grading/review-history.js';
 import { archiveEssayToNASAsync } from '../services/archive-pipeline.js';
 import {
   addTeacherComment,
@@ -121,8 +121,8 @@ async function loadTeacherEssayDetail(req, essayId) {
   `).get(essayId);
   if (!essay) return null;
   if (!canAccessEssayRecord(req, essay)) return { status: 403, message: '没有查看该作文的权限' };
-  const review = getLatestEssayReview(db, essayId);
-  const history = listEssayReviewHistory(db, essayId);
+  const review = selectCanonicalEssayReview(db, essayId);
+  const history = listVisibleEssayReviewHistory(db, essayId);
   const comments = db.prepare('SELECT * FROM teacher_comments WHERE essay_id = ? ORDER BY created_at DESC').all(essayId);
   const teacherReview = review?.raw_json?.teacherReview || {
     status: 'draft',
@@ -173,6 +173,7 @@ teacherManagementRouter.use(requireUser, teacherOnly);
 teacherManagementRouter.get('/dashboard', (req, res) => {
   res.json(getTeacherDashboard({
     appDir: req.app.locals.appDir,
+    liveDatabase: db,
     aiStatus: getAiStatus(),
     nasStatus: nasStatus(req)
   }));
@@ -322,7 +323,7 @@ teacherManagementRouter.post('/classes/:classKey/restore', (req, res, next) => {
     next(error);
   }
 });
-teacherManagementRouter.get('/classes/:classKey/statistics', (req, res) => res.json(getClassStatistics(req.app.locals.appDir, req.params.classKey)));
+teacherManagementRouter.get('/classes/:classKey/statistics', (req, res) => res.json(getClassStatistics(req.app.locals.appDir, req.params.classKey, db)));
 teacherManagementRouter.get('/classes/:classKey/students', (req, res) => res.json(listStudents(req.app.locals.appDir, { ...req.query, classKey: req.params.classKey })));
 teacherManagementRouter.get('/classes/:classKey/essays', (req, res) => res.json(listTeacherEssays(req.app.locals.appDir, { ...req.query, classKey: req.params.classKey })));
 teacherManagementRouter.post('/classes/:classKey/import-students', (req, res, next) => {
@@ -461,7 +462,7 @@ teacherManagementRouter.post('/essays/:essayId/rerun', async (req, res, next) =>
     if (!detail) return res.status(404).json({ message: '作文不存在' });
     if (detail.status && detail.status !== 200) return res.status(detail.status).json({ message: detail.message || '没有重新批改该作文的权限' });
     const essay = detail.essay;
-    const currentReview = detail.review || getLatestEssayReview(db, essay.id);
+    const currentReview = detail.review || selectCanonicalEssayReview(db, essay.id);
     const promptMode = String(req.body?.promptMode || 'latest').trim();
     const promptText = String(req.body?.promptText || '').trim();
     const rerunReason = String(req.body?.rerunReason || '').trim();

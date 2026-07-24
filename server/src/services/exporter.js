@@ -6,6 +6,8 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
 import { db } from '../db/connection.js';
 import { parseJson } from '../utils/json.js';
 import { recordExportArtifact } from './storage-artifacts.js';
+import { canonicalEssayIdsSql } from './essay-submission.js';
+import { selectCanonicalEssayReview } from './essay-grading/review-history.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const exportDir = path.resolve(__dirname, '../../exports');
@@ -20,7 +22,7 @@ function essayReportData(essayId) {
     JOIN assignments a ON a.id = e.assignment_id
     WHERE e.id = ?
   `).get(essayId);
-  const review = db.prepare('SELECT * FROM ai_reviews WHERE essay_id = ? ORDER BY id DESC LIMIT 1').get(essayId);
+  const review = selectCanonicalEssayReview(db, essayId);
   const latestUpgrade = db.prepare(`
     SELECT upgraded_text, upgraded_score
     FROM ai_upgrade_records
@@ -139,7 +141,7 @@ export async function exportEssayReport({ essayId, format, userId, storageServic
   const ext = format === 'pdf' ? 'pdf' : 'docx';
   const filename = `essay-${essayId}-${Date.now()}.${ext}`;
   const filePath = path.join(exportDir, filename);
-  const reviewJson = review ? JSON.parse(review.raw_json) : {};
+  const reviewJson = review ? (typeof review.raw_json === 'string' ? parseJson(review.raw_json, {}) : (review.raw_json || {})) : {};
   const sections = [
     { title: '作文任务', content: `${essay.assignment_title}\n${essay.prompt}` },
     { title: '学生原文', content: essay.original_text },
@@ -160,7 +162,7 @@ export async function exportEssayReport({ essayId, format, userId, storageServic
   return { filePath, url: `/exports/${filename}` };
 }
 
-function managedEssayRows({ teacherUserId, assignmentId, classId, reviewedOnly }) {
+export function collectManagedEssayRows(database, { teacherUserId, assignmentId, classId, reviewedOnly }) {
   const params = [teacherUserId];
   let where = 'WHERE t.user_id = ?';
   if (assignmentId) {
@@ -171,20 +173,18 @@ function managedEssayRows({ teacherUserId, assignmentId, classId, reviewedOnly }
     where += ' AND c.id = ?';
     params.push(classId);
   }
-  if (reviewedOnly) where += ' AND ar.id IS NOT NULL';
-  return db.prepare(`
+  const rows = database.prepare(`
+    ${canonicalEssayIdsSql('e')}
     SELECT e.id, e.title, e.original_text, e.created_at, u.name AS student_name,
            a.title AS assignment_title, a.prompt, a.full_score, c.name AS class_name,
-           ar.total_score, ar.level, ar.dimension_scores, ar.strengths, ar.problems,
-           ar.suggestions, ar.upgraded_paragraph, ar.raw_json,
            aur.upgraded_text AS latest_upgrade, aur.upgraded_score AS latest_upgrade_score
-    FROM essays e
+    FROM canonical_essays canonical
+    JOIN essays e ON e.id = canonical.id
     JOIN assignments a ON a.id = e.assignment_id
     JOIN classes c ON c.id = a.class_id
     JOIN teachers t ON t.id = c.teacher_id
     JOIN students s ON s.id = e.student_id
     JOIN users u ON u.id = s.user_id
-    LEFT JOIN ai_reviews ar ON ar.essay_id = e.id
     LEFT JOIN ai_upgrade_records aur ON aur.id = (
       SELECT id
       FROM ai_upgrade_records
@@ -195,12 +195,34 @@ function managedEssayRows({ teacherUserId, assignmentId, classId, reviewedOnly }
     ${where}
     ORDER BY a.created_at DESC, e.created_at DESC, e.id DESC
   `).all(...params);
+  const mapped = rows
+    .map((row) => {
+      const review = selectCanonicalEssayReview(database, row.id);
+      if (!review) return { ...row, total_score: null, level: '', dimension_scores: '[]', strengths: '[]', problems: '[]', suggestions: '[]', upgraded_paragraph: '', raw_json: '{}' };
+      return {
+        ...row,
+        total_score: review.total_score ?? review.totalScore ?? null,
+        level: review.level || review.grade || '',
+        dimension_scores: review.dimension_scores || review.dimensionScores || '[]',
+        strengths: review.strengths || '[]',
+        problems: review.problems || review.weakSpots || '[]',
+        suggestions: review.suggestions || review.revisionSuggestions || '[]',
+        upgraded_paragraph: review.upgraded_paragraph || review.upgradedParagraph || '',
+        raw_json: typeof review.raw_json === 'string' ? review.raw_json : JSON.stringify(review.raw_json || {})
+      };
+    })
+    .filter((row) => !reviewedOnly || Number.isFinite(Number(row.total_score)));
+  return mapped;
+}
+
+function managedEssayRows({ teacherUserId, assignmentId, classId, reviewedOnly }) {
+  return collectManagedEssayRows(db, { teacherUserId, assignmentId, classId, reviewedOnly });
 }
 
 function essayRowsToSections(rows) {
   if (!rows.length) return [{ title: '作文记录', content: '暂无可导出的作文。' }];
   return rows.flatMap((row, index) => {
-    const reviewJson = row.raw_json ? JSON.parse(row.raw_json) : {};
+    const reviewJson = typeof row.raw_json === 'string' ? parseJson(row.raw_json, {}) : (row.raw_json || {});
     return [
       { title: `作文 ${index + 1}：${row.student_name} · ${row.assignment_title}`, content: [`班级：${row.class_name}`, `提交时间：${row.created_at}`, `题目：${row.title || row.assignment_title}`] },
       { title: '学生原文', content: row.original_text },
@@ -237,7 +259,7 @@ export async function exportAssignmentEssays({ assignmentId, format, userId, sto
     userId,
     targetType: 'assignment_essays',
     targetId: assignmentId,
-    filenamePrefix: `assignment-essays-${assignmentId}`,
+    filenamePrefix: `班级作文汇总-任务${assignmentId}`,
     reportTitle: '班级作业作文汇总',
     storageService
   });
@@ -251,7 +273,7 @@ export async function exportReviewedEssays({ classId, format, userId, storageSer
     userId,
     targetType: 'reviewed_essays',
     targetId: classId || 0,
-    filenamePrefix: classId ? `reviewed-essays-class-${classId}` : 'reviewed-essays-all',
+    filenamePrefix: classId ? `批改记录汇总-班级${classId}` : '批改记录汇总-全部班级',
     reportTitle: '批改记录汇总',
     storageService
   });
@@ -267,7 +289,7 @@ export async function exportStudentProfile({ studentId, format, userId, storageS
   `).get(studentId);
   if (!profile) throw new Error('学生档案不存在');
   const ext = format === 'pdf' ? 'pdf' : 'docx';
-  const filename = `student-profile-${studentId}-${Date.now()}.${ext}`;
+  const filename = `学生成长档案-${String(profile.student_name || '学生')}-${Date.now()}.${ext}`;
   const filePath = path.join(exportDir, filename);
   const sections = [
     { title: '学生姓名', content: profile.student_name },
@@ -286,7 +308,7 @@ export async function exportStudentProfile({ studentId, format, userId, storageS
 
 export async function exportClassReport({ classId, format, userId, analytics, storageService }) {
   const ext = format === 'pdf' ? 'pdf' : 'docx';
-  const filename = `class-report-${classId}-${Date.now()}.${ext}`;
+  const filename = `班级作文统计报告-班级${classId}-${Date.now()}.${ext}`;
   const filePath = path.join(exportDir, filename);
   const sections = [
     { title: '核心数据', content: [`平均分：${analytics.averageScore}`, `最高分：${analytics.maxScore}`, `最低分：${analytics.minScore}`] },
@@ -303,13 +325,24 @@ export async function exportClassReport({ classId, format, userId, analytics, st
 
 export async function exportExcellentEssays({ classId, format, userId, storageService }) {
   const rows = db.prepare(`
-    SELECT e.title, e.original_text, u.name AS student_name, ar.total_score, ar.strengths
-    FROM essays e JOIN assignments a ON a.id=e.assignment_id JOIN students s ON s.id=e.student_id
-    JOIN users u ON u.id=s.user_id JOIN ai_reviews ar ON ar.essay_id=e.id
-    WHERE a.class_id=? ORDER BY ar.total_score DESC LIMIT 10
-  `).all(classId);
+    ${canonicalEssayIdsSql('e')}
+    SELECT e.id, e.title, e.original_text, u.name AS student_name
+    FROM canonical_essays canonical
+    JOIN essays e ON e.id = canonical.id
+    JOIN assignments a ON a.id = e.assignment_id
+    JOIN students s ON s.id = e.student_id
+    JOIN users u ON u.id = s.user_id
+    WHERE a.class_id = ?
+  `).all(classId)
+    .map((row) => {
+      const review = selectCanonicalEssayReview(db, row.id);
+      return review ? { ...row, total_score: review.total_score ?? null, strengths: review.strengths || '[]' } : row;
+    })
+    .filter((row) => Number.isFinite(Number(row.total_score)))
+    .sort((a, b) => Number(b.total_score) - Number(a.total_score))
+    .slice(0, 10);
   const ext = format === 'pdf' ? 'pdf' : 'docx';
-  const filename = `excellent-essays-${classId}-${Date.now()}.${ext}`;
+  const filename = `班级优秀作文精选-班级${classId}-${Date.now()}.${ext}`;
   const filePath = path.join(exportDir, filename);
   const sections = rows.flatMap((row, index) => [
     { title: `优秀作文 ${index + 1}：${row.student_name} · ${row.title || '未命名'}`, content: `${row.total_score}分\n${row.original_text}` },
