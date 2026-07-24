@@ -2,6 +2,7 @@ import { db } from './connection.js';
 import { schemaSql } from './schema.js';
 import { applyP2FeishuWorkbenchMigration } from './migrations/20260713_p2_feishu_workbench.js';
 import { applyP3MobileClassLifecycleMigration } from './migrations/20260715_p3_mobile_class_lifecycle.js';
+import { ensureEssaySubmissionColumns } from '../services/essay-submission.js';
 
 export function relaxInviteCodeConstraint(database = db) {
   const inviteColumn = database.prepare("PRAGMA table_info('classes')").all()
@@ -215,6 +216,7 @@ export function migrateAssignmentWorkflow(database = db) {
   addColumnIfMissing(database, 'assignments', 'share_url', "TEXT DEFAULT ''");
   addColumnIfMissing(database, 'assignments', 'qr_svg', "TEXT DEFAULT ''");
   addColumnIfMissing(database, 'assignments', 'feishu_chat_id', "TEXT DEFAULT ''");
+  addColumnIfMissing(database, 'assignments', 'target_student_ids', "TEXT DEFAULT ''");
 
   addColumnIfMissing(database, 'essays', 'attachments', "TEXT DEFAULT '[]'");
   addColumnIfMissing(database, 'essays', 'word_count', 'INTEGER DEFAULT 0');
@@ -316,6 +318,7 @@ export function initDatabase() {
   relaxInviteCodeConstraint(db);
   migrateAssignmentWorkflow(db);
   migrateClassLifecycleWorkflow(db);
+  ensureEssaySubmissionColumns(db);
   applyP2FeishuWorkbenchMigration(db);
   applyP3MobileClassLifecycleMigration(db);
   try { db.exec("ALTER TABLE ai_reviews ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP"); } catch(e) {}

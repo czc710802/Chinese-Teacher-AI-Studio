@@ -9,15 +9,19 @@ import { requireUser } from '../middleware/auth.js';
 import { recognizeImages } from '../services/openai.js';
 import { gradeEssay } from '../services/essay-grading/grading-service.js';
 import { buildReviewHistoryComparison, listEssayReviewHistory, saveEssayReviewVersion } from '../services/essay-grading/review-history.js';
-import { canReadEssay, countEssayWords, getSubmissionDraft, resolveEssayAssignmentTarget, resolveEssayListScope, resolveEssaySubmitTarget, saveSubmissionDraft } from '../services/essay-access.js';
+import { canReadEssay, getSubmissionDraft, resolveEssayAssignmentTarget, resolveEssayListScope, saveSubmissionDraft } from '../services/essay-access.js';
+import { materializeMiniProgramEssayImages, promoteMaterializedEssayImages } from '../services/essay-image-batch.js';
 import { buildEssayResultCard } from '../integrations/feishu/cards.js';
 import { getActiveStudentBinding } from '../services/feishu-assignment-bindings.js';
 import { refreshStudentProfile } from '../services/profile.js';
 import { recordOcrArtifact, recordOriginalArtifact, recordReviewArtifact } from '../services/storage-artifacts.js';
 import { archiveEssayToZSpaceAsync } from '../services/zspace-storage.js';
 import { archiveEssayToNASAsync } from '../services/archive-pipeline.js';
-import { safeJson } from '../utils/json.js';
+import { canonicalEssayIdsSql, createOrReuseEssaySubmission } from '../services/essay-submission.js';
 import { buildFeishuBusinessMigrationNotice, isFeishuBusinessEnabled } from '../integrations/feishu/config.js';
+import gradingNormalizer from '../../../../Chinese-Teacher-AI-Workspace/shared/essay-grading/normalize-grading-result.js';
+
+const { normalizeGradingResult } = gradingNormalizer;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const upload = multer({ dest: path.resolve(__dirname, '../../uploads') });
@@ -64,17 +68,34 @@ function extractTextFromUploadedFile(file) {
   throw error;
 }
 
-async function createReviewedEssay({ assignment, studentId, title, essayText, imagePaths = [], imageOcrText = '', sourceFiles = [], attachments = [], submitRound = 1, wordCount, submissionStatus = 'submitted', storageService, zspaceClient, logger = console, deferReview = false }) {
-  const resolvedWordCount = Number(wordCount || countEssayWords(essayText));
-  const result = db.prepare(`
-    INSERT INTO essays
-      (assignment_id, student_id, title, original_text, revised_text, attachments, word_count, status, grading_status, submitted_at, submit_round)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'grading', CURRENT_TIMESTAMP, ?)
-  `).run(assignment.id, studentId, title, essayText, '', safeJson(attachments), resolvedWordCount, submissionStatus, submitRound);
-  const essayId = result.lastInsertRowid;
-
-  const insertImage = db.prepare('INSERT INTO essay_images (essay_id, file_path, ocr_text, sort_order) VALUES (?, ?, ?, ?)');
-  imagePaths.forEach((filePath, index) => insertImage.run(essayId, filePath, imageOcrText, index));
+async function createReviewedEssay({ assignment, studentId, title, essayText, imagePaths = [], imageOcrText = '', sourceFiles = [], attachments = [], submitRound = 1, wordCount, submissionStatus = 'submitted', clientSubmissionKey = '', storageService, zspaceClient, logger = console, deferReview = false }) {
+  const submission = createOrReuseEssaySubmission(db, {
+    assignment,
+    studentId,
+    title,
+    essayText,
+    attachments,
+    imagePaths,
+    imageOcrText,
+    clientSubmissionKey,
+    submitRound,
+    submissionStatus,
+    wordCount,
+    allowResubmit: assignment.allow_resubmit,
+    allowLateSubmit: assignment.allow_late_submit,
+    deadline: assignment.deadline,
+    logger
+  });
+  if (submission.duplicate) {
+    return {
+      essayId: submission.essayId,
+      duplicate: true,
+      status: submission.submissionStatus,
+      gradingStatus: submission.gradingStatus,
+      submissionKey: submission.clientSubmissionKey
+    };
+  }
+  const essayId = submission.essayId;
   await recordOriginalArtifact({ storageService, database: db, essayId, files: sourceFiles, text: sourceFiles.length ? '' : essayText, logger });
   if (imageOcrText) await recordOcrArtifact({ storageService, database: db, essayId, text: imageOcrText, files: sourceFiles, logger });
 
@@ -213,6 +234,7 @@ essayRouter.get('/', (req, res) => {
   }
   const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   const rows = db.prepare(`
+    ${canonicalEssayIdsSql('e')}
     SELECT
       e.*,
       a.title AS assignment_title,
@@ -223,7 +245,8 @@ essayRouter.get('/', (req, res) => {
       s.student_no,
       ar.total_score,
       ar.level
-    FROM essays e
+    FROM canonical_essays ce
+    JOIN essays e ON e.id = ce.id
     JOIN assignments a ON a.id = e.assignment_id
     JOIN classes c ON c.id = a.class_id
     JOIN students s ON s.id = e.student_id
@@ -261,22 +284,34 @@ essayRouter.get('/:id', (req, res) => {
   const review = db.prepare('SELECT * FROM ai_reviews WHERE essay_id = ? ORDER BY id DESC LIMIT 1').get(req.params.id);
   const comments = db.prepare('SELECT * FROM teacher_comments WHERE essay_id = ? ORDER BY created_at DESC').all(req.params.id);
   const images = db.prepare('SELECT id, file_path, ocr_text, sort_order FROM essay_images WHERE essay_id = ? ORDER BY sort_order, id').all(req.params.id);
-  res.json({ essay, review: review ? { ...review, raw: JSON.parse(review.raw_json) } : null, comments, images });
+  const interactions = db.prepare('SELECT role, message, created_at FROM ai_tutor_conversations WHERE student_id = ? AND essay_id = ? ORDER BY created_at, id').all(essay.student_id, essay.id);
+  const reviewPayload = review ? { ...review, raw: JSON.parse(review.raw_json || '{}') } : null;
+  const normalizedGradingResult = normalizeGradingResult(review || null);
+  const latestComment = comments[0]?.comment || '';
+  if (latestComment) normalizedGradingResult.teacherComment = latestComment;
+  res.json({
+    essay,
+    review: reviewPayload,
+    normalizedGradingResult,
+    comments,
+    interactions,
+    images: images.map((image, index) => ({ id: image.id, label: `原稿图片 ${index + 1}`, url: image.file_path, ocrText: image.ocr_text || '', sortOrder: image.sort_order })),
+  });
 });
 
 essayRouter.post('/', async (req, res, next) => {
   try {
-    const resolved = resolveEssaySubmitTarget(db, req.user, req.body);
+    const resolved = resolveEssayAssignmentTarget(db, req.user, req.body);
     if (resolved.status !== 200) return res.status(resolved.status).json({ message: resolved.message });
-    const { studentId, assignment, essayText, wordCount, nextSubmitRound, submissionStatus } = resolved;
+    const { studentId, assignment } = resolved;
+    const essayText = String(req.body.original_text || req.body.originalText || req.body.essayText || req.body.text || '').trim();
     res.json(await createReviewedEssay({
       assignment,
       studentId,
       title: req.body.title,
       essayText,
-      wordCount,
-      submitRound: nextSubmitRound,
-      submissionStatus,
+      clientSubmissionKey: req.body.clientSubmissionKey || req.body.client_submission_key || '',
+      submissionStatus: 'submitted',
       storageService: req.app.locals.storageService,
       zspaceClient: req.app.locals.zspaceClient,
       logger: req.app.locals.logger || console
@@ -296,22 +331,19 @@ essayRouter.post('/images', upload.array('images', 8), async (req, res, next) =>
 
     const essayText = String(await recognizeImages(req.files || []) || '').trim();
     if (!essayText) return res.status(422).json({ message: '未能识别文字，请重新拍摄清晰图片。' });
-    const resolved = resolveEssaySubmitTarget(db, req.user, { ...req.body, original_text: essayText });
-    if (resolved.status !== 200) return res.status(resolved.status).json({ message: resolved.message });
 
     const imagePaths = files.map((file) => `/uploads/${path.basename(file.path)}`);
     const result = await createReviewedEssay({
-      assignment: resolved.assignment,
-      studentId: resolved.studentId,
+      assignment: assignmentAccess.assignment,
+      studentId: assignmentAccess.studentId,
       title: req.body.title || '拍照上传作文',
       essayText,
       imagePaths,
       imageOcrText: essayText,
       sourceFiles: files,
       attachments: files.map((file) => ({ name: file.originalname, mimeType: file.mimetype, size: file.size })),
-      wordCount: resolved.wordCount,
-      submitRound: resolved.nextSubmitRound,
-      submissionStatus: resolved.submissionStatus,
+      clientSubmissionKey: req.body.clientSubmissionKey || req.body.client_submission_key || '',
+      submissionStatus: 'submitted',
       storageService: req.app.locals.storageService,
       zspaceClient: req.app.locals.zspaceClient,
       logger: req.app.locals.logger || console,
@@ -323,6 +355,53 @@ essayRouter.post('/images', upload.array('images', 8), async (req, res, next) =>
   }
 });
 
+essayRouter.post('/images/base64', async (req, res, next) => {
+  const uploadDir = path.resolve(__dirname, '../../uploads');
+  let materialized = null;
+  try {
+    const images = Array.isArray(req.body?.images) ? req.body.images : [];
+    if (!images.length) return res.status(400).json({ message: '请先选择照片或图片' });
+    const assignmentAccess = resolveEssayAssignmentTarget(db, req.user, req.body);
+    if (assignmentAccess.status !== 200) return res.status(assignmentAccess.status).json({ message: assignmentAccess.message });
+
+    materialized = await materializeMiniProgramEssayImages(images, { uploadDir });
+    const essayText = String(await recognizeImages(materialized.files || []) || '').trim();
+    if (!essayText) return res.status(422).json({ message: '未能识别文字，请重新拍摄清晰图片。' });
+
+    const persistedFiles = promoteMaterializedEssayImages(materialized, { uploadDir });
+    const imagePaths = persistedFiles.map((file) => `/uploads/${path.relative(uploadDir, file.path).replace(/\\/g, '/')}`);
+    const result = await createReviewedEssay({
+      assignment: assignmentAccess.assignment,
+      studentId: assignmentAccess.studentId,
+      title: req.body.title || '拍照上传作文',
+      essayText,
+      imagePaths,
+      imageOcrText: essayText,
+      sourceFiles: persistedFiles,
+      attachments: persistedFiles.map((file) => ({
+        name: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size
+      })),
+      clientSubmissionKey: req.body.clientSubmissionKey || req.body.client_submission_key || '',
+      submissionStatus: 'submitted',
+      storageService: req.app.locals.storageService,
+      zspaceClient: req.app.locals.zspaceClient,
+      logger: req.app.locals.logger || console,
+      deferReview: true
+    });
+    res.json({ ...result, recognizedTextLength: essayText.length });
+  } catch (error) {
+    next(error);
+  } finally {
+    try {
+      materialized?.cleanup?.();
+    } catch (cleanupError) {
+      req.app.locals.logger?.warn?.('mini program image temp cleanup failed', cleanupError?.message || cleanupError);
+    }
+  }
+});
+
 essayRouter.post('/files', upload.array('files', 4), async (req, res, next) => {
   try {
     const files = req.files || [];
@@ -330,7 +409,7 @@ essayRouter.post('/files', upload.array('files', 4), async (req, res, next) => {
     const chunks = files.map((file) => extractTextFromUploadedFile(file)).filter(Boolean);
     const essayText = chunks.join('\n\n').trim();
     if (!essayText) return res.status(422).json({ message: '未能从文件中读取作文正文' });
-    const resolved = resolveEssaySubmitTarget(db, req.user, { ...req.body, original_text: essayText });
+    const resolved = resolveEssayAssignmentTarget(db, req.user, req.body);
     if (resolved.status !== 200) return res.status(resolved.status).json({ message: resolved.message });
     const result = await createReviewedEssay({
       assignment: resolved.assignment,
@@ -339,9 +418,8 @@ essayRouter.post('/files', upload.array('files', 4), async (req, res, next) => {
       essayText,
       sourceFiles: files,
       attachments: files.map((file) => ({ name: file.originalname, mimeType: file.mimetype, size: file.size })),
-      wordCount: resolved.wordCount,
-      submitRound: resolved.nextSubmitRound,
-      submissionStatus: resolved.submissionStatus,
+      clientSubmissionKey: req.body.clientSubmissionKey || req.body.client_submission_key || '',
+      submissionStatus: 'submitted',
       storageService: req.app.locals.storageService,
       zspaceClient: req.app.locals.zspaceClient,
       logger: req.app.locals.logger || console

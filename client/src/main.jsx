@@ -1,12 +1,31 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, setSession, getSession } from './api/client.js';
 import { teacherHomeHighlights, teacherLegacyRedirects, teacherNavigationEntries } from './teacher-navigation.js';
+import uiText from '../../../Chinese-Teacher-AI-Workspace/shared/essay-grading/ui-text.cjs';
 import './styles/app.css';
 import { ArrowLeft, BookOpen, Camera, ChartNoAxesCombined, Check, ChevronUp, Copy, Download, FileText, Filter, GraduationCap, Home, LockKeyhole, LogOut, MoreHorizontal, PackageOpen, PenLine, Plus, Search, School, Send, Share2, Star, TestTube2, Trash2, UserPlus, Users } from 'lucide-react';
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { CartesianGrid, Line, LineChart, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Sparkles, MessageCircle, Trophy, Newspaper, Bookmark, RotateCcw, TrendingUp, BrainCircuit, Scale, FileSpreadsheet } from 'lucide-react';
+import { renderGradingResult } from '../../../Chinese-Teacher-AI-Workspace/shared/essay-grading/grading-result-renderer.esm.js';
+
+const {
+  classStatusText,
+  joinModeText,
+  joinRequestStatusText,
+  membershipStatusText,
+  taskStatusText,
+  submissionStatusText,
+  gradingStatusText,
+  retentionStatusText,
+  trendText,
+  booleanText,
+  healthStatusText,
+  errorMessageText,
+  humanText,
+  roleText
+} = uiText;
 
 const homeByRole = { student: '/student-mobile/home', teacher: '/teacher', admin: '/admin' };
 const roleLabel = { student: '学生端', teacher: '教师端', admin: '管理员端' };
@@ -23,6 +42,86 @@ const teacherIconMap = {
   testTube: TestTube2,
   settings: PackageOpen
 };
+
+const teacherClassStatusLabels = {
+  active: '已启用',
+  archived: '已归档',
+  deleted: '已删除'
+};
+
+const teacherJoinModeLabels = {
+  approval: '需审核加入',
+  open: '开放加入',
+  closed: '仅邀请加入'
+};
+
+const teacherAssignmentStatusLabels = {
+  draft: '草稿',
+  published: '已发布',
+  ended: '已结束',
+  archived: '已归档'
+};
+
+const teacherSubmissionStatusLabels = {
+  submitted: '已提交',
+  draft: '草稿',
+  missing: '未提交'
+};
+
+const teacherGradingStatusLabels = {
+  pending: '待批改',
+  grading: '批改中',
+  completed: '已完成',
+  graded: '已完成',
+  failed: '批改失败'
+};
+
+const teacherAssignmentTypeLabels = {
+  周练: '周练',
+  月考: '月考',
+  期中考试: '期中考试',
+  期末考试: '期末考试',
+  单元作文: '单元作文',
+  自定义: '自定义'
+};
+
+function pickTeacherLabel(labels, value, fallback = '未知') {
+  const key = String(value || '').trim();
+  return labels[key] || fallback;
+}
+
+function useTeacherLiveRefresh(onRefresh, { deps = [], intervalMs = 12000 } = {}) {
+  const refreshRef = useRef(onRefresh);
+  useEffect(() => {
+    refreshRef.current = onRefresh;
+  }, [onRefresh]);
+  useEffect(() => {
+    let timer = null;
+    let cancelled = false;
+    const run = () => {
+      if (cancelled) return;
+      refreshRef.current();
+    };
+    const handleFocus = () => run();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') run();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+    if (intervalMs > 0) {
+      timer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') run();
+      }, intervalMs);
+    }
+    run();
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (timer) window.clearInterval(timer);
+    };
+  }, [intervalMs, ...deps]);
+}
 
 function pickDefaultClassId(rows = []) {
   const namedClass = rows.find((item) => String(item?.name || '').trim());
@@ -69,6 +168,49 @@ function buildStudentMobileReportUrl(essayId = '') {
   return id ? `/student-mobile/reports/${encodeURIComponent(id)}` : '/student-mobile/reports';
 }
 
+function normalizeSubmissionFingerprintPart(value = '') {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function hashSubmissionFingerprint(input = '') {
+  let hash = 0x811c9dc5;
+  const text = String(input || '');
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `essay-${(hash >>> 0).toString(36)}`;
+}
+
+function buildEssaySubmissionFingerprint({ assignmentId = '', studentId = '', title = '', text = '', files = [] }) {
+  const fileSignature = (Array.isArray(files) ? files : []).map((file) => [
+    normalizeSubmissionFingerprintPart(file?.name || ''),
+    Number(file?.size) || 0,
+    Number(file?.lastModified) || 0,
+    normalizeSubmissionFingerprintPart(file?.type || '')
+  ].join(':')).join('|');
+  const raw = [
+    normalizeSubmissionFingerprintPart(assignmentId),
+    normalizeSubmissionFingerprintPart(studentId),
+    normalizeSubmissionFingerprintPart(title),
+    normalizeSubmissionFingerprintPart(text),
+    fileSignature
+  ].join('::');
+  return hashSubmissionFingerprint(raw);
+}
+
+function getEssaySubmissionClientKey(fingerprint) {
+  if (typeof window === 'undefined' || !window.sessionStorage) {
+    return `client-${fingerprint || 'essay'}-${Date.now()}`;
+  }
+  const key = `essay-submission-key:${fingerprint}`;
+  const cached = window.sessionStorage.getItem(key);
+  if (cached) return cached;
+  const generated = window.crypto?.randomUUID?.() || `client-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  window.sessionStorage.setItem(key, generated);
+  return generated;
+}
+
 function getClassDisplayName(klass) {
   const trimmed = String(klass?.name || '').trim();
   if (trimmed) return trimmed;
@@ -81,6 +223,222 @@ function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function formatPromptVersion(value) {
+  const text = String(value || '').trim();
+  if (!text || text === '--') return '未注明';
+  const normalized = text.replace(/^p/i, '').replace(/^prompt[-_ ]?/i, '');
+  return normalized ? `第${normalized}版提示词` : text;
+}
+
+function formatDateOnly(value) {
+  if (!value) return '未设置';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}年${Number(month)}月${Number(day)}日`;
+}
+
+function parseJsonArray(value, fallback = []) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return fallback;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function clampPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(100, Math.round(number)));
+}
+
+function renderStarRow(score) {
+  const stars = Math.max(0, Math.min(5, Math.round(clampPercent(score) / 20)));
+  return Array.from({ length: 5 }, (_, index) => index < stars);
+}
+
+function normalizeProfileClassName(classes = [], profile = {}) {
+  const classRow = classes.find((item) => String(item?.name || '').trim() && String(item?.status || 'active') !== 'deleted');
+  return classRow?.name || profile.className || profile.grade || '请先创建班级';
+}
+
+function translateAbilityName(name = '') {
+  const map = {
+    逻辑能力: '审题准确性',
+    思辨能力: '观点展开深度',
+    论证能力: '论据分析能力',
+    材料分析能力: '素材运用',
+    语言表达能力: '语言表达',
+    修改能力: '修改意识'
+  };
+  return map[name] || name || '能力';
+}
+
+function buildStudentFriendlyAnalysis({ profile = {}, abilities = [], commonProblems = [] } = {}) {
+  const scoredAbilities = abilities.filter((item) => Number.isFinite(Number(item.score)));
+  const strong = scoredAbilities.filter((item) => Number(item.score) >= 70).slice(0, 2).map((item) => translateAbilityName(item.name));
+  const weak = scoredAbilities.filter((item) => Number(item.score) < 70).slice(0, 3).map((item) => translateAbilityName(item.name));
+  const fallbackProblems = commonProblems.slice(0, 3).map((item) => String(item?.name || '').trim()).filter(Boolean);
+  const strengths = strong.length ? strong.join('、') : '语言表达和结构意识正在积累，继续保持稳定写作节奏。';
+  const needsImprovement = weak.length ? weak.join('、') : (fallbackProblems.length ? fallbackProblems.join('、') : '继续关注审题、立意和论据展开。');
+  const nextStep = profile.recommendedTraining
+    ? String(profile.recommendedTraining).trim()
+    : '下一阶段先练“审题—立意—论据分析—回扣观点”四步，每段都补一句解释，逐步把作文写得更完整。';
+  return { strengths, needsImprovement, nextStep };
+}
+
+function buildEssayReviewSummary(essay = {}, detail = {}) {
+  const review = detail?.review || {};
+  const raw = review?.raw || {};
+  const summary = humanText(
+    raw.overall_evaluation
+    || raw.teacher_overall
+    || raw.teacher_comment
+    || review.overallComment
+    || review.teacher_comment
+    || review.summary
+    || review.level
+    || (Number.isFinite(Number(essay.total_score)) ? `${essay.total_score}分` : '')
+    || '等待批改结果',
+    '等待批改结果'
+  );
+  const strengths = [
+    ...parseJsonArray(review.strengths, []),
+    ...parseJsonArray(raw.strengths, []),
+    ...parseJsonArray(raw.coreAdvantages, []),
+    ...parseJsonArray(raw.retained_strengths, []),
+    ...parseJsonArray(review.summary?.mainStrengths, [])
+  ].map((item) => String(item || '').trim()).filter(Boolean);
+  const improvement = [
+    ...parseJsonArray(review.problems, []),
+    ...parseJsonArray(raw.problems, []),
+    ...parseJsonArray(raw.weaknesses, []),
+    ...parseJsonArray(raw.mainProblems, []),
+    ...parseJsonArray(review.next_training, []),
+    ...parseJsonArray(raw.next_training, [])
+  ].map((item) => String(item || '').trim()).filter(Boolean);
+  const reportReady = Boolean(detail?.review || essay.total_score != null);
+  return {
+    summary,
+    strengths: strengths.length ? strengths : ['等待 AI 批改完成后自动生成。'],
+    improvement: improvement.length ? improvement : ['等待 AI 批改完成后自动生成。'],
+    reportReady
+  };
+}
+
+function buildTeacherDimensionCards(review = {}, raw = {}) {
+  const dimensionScores = parseJsonArray(review.dimensionScores || raw.dimension_scores || [], []);
+  const labelMap = {
+    theme: '审题立意',
+    content: '素材运用',
+    structure: '结构层次',
+    logic: '论证逻辑',
+    argumentation: '论证能力',
+    evidence: '论据运用',
+    language: '语言表达',
+    literaryExpression: '文采表达',
+    innovation: '创新表达',
+    writingStandard: '书写规范'
+  };
+
+  if (dimensionScores.length) {
+    return dimensionScores.map((item) => ({
+      label: String(item.name || '分项评分').trim(),
+      score: Number.isFinite(Number(item.score)) ? Number(item.score) : null,
+      full: Number.isFinite(Number(item.full)) ? Number(item.full) : 10,
+      comment: String(item.comment || item.diagnosis || item.guidance || item.description || '').trim(),
+      summary: Number.isFinite(Number(item.score)) && Number.isFinite(Number(item.full))
+        ? `${item.score}/${item.full}`
+        : String(item.comment || item.diagnosis || item.guidance || '').trim() || '待补充'
+    })).filter((item) => item.label);
+  }
+
+  return Object.entries(raw.dimensions || {}).map(([key, value]) => ({
+    label: labelMap[key] || key,
+    score: null,
+    full: null,
+    comment: typeof value === 'string' ? value : '',
+    summary: typeof value === 'string' && value.trim() ? value : '暂无'
+  }));
+}
+
+function buildScoreHistoryRows(essays = [], profile = {}) {
+  const trendRows = parseJsonArray(profile.score_trend, []).map((item) => ({
+    date: item.date || item.created_at || item.createdAt || '',
+    score: Number(item.score)
+  })).filter((item) => Number.isFinite(item.score)).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  if (trendRows.length) {
+    return trendRows.map((item, index) => ({ ...item, label: `第${index + 1}篇` }));
+  }
+  return essays
+    .filter((essay) => Number.isFinite(Number(essay.total_score)))
+    .slice()
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
+    .map((essay, index) => ({
+      date: essay.created_at || '',
+      score: Number(essay.total_score),
+      label: `第${index + 1}篇`
+    }));
+}
+
+function buildAbilityRows(profile = {}) {
+  const personalized = parseJsonArray(profile.personalized_suggestions, []);
+  const thinkingArchive = personalized.find((item) => item?.type === 'thinking_growth') || {};
+  const defaultAbilities = [
+    { name: '逻辑能力', score: null, trend: '等待更多批改数据' },
+    { name: '思辨能力', score: null, trend: '等待更多批改数据' },
+    { name: '论证能力', score: null, trend: '等待更多批改数据' },
+    { name: '材料分析能力', score: null, trend: '等待更多批改数据' },
+    { name: '语言表达能力', score: null, trend: '等待更多批改数据' },
+    { name: '修改能力', score: null, trend: '等待更多批改数据' }
+  ];
+  const abilities = Array.isArray(thinkingArchive.abilities) && thinkingArchive.abilities.length ? thinkingArchive.abilities : defaultAbilities;
+  return abilities.map((item) => ({
+    name: translateAbilityName(item.name),
+    rawName: item.name,
+    score: Number.isFinite(Number(item.score)) ? clampPercent(item.score) : null,
+    trend: item.trend || '继续提交作文后会生成趋势'
+  }));
+}
+
+function useLiveRefresh(onRefresh, { deps = [], intervalMs = 15000 } = {}) {
+  const refreshRef = useRef(onRefresh);
+  useEffect(() => {
+    refreshRef.current = onRefresh;
+  }, [onRefresh]);
+  useEffect(() => {
+    let timer = null;
+    let cancelled = false;
+    const run = () => {
+      if (cancelled) return;
+      refreshRef.current();
+    };
+    const handleFocus = () => run();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') run();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+    if (intervalMs > 0) {
+      timer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') run();
+      }, intervalMs);
+    }
+    run();
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (timer) window.clearInterval(timer);
+    };
+  }, [intervalMs, ...deps]);
 }
 
 function Layout({ children }) {
@@ -172,7 +530,7 @@ function StudentEnrollmentPanel({ classId, classKey = '', className = '', grade 
       setSingleForm({ name: '', studentNo: '', grade: grade || '', school: '', schoolYear: schoolYear || '' });
       onChanged?.();
     } catch (err) {
-      setError(err.message);
+      setError(errorMessageText(err));
     } finally {
       setBusy('');
     }
@@ -188,7 +546,7 @@ function StudentEnrollmentPanel({ classId, classKey = '', className = '', grade 
       let result;
       if (mode === 'legacy') {
         const csv = [
-          'studentId,studentName,gender,className,grade,schoolYear',
+          '学号,姓名,性别,班级,年级,学年',
           ...rows.map((row) => [row.student_no || row.studentId || '', row.name || row.studentName || '', '', className || '', row.grade || grade || '', row.schoolYear || currentSchoolYear].map((cell) => String(cell || '').replace(/"/g, '""')).join(','))
         ].join('\n');
         result = await api(`/teacher/classes/${encodeURIComponent(classKey)}/import-students`, {
@@ -206,7 +564,7 @@ function StudentEnrollmentPanel({ classId, classKey = '', className = '', grade 
       setBatchText('');
       onChanged?.();
     } catch (err) {
-      setError(err.message);
+      setError(errorMessageText(err));
     } finally {
       setBusy('');
     }
@@ -276,7 +634,7 @@ function LoginPage() {
       setSession(data.user);
       nav(location.state?.returnTo || homeByRole[data.user.role]);
     } catch (err) {
-      setError(err.message);
+      setError(errorMessageText(err));
     }
   }
   return <Layout><div className="login-stage">
@@ -295,7 +653,7 @@ function LoginPage() {
 
 
 
-// ==================== AI 辅导老师 ====================
+// ==================== 师生互动交流 ====================
 function AiTutorChat({ essayId }) {
   const session = getSession();
   const [open, setOpen] = useState(false);
@@ -324,7 +682,7 @@ function AiTutorChat({ essayId }) {
       });
       setMessages((prev) => [...prev, { role: 'ai', message: result.answer, created_at: new Date().toISOString() }]);
     } catch (err) {
-      setError(err.message || 'AI 辅导服务暂时不可用，请稍后再试。');
+      setError(errorMessageText(err) || '师生互动交流服务暂时不可用，请稍后再试。');
     }
     setBusy(false);
   }
@@ -334,31 +692,67 @@ function AiTutorChat({ essayId }) {
   return (
     <div className="ai-tutor-wrapper">
       <button className={`ai-tutor-toggle ${open ? 'active' : ''}`} onClick={() => setOpen(!open)}>
-        <MessageCircle size={20} /> AI 辅导老师
+        <MessageCircle size={20} /> 师生互动交流
       </button>
       {open && <div className="ai-tutor-panel">
         <div className="ai-tutor-header">
-          <BrainCircuit size={18} /> <b>AI 作文辅导</b>
+          <BrainCircuit size={18} /> <b>师生互动交流</b>
           <button className="icon-btn" style={{marginLeft:'auto',minHeight:32,width:32}} onClick={() => setOpen(false)}>✕</button>
         </div>
         <div className="ai-tutor-messages">
-          {messages.length === 0 && <p className="ai-tutor-welcome">你好！我是你的 AI 作文辅导老师。你可以问我关于这篇作文的问题，比如为什么得这个分数、哪里可以改进、如何提升立意等。</p>}
+          {messages.length === 0 && <p className="ai-tutor-welcome">围绕本次作文，与陈老师进行互动交流，深入理解作文问题，获得针对性的修改指导。</p>}
           {messages.map((m, i) => (
             <div key={i} className={`tutor-msg ${m.role}`}>
-              <b>{m.role === 'student' ? '我' : 'AI老师'}</b>
+              <b>{m.role === 'student' ? '我' : '陈老师'}</b>
               <p>{m.message}</p>
             </div>
           ))}
-          {busy && <div className="tutor-msg ai"><b>AI老师</b><p>正在思考...</p></div>}
+          {busy && <div className="tutor-msg ai"><b>陈老师</b><p>正在思考...</p></div>}
           {error && <p className="error">{error}</p>}
         </div>
         <div className="ai-tutor-input">
-          <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} placeholder="输入你的问题..." />
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && send()}
+            placeholder="请输入你想和陈老师交流的问题，例如：我的作文为什么只能得这个分数？"
+          />
           <button onClick={send} disabled={busy}><Send size={16} /></button>
         </div>
       </div>}
     </div>
   );
+}
+
+function TutorConversationHistory({ essayId, title = '师生互动交流记录' }) {
+  const [history, setHistory] = useState([]);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setHistory([]);
+    setMessage('');
+    api(`/ai/tutor/history/${essayId}`).then((rows) => {
+      if (!cancelled) setHistory(Array.isArray(rows) ? rows : []);
+    }).catch((err) => {
+      if (!cancelled) setMessage(errorMessageText(err));
+    });
+    return () => { cancelled = true; };
+  }, [essayId]);
+
+  return <Card title={title} icon={<MessageCircle size={20} />}>
+    {message ? <p className="error">{message}</p> : history.length ? (
+      <div className="interaction-history-list">
+        {history.map((item, index) => (
+          <article className={`interaction-history-item ${item.role === 'student' ? 'student' : 'ai'}`} key={`${item.created_at || 'history'}-${index}`}>
+            <b>{item.role === 'student' ? '学生提问' : '陈老师回应'}</b>
+            <p>{item.message}</p>
+            <small>{formatDateTime(item.created_at)}</small>
+          </article>
+        ))}
+      </div>
+    ) : <p className="hint">暂无师生互动交流记录。学生发起提问后，这里会同步展示。</p>}
+  </Card>;
 }
 
 // ==================== AI 仿写训练 ====================
@@ -384,7 +778,7 @@ function AiWritingExercise() {
         method: 'POST', body: { source_text: sourceText, exercise_type: exType }
       });
       setExercise(result);
-    } catch (err) { alert('生成失败：' + err.message); }
+    } catch (err) { alert('生成失败：' + errorMessageText(err)); }
     setBusy(false);
   }
   
@@ -398,7 +792,7 @@ function AiWritingExercise() {
       setFeedback(result);
       const rows = await api('/ai/writing-exercises');
       setHistory(rows);
-    } catch (err) { alert('提交失败：' + err.message); }
+    } catch (err) { alert('提交失败：' + errorMessageText(err)); }
     setBusy(false);
   }
   
@@ -461,7 +855,7 @@ function AiUpgradeTrainer() {
       setResult(result);
       const rows = await api('/ai/upgrade-records');
       setRecords(rows);
-    } catch (err) { alert('升格失败：' + err.message); }
+    } catch (err) { alert('升格失败：' + errorMessageText(err)); }
     setBusy(false);
   }
   
@@ -520,7 +914,7 @@ function FullEssayUpgradePanel({ essayId, originalText, originalScore }) {
       });
       setResult(data);
     } catch (err) {
-      setError(err.message || '整篇升格失败，请稍后再试。');
+      setError(errorMessageText(err) || '整篇升格失败，请稍后再试。');
     }
     setBusy(false);
   }
@@ -696,10 +1090,10 @@ function PasswordCard() {
     if (form.new_password !== form.confirm_password) return setError('两次输入的新密码不一致');
     try {
       const data = await api('/auth/change-password', { method: 'POST', body: form });
-      setMessage(data.message);
+      setMessage(errorMessageText(data.message));
       setForm({ current_password: '', new_password: '', confirm_password: '' });
     } catch (err) {
-      setError(err.message);
+      setError(errorMessageText(err));
     }
   }
   return <Card title="修改密码" icon={<LockKeyhole size={20} />}>
@@ -733,6 +1127,12 @@ function UploadPage() {
     const fd = new FormData();
     fd.append('assignment_id', assignmentId);
     if (title.trim()) fd.append('title', title.trim());
+    fd.append('clientSubmissionKey', getEssaySubmissionClientKey(buildEssaySubmissionFingerprint({
+      assignmentId,
+      studentId: session?.studentId || '',
+      title,
+      files
+    })));
     files.forEach((file) => fd.append('images', file));
     setBusy(true);
     setError('');
@@ -740,7 +1140,7 @@ function UploadPage() {
       const data = await api('/essays/images', { method: 'POST', formData: fd });
       nav(buildStudentMobileReportUrl(data.essayId));
     } catch (err) {
-      setError(`上传批改失败：${err.message}`);
+      setError(`上传批改失败：${errorMessageText(err)}`);
     } finally {
       setBusy(false);
     }
@@ -776,7 +1176,7 @@ function SubmitPage() {
       setAssignment(row);
       setStudentInfo((info) => ({ ...info, className: row.class_name || '' }));
       setTitle((current) => current || row.title || '');
-    }).catch((err) => setError(err.message));
+    }).catch((err) => setError(errorMessageText(err)));
     api(`/essays/drafts/${assignmentId}`).then((draft) => {
       if (draft?.content) setText(draft.content);
       if (draft?.title) setTitle(draft.title);
@@ -796,13 +1196,19 @@ function SubmitPage() {
       setError('请先粘贴或输入作文正文');
       return;
     }
+    const clientSubmissionKey = getEssaySubmissionClientKey(buildEssaySubmissionFingerprint({
+      assignmentId,
+      studentId: session.studentId,
+      title,
+      text: text.trim()
+    }));
     setBusy(true);
     setError('');
     try {
-      const data = await api('/essays', { method: 'POST', body: { assignment_id: assignmentId, student_id: session.studentId, title, original_text: text.trim() } });
+      const data = await api('/essays', { method: 'POST', body: { assignment_id: assignmentId, student_id: session.studentId, title, original_text: text.trim(), clientSubmissionKey } });
       nav(buildStudentMobileReportUrl(data.essayId));
     } catch (err) {
-      setError(`提交失败：${err.message}`);
+      setError(`提交失败：${errorMessageText(err)}`);
     } finally {
       setBusy(false);
     }
@@ -840,6 +1246,23 @@ function SubmitPage() {
   </Card></Layout>;
 }
 
+function EssayGradingDetail({ data, essayId, role }) {
+  const html = renderGradingResult(data?.normalizedGradingResult || {}, {
+    submissionId: essayId,
+    role,
+    essay: {
+      ...data?.essay,
+      assignmentTitle: data?.essay?.assignment_title,
+      submittedAt: data?.essay?.submitted_at,
+      gradingStatus: data?.essay?.grading_status,
+      originalText: data?.essay?.original_text,
+    },
+    images: data?.images || [],
+    interactions: data?.interactions || [],
+  });
+  return <div className="shared-grading-result" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
 function ReviewPage() {
   const { essayId } = useParams();
   const nav = useNavigate();
@@ -855,7 +1278,7 @@ function ReviewPage() {
       setData(updated);
       alert("AI 批阅完成！");
     } catch (err) {
-      alert("重新批阅失败：" + err.message);
+      alert("重新批阅失败：" + errorMessageText(err));
     }
   }
   useEffect(() => {
@@ -895,6 +1318,13 @@ function ReviewPage() {
   if (!data.review && gradingStatus === 'failed') {
     return <div className="review-page"><p className="review-loading">图片批改失败，请返回后重试或改用文字提交。</p></div>;
   }
+  return <div className="review-page">
+    <header className="review-header"><button className="review-icon" onClick={() => nav(-1)} title="返回"><ArrowLeft /></button><h1>作文批改结果</h1></header>
+    <main className="review-content"><EssayGradingDetail data={data} essayId={essayId} role={session?.role || 'student'} /></main>
+    <AiTutorChat essayId={essayId} />
+    <ReviewBottomBar essayId={essayId} onReReview={reReview} />
+  </div>;
+  /* legacy detail retained temporarily below for source compatibility; canonical renderer above is the only active path. */
   const review = data.review?.raw || {};
   const fallback = {
     teacher_overall: '这篇作文能围绕题目建立基本中心，但文本中的主体段还需要把观点、材料和分析连接得更紧密。开头应先界定核心概念，主体段在举例之后要解释材料为什么能够证明观点，结尾则要回到时代责任或个人选择，让文章从态度表达推进到有层次的论证。',
@@ -992,7 +1422,7 @@ function StudentMobileLoginPage() {
       setSession(data.user);
       nav(location.state?.returnTo || '/student-mobile/home', { replace: true });
     } catch (err) {
-      setError(err.message);
+      setError(errorMessageText(err));
     } finally {
       setBusy(false);
     }
@@ -1021,7 +1451,7 @@ function StudentMobileJoinPage() {
   const nav = useNavigate();
   useEffect(() => {
     if (!token) return;
-    api(`/student-mobile/join/${encodeURIComponent(token)}`).then(setData).catch((err) => setError(err.message));
+    api(`/student-mobile/join/${encodeURIComponent(token)}`).then(setData).catch((err) => setError(errorMessageText(err)));
   }, [token]);
   async function submit() {
     if (!token) return setError('缺少入班令牌');
@@ -1033,13 +1463,13 @@ function StudentMobileJoinPage() {
       });
       nav(`/student-mobile/join/status?status=${encodeURIComponent(result.status || 'pending')}&classId=${encodeURIComponent(result.class_id || '')}&requestId=${encodeURIComponent(result.id || '')}`, { replace: true });
     } catch (err) {
-      setError(err.message);
+      setError(errorMessageText(err));
     }
   }
   return <Layout><Card title="加入班级" icon={<Users size={20} />}>
     {data ? <div className="form-stack">
       <p><b>{data.name}</b> · {data.grade || '未填写年级'} · {data.teacher_name || '任课教师未填'}</p>
-      <p className="hint">入班方式：{data.join_mode || 'approval'} · 当前状态：{data.status || 'active'}</p>
+      <p className="hint">入班方式：{joinModeText(data.join_mode)} · 当前状态：{classStatusText(data.status)}</p>
       <input placeholder="学生姓名" value={form.studentName} onChange={(e) => setForm({ ...form, studentName: e.target.value })} />
       <input placeholder="学号（可选）" value={form.studentNo} onChange={(e) => setForm({ ...form, studentNo: e.target.value })} />
       <button onClick={submit}>提交入班申请</button>
@@ -1067,7 +1497,7 @@ function StudentMobileJoinCodePage() {
       setError('');
       api(`/student-mobile/join/code/${encodeURIComponent(code)}`).then(setPreview).catch((err) => {
         setPreview(null);
-        setError(err.message);
+        setError(errorMessageText(err));
       });
     }, 250);
     return () => clearTimeout(timer);
@@ -1086,7 +1516,7 @@ function StudentMobileJoinCodePage() {
       nav(`/student-mobile/join/status?requestId=${encodeURIComponent(result.id || result.request_id || '')}&classId=${encodeURIComponent(result.class_id || '')}&status=${encodeURIComponent(result.status || 'pending')}`, { replace: true });
     } catch (err) {
       setStatusMessage('');
-      setError(err.message);
+      setError(errorMessageText(err));
     }
   }
 
@@ -1096,7 +1526,7 @@ function StudentMobileJoinCodePage() {
       {preview && <div className="assignment-submit-summary">
         <h3>{preview.name}</h3>
         <p>{preview.grade || '未填写年级'} · {preview.teacher_name || '任课教师未填'}</p>
-        <p>入班方式：{preview.join_mode || 'approval'} · 当前状态：{preview.status || 'active'} · 人数上限：{preview.max_students || '不限'}</p>
+        <p>入班方式：{joinModeText(preview.join_mode)} · 当前状态：{classStatusText(preview.status)} · 人数上限：{preview.max_students || '不限'}</p>
         <p>邀请码：{preview.invite_code || '未配置'} · 有效期：{formatDateTime(preview.invite_expires_at)}</p>
       </div>}
       <input placeholder="学生姓名" value={form.studentName} onChange={(e) => setForm({ ...form, studentName: e.target.value })} />
@@ -1126,7 +1556,7 @@ function StudentMobileJoinStatusPage() {
         const next = await api(`/student-mobile/join/requests/${encodeURIComponent(requestId)}`);
         if (!cancelled) setDetail(next);
       } catch (err) {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) setError(errorMessageText(err));
       }
     };
     load();
@@ -1139,11 +1569,11 @@ function StudentMobileJoinStatusPage() {
   return <Layout><Card title="入班结果" icon={<Check size={20} />}>
     <div className="form-stack">
       <p><b>{approved ? '已加入班级' : resolvedStatus === 'rejected' ? '入班申请已被拒绝' : '入班申请已提交'}</b></p>
-      <p className="hint">班级编号：{detail?.class_id || classId || '未返回'} · 申请编号：{requestId || '未返回'}</p>
+      <p className="hint">班级：{detail?.class_name || '未返回'} · 申请记录：{requestId ? '已生成' : '未返回'}</p>
       {detail && <div className="assignment-submit-summary">
         <h3>{detail.class_name || '班级'}</h3>
         <p>{detail.class_grade || '未填写年级'} · {detail.invite_code || '邀请码未返回'}</p>
-        <p>申请状态：{detail.status || resolvedStatus} · 入班方式：{detail.invite_join_mode || 'approval'} · 班级状态：{detail.class_status || 'active'}</p>
+        <p>申请状态：{joinRequestStatusText(detail.status || resolvedStatus)} · 入班方式：{joinModeText(detail.invite_join_mode)} · 班级状态：{classStatusText(detail.class_status)}</p>
         {detail.review_reason && <p>审核说明：{detail.review_reason}</p>}
       </div>}
       {error && <p className="error">{error}</p>}
@@ -1194,7 +1624,7 @@ function StudentMobileHomePage() {
       </div>
     </Card>
     <Card title="我的班级" icon={<School size={20} />}>
-      {classes.map((klass) => <article key={klass.id} className="item"><b>{klass.name}</b><p>{klass.grade || '未填写年级'} · {klass.join_mode || 'approval'} · {klass.status || 'active'}</p><p className="hint">邀请码状态：{klass.invite_code ? '已配置' : '未配置'}</p><p><a href={`/student-mobile/classes/${encodeURIComponent(klass.id)}`}>进入班级</a></p></article>)}
+      {classes.map((klass) => <article key={klass.id} className="item"><b>{klass.name}</b><p>{klass.grade || '未填写年级'} · {joinModeText(klass.join_mode)} · {classStatusText(klass.status)}</p><p className="hint">邀请码状态：{klass.invite_code ? '已配置' : '未配置'}</p><p><a href={`/student-mobile/classes/${encodeURIComponent(klass.id)}`}>进入班级</a></p></article>)}
       {!classes.length && <p className="hint">还没有班级，请先通过邀请码加入。</p>}
     </Card>
     <Card title="我的任务" icon={<BookOpen size={20} />}>
@@ -1218,14 +1648,14 @@ function StudentMobileClassPage() {
     ]).then(([classRows, taskRows]) => {
       setClasses(classRows || []);
       setTasks(taskRows || []);
-    }).catch((err) => setMessage(err.message));
+    }).catch((err) => setMessage(errorMessageText(err)));
   }, [classId]);
   const klass = classes.find((item) => String(item.id) === String(classId)) || null;
   return <Layout><div className="grid">
     <Card title="班级首页" icon={<School size={20} />}>
       {klass ? <>
         <p><b>{klass.name}</b></p>
-        <p className="hint">{klass.grade || '未填写年级'} · {klass.join_mode || 'approval'} · {klass.status || 'active'}</p>
+        <p className="hint">{klass.grade || '未填写年级'} · {joinModeText(klass.join_mode)} · {classStatusText(klass.status)}</p>
         <p className="hint">任课教师：{klass.teacher_name || '未填写'} · 当前任务：{tasks.length}</p>
         <div className="actions">
           <a href={`/student-mobile/tasks?classId=${encodeURIComponent(classId)}`}>查看我的任务</a>
@@ -1254,12 +1684,12 @@ function AdminIntegrationsPage() {
       <p>微信生态入口已启用，飞书业务已暂停。</p>
     </Card>
     <Card title="飞书状态" icon={<MessageCircle size={20} />}>
-      <p>业务开关：{String(feishu?.feishuBusinessEnabled ?? false)}</p>
-      <p>学生提交：{String(feishu?.feishuStudentSubmissionEnabled ?? false)}</p>
-      <p>教师审核：{String(feishu?.feishuTeacherReviewEnabled ?? false)}</p>
-      <p>重新批改：{String(feishu?.feishuRegradingEnabled ?? false)}</p>
-      <p>系统通知：{String(feishu?.feishuSystemNotificationEnabled ?? true)}</p>
-      <p>文件上传：{String(feishu?.feishuFileUploadEnabled ?? false)}</p>
+      <p>业务开关：{booleanText(feishu?.feishuBusinessEnabled ?? false)}</p>
+      <p>学生提交：{booleanText(feishu?.feishuStudentSubmissionEnabled ?? false)}</p>
+      <p>教师审核：{booleanText(feishu?.feishuTeacherReviewEnabled ?? false)}</p>
+      <p>重新批改：{booleanText(feishu?.feishuRegradingEnabled ?? false)}</p>
+      <p>系统通知：{booleanText(feishu?.feishuSystemNotificationEnabled ?? true)}</p>
+      <p>文件上传：{booleanText(feishu?.feishuFileUploadEnabled ?? false)}</p>
     </Card>
     <Card title="兼容说明" icon={<FileText size={20} />}>
       <p>历史飞书消息、旧归档链接和数据库记录保留，仅暂停新的飞书业务流。</p>
@@ -1311,7 +1741,7 @@ function StudentMobileTasksPage() {
         <p className="hint">AI 会根据篇幅自动调整批改重点，提交后可直接查看进度。</p>
         <p>{detail.prompt || '暂无材料说明'}</p>
         <p>{detail.requirements || '暂无写作要求'}</p>
-        <p className="hint">状态：{status?.state || '未查询'}</p>
+        <p className="hint">状态：{gradingStatusText(status?.state || '')}</p>
         <div className="actions">
           <a href={buildStudentMobileSubmitUrl(assignmentId)}>开始写作/提交作文</a>
           <a href={buildStudentMobileUploadUrl(assignmentId)}>拍照上传</a>
@@ -1329,16 +1759,197 @@ function StudentMobileTasksPage() {
   </Card></Layout>;
 }
 
+function StudentGrowthArchivePage() {
+  const session = getSession();
+  const [state, setState] = useState({
+    profile: null,
+    classes: [],
+    essays: [],
+    essayDetailsById: {},
+    loading: true,
+    error: ''
+  });
+
+  const load = useCallback(async () => {
+    if (!session?.studentId) {
+      setState((prev) => ({ ...prev, loading: false, error: '请先登录后查看。' }));
+      return;
+    }
+    setState((prev) => ({ ...prev, loading: true, error: '' }));
+    try {
+      const [profileData, classRows, essayRows] = await Promise.all([
+        api('/student-mobile/profile'),
+        api('/student-mobile/classes'),
+        api('/essays')
+      ]);
+      const essays = Array.isArray(essayRows) ? essayRows : [];
+      const scoredEssays = essays.filter((essay) => Number.isFinite(Number(essay.total_score)));
+      const details = await Promise.allSettled(scoredEssays.map(async (essay) => {
+        const detail = await api(`/essays/${encodeURIComponent(essay.id)}`);
+        return [String(essay.id), detail];
+      }));
+      const essayDetailsById = {};
+      for (const item of details) {
+        if (item.status !== 'fulfilled') continue;
+        const [essayId, detail] = item.value || [];
+        if (essayId) essayDetailsById[String(essayId)] = detail;
+      }
+      setState({
+        profile: profileData || {},
+        classes: Array.isArray(classRows) ? classRows : [],
+        essays,
+        essayDetailsById,
+        loading: false,
+        error: ''
+      });
+    } catch (error) {
+      setState((prev) => ({
+        ...prev,
+        loading: false,
+        error: String(error?.message || error || '加载失败')
+      }));
+    }
+  }, [session?.studentId]);
+
+  useLiveRefresh(load, { deps: [load], intervalMs: 15000 });
+
+  const profile = state.profile || {};
+  const className = normalizeProfileClassName(state.classes, profile);
+  const essays = Array.isArray(state.essays) ? state.essays.slice() : [];
+  const cumulativeCount = essays.filter((essay) => String(essay.status || '').toLowerCase() !== 'draft').length || essays.length;
+  const scoreRows = useMemo(() => buildScoreHistoryRows(essays, profile), [essays, profile]);
+  const averageScore = scoreRows.length ? (scoreRows.reduce((sum, item) => sum + Number(item.score || 0), 0) / scoreRows.length).toFixed(1) : '--';
+  const latestScore = scoreRows.length ? scoreRows.at(-1)?.score : null;
+  const firstScore = scoreRows.length > 1 ? scoreRows[0]?.score : null;
+  const scoreDelta = Number.isFinite(Number(latestScore)) && Number.isFinite(Number(firstScore)) ? Number(latestScore) - Number(firstScore) : null;
+  const growthTrend = scoreRows.length > 1
+    ? (scoreDelta > 0 ? '上升' : scoreDelta < 0 ? '需要加强' : '稳定')
+    : '稳定';
+  const abilityRows = useMemo(() => buildAbilityRows(profile), [profile]);
+  const commonProblems = useMemo(() => parseJsonArray(profile.common_problems, []), [profile]);
+  const analysis = useMemo(() => buildStudentFriendlyAnalysis({ profile, abilities: abilityRows, commonProblems }), [profile, abilityRows, commonProblems]);
+  const abilityRadarData = abilityRows.map((item) => ({ name: item.name, score: Number.isFinite(Number(item.score)) ? Number(item.score) : 0 }));
+  const scoredEssays = essays
+    .filter((essay) => Number.isFinite(Number(essay.total_score)))
+    .slice()
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+
+  if (state.loading && !state.profile) {
+    return <Layout><Card title="成长档案" icon={<ChartNoAxesCombined size={20} />}>{state.error ? <p className="error">{state.error}</p> : <p className="hint">正在加载成长档案……</p>}</Card></Layout>;
+  }
+
+  return <Layout>
+    <div className="growth-archive-grid">
+      <Card title="学生信息" icon={<Users size={20} />}>
+        <div className="student-meta-grid">
+          <article><span>姓名</span><b>{profile.name || '未填写'}</b></article>
+          <article><span>学号</span><b>{profile.student_no || '未填写'}</b></article>
+          <article><span>班级</span><b>{className}</b></article>
+        </div>
+        {profile.school ? <p className="hint">学校：{profile.school}</p> : null}
+      </Card>
+
+      <Card title="作文成长概览" icon={<ChartNoAxesCombined size={20} />}>
+        <div className="growth-overview-grid">
+          <article><span>累计作文</span><b>{cumulativeCount}篇</b></article>
+          <article><span>平均成绩</span><b>{averageScore === '--' ? '--' : `${averageScore}分`}</b></article>
+          <article><span>最近成绩</span><b>{Number.isFinite(Number(latestScore)) ? `${latestScore}分` : '--'}</b></article>
+          <article><span>成长趋势</span><b>{growthTrend}</b></article>
+        </div>
+        <div className="growth-overview-chart">
+          {scoreRows.length ? <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={scoreRows} margin={{ top: 8, right: 18, bottom: 8, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e3ebe7" />
+              <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+              <YAxis domain={[0, 60]} tick={{ fontSize: 12 }} />
+              <Tooltip
+                formatter={(value) => [`${value}分`, '成绩']}
+                labelFormatter={(label, payload) => {
+                  const row = payload?.[0]?.payload || {};
+                  return row.date ? `${label} · ${formatDateOnly(row.date)}` : String(label || '');
+                }}
+              />
+              <Line type="monotone" dataKey="score" stroke="#226b5f" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+            </LineChart>
+          </ResponsiveContainer> : <div className="chart-empty">完成批改后，这里会自动显示作文成绩变化曲线。</div>}
+        </div>
+      </Card>
+
+      <Card title="能力分析" icon={<BrainCircuit size={20} />}>
+        <p className="archive-summary-line">你的优势：{analysis.strengths}</p>
+        <p className="archive-summary-line">目前需要提升：{analysis.needsImprovement}</p>
+        <p className="archive-summary-line">下一阶段训练建议：{analysis.nextStep}</p>
+        <div className="ability-radar-panel">
+          <div className="ability-radar-chart">
+            {abilityRadarData.some((item) => item.score > 0) ? <ResponsiveContainer width="100%" height={260}>
+              <RadarChart data={abilityRadarData}>
+                <PolarGrid />
+                <PolarAngleAxis dataKey="name" tick={{ fontSize: 12 }} />
+                <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 11 }} />
+                <Radar name="能力水平" dataKey="score" stroke="#226b5f" fill="#226b5f" fillOpacity={0.22} />
+              </RadarChart>
+            </ResponsiveContainer> : <div className="chart-empty">样本不足，继续提交作文后会生成能力雷达图。</div>}
+          </div>
+          <div className="ability-card-list">
+            {abilityRows.map((item) => (
+              <article className="ability-card" key={item.rawName}>
+                <div className="ability-card-head">
+                  <b>{item.name}</b>
+                  <span>{Number.isFinite(Number(item.score)) ? `${item.score}分` : '待评估'}</span>
+                </div>
+                <div className="ability-star-row" aria-label={`${item.name}星级`}>
+                  {renderStarRow(item.score).map((filled, index) => <span key={`${item.rawName}-${index}`} className={filled ? 'filled' : ''}>★</span>)}
+                </div>
+                <div className="ability-progress" aria-hidden="true"><span style={{ width: `${Number.isFinite(Number(item.score)) ? clampPercent(item.score) : 0}%` }} /></div>
+                <p>{item.trend}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      <Card title="作文历史记录" icon={<FileText size={20} />}>
+        <div className="essay-history-list">
+          {scoredEssays.map((essay, index) => {
+            const detail = state.essayDetailsById[String(essay.id)] || {};
+            const review = buildEssayReviewSummary(essay, detail);
+            return (
+              <article className="essay-history-card" key={essay.id}>
+                <div className="essay-history-head">
+                  <div>
+                    <b>{essay.assignment_title || essay.title || `作文${index + 1}`}</b>
+                    <p>{formatDateOnly(essay.created_at)} · {Number.isFinite(Number(essay.total_score)) ? `${essay.total_score}分` : '待批改'} · {essay.level || '未评级'}</p>
+                  </div>
+                  <span className={`essay-score-badge ${Number.isFinite(Number(essay.total_score)) ? '' : 'muted'}`}>{Number.isFinite(Number(essay.total_score)) ? `${essay.total_score}分` : '待批改'}</span>
+                </div>
+                <p className="essay-history-summary">{review.summary}</p>
+                <div className="essay-review-grid">
+                  <article>
+                    <span>优点</span>
+                    <p>{review.strengths.join('；')}</p>
+                  </article>
+                  <article>
+                    <span>需要提升</span>
+                    <p>{review.improvement.join('；')}</p>
+                  </article>
+                </div>
+                <div className="actions">
+                  <a className="button-link" href={`/student-mobile/reports/${encodeURIComponent(essay.id)}`}>查看批改报告</a>
+                </div>
+              </article>
+            );
+          })}
+          {!scoredEssays.length && <div className="archive-empty">暂无可展示的历史作文。完成作文提交并批改后，会自动生成记录卡片。</div>}
+        </div>
+      </Card>
+
+      <ExportButtons studentId={session.studentId} />
+    </div>
+  </Layout>;
+}
+
 function StudentMobileProfilePage() {
-  const [profile, setProfile] = useState(null);
-  useEffect(() => { api('/student-mobile/profile').then(setProfile).catch(() => {}); }, []);
-  return <Layout><Card title="成长档案" icon={<ChartNoAxesCombined size={20} />}>
-    {profile ? <div className="form-stack">
-      <p><b>{profile.name}</b> · {profile.student_no || '未填写学号'}</p>
-      <p className="hint">{profile.growth_report || '暂无成长记录'}</p>
-      <pre style={{whiteSpace:'pre-wrap'}}>{profile.score_trend || '[]'}</pre>
-    </div> : <p className="hint">请先登录后查看。</p>}
-  </Card></Layout>;
+  return <StudentGrowthArchivePage />;
 }
 
 function StudentMobileReportsPage() {
@@ -1354,7 +1965,7 @@ function StudentMobileReportsPage() {
       setMessage('');
     } catch (err) {
       setEssays([]);
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     } finally {
       setBusy(false);
     }
@@ -1368,7 +1979,7 @@ function StudentMobileReportsPage() {
     <Card title="我的报告" icon={<FileText size={20} />}>
       <p className="hint">这里汇总本人已提交的作文、批改进度和已发布结果。</p>
       <div className="actions">
-        <button type="button" onClick={load} disabled={busy}>{busy ? '刷新中...' : '刷新报告'}</button>
+        <button type="button" onClick={load} disabled={busy}>{busy ? '刷新中……' : '刷新报告'}</button>
         <a className="button-link" href="/student-mobile/tasks">去任务列表</a>
       </div>
       {message && <p className="error">{message}</p>}
@@ -1379,7 +1990,7 @@ function StudentMobileReportsPage() {
         return <article key={essay.id} className="item">
           <b>{title}</b>
           <p>{essay.assignment_title || '无任务标题'} · {score}分 · {level}</p>
-          <p className="hint">{formatDateTime(essay.created_at)} · {essay.grading_status || '未知状态'}</p>
+          <p className="hint">{formatDateTime(essay.created_at)} · {gradingStatusText(essay.grading_status)}</p>
           <p><a href={buildStudentMobileReportUrl(essay.id)}>查看报告</a></p>
         </article>;
       })}
@@ -1427,7 +2038,7 @@ function TeacherLifecycleClassPage() {
 
   useEffect(() => {
     if (!isNumeric) return;
-    load().catch((err) => setMessage(err.message));
+    load().catch((err) => setMessage(errorMessageText(err)));
   }, [classKey]);
 
   if (!isNumeric) {
@@ -1449,7 +2060,7 @@ function TeacherLifecycleClassPage() {
       await load();
       setMessage('已重新生成班级邀请码。');
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     } finally {
       setBusy('');
     }
@@ -1468,7 +2079,7 @@ function TeacherLifecycleClassPage() {
       setMessage('已删除班级。');
       window.location.href = '/teacher/classes';
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     } finally {
       setBusy('');
     }
@@ -1481,7 +2092,7 @@ function TeacherLifecycleClassPage() {
       await load();
       setMessage('已批准入班申请。');
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     } finally {
       setBusy('');
     }
@@ -1496,7 +2107,7 @@ function TeacherLifecycleClassPage() {
       await load();
       setMessage('已拒绝入班申请。');
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     } finally {
       setBusy('');
     }
@@ -1517,7 +2128,7 @@ function TeacherLifecycleClassPage() {
       await load();
       setMessage(action === 'transfer' ? '已完成转班。' : '已更新成员状态。');
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     } finally {
       setBusy('');
     }
@@ -1527,11 +2138,11 @@ function TeacherLifecycleClassPage() {
     <div className="management-table">
       {requests.map((request) => <article className="management-row" key={request.id}>
         <b>{request.student_name}<span>{request.student_no || '未填学号'}</span></b>
-        <span>{request.source || 'student-mobile'}</span>
-        <span>{request.status}</span>
+        <span>{request.source === 'student-mobile' ? '学生端' : (request.source || '申请来源未明')}</span>
+        <span>{pickTeacherLabel(teacherSubmissionStatusLabels, request.status, '待审核')}</span>
         <span>{formatDateTime(request.requested_at)}</span>
         <span>{request.invite_code || '邀请码未显示'}</span>
-        <span>{request.membership_status || '未加入'}</span>
+        <span>{membershipStatusText(request.membership_status) || '未加入'}</span>
         <span className="record-actions">
           <button type="button" className="primary-button" disabled={busy === `approve-${request.id}`} onClick={() => approveRequest(request.id)}>{busy === `approve-${request.id}` ? '处理中' : '批准'}</button>
           <button type="button" className="danger-button" disabled={busy === `reject-${request.id}`} onClick={() => rejectRequest(request.id)}>{busy === `reject-${request.id}` ? '处理中' : '拒绝'}</button>
@@ -1549,10 +2160,10 @@ function TeacherLifecycleClassPage() {
           const targetClassId = transferTargets[member.id] || otherClasses[0]?.id || '';
           return <article className="management-row" key={member.id}>
             <b>{member.name}<span>{member.student_no || '未填学号'}</span></b>
-            <span>{member.username || '--'}</span>
-            <span>{member.binding_status || 'active'}</span>
+            <span>{member.username ? `账号：${member.username}` : '账号待创建'}</span>
+            <span>{membershipStatusText(member.binding_status) || '在班'}</span>
             <span className={Number(member.essay_count || 0) === 0 ? 'error-text' : ''}>{Number(member.essay_count || 0)} 篇{Number(member.essay_count || 0) === 0 ? ' · 未提交作文' : ''}</span>
-            <span>{member.latest_grading_status || '--'}</span>
+            <span>{pickTeacherLabel(teacherGradingStatusLabels, member.latest_grading_status, '暂无批改')}</span>
             <span>{formatDateTime(member.joined_at)}</span>
             <span>{member.left_at ? `离开：${formatDateTime(member.left_at)}` : '当前有效'}</span>
             <span className="record-actions">
@@ -1600,7 +2211,7 @@ function TeacherLifecycleClassPage() {
           <a className="kpi-link" href={joinRequestsUrl} aria-label="打开入班申请列表"><b>{klass.pending_join_requests ?? 0}</b>待审核<small>点击查看申请</small></a>
           <span><b>{klass.active_invites ?? 0}</b>有效邀请码</span>
         </div>
-        <p>{klass.name || '未命名班级'} · {klass.grade || '未填写年级'} · {klass.join_mode || 'approval'} · {klass.status || 'active'}</p>
+        <p>{klass.name || '未命名班级'} · {klass.grade || '未填写年级'} · {pickTeacherLabel(teacherJoinModeLabels, klass.join_mode, '需审核加入')} · {pickTeacherLabel(teacherClassStatusLabels, klass.status, '正常')}</p>
         <p className="hint">邀请码：{currentInvite?.invite_code || klass.invite_code || '未配置'} · 有效期：{formatDateTime(currentInvite?.expires_at || klass.invite_code_expires_at)}</p>
         <div className="actions">
           <a className="button-link" href={detail.invite_url || '#'} target="_blank" rel="noreferrer">打开二维码链接</a>
@@ -1709,7 +2320,7 @@ function TeacherEssayDetailPage() {
   }
 
   useEffect(() => {
-    load().catch((err) => setMessage(err.message));
+    load().catch((err) => setMessage(errorMessageText(err)));
   }, [essayId, location.search]);
 
   const versionItems = data?.history || [];
@@ -1724,9 +2335,10 @@ function TeacherEssayDetailPage() {
   const links = data?.links || {};
   const comparison = data?.comparison || null;
   const teacherReview = selectedRaw.teacherReview || data?.teacherReview || selectedReview?.teacherReview || {};
-  const selectedPrompt = selectedReview?.prompt_version || selectedRaw.metadata?.promptVersion || '--';
+  const selectedPrompt = formatPromptVersion(selectedReview?.prompt_version || selectedRaw.metadata?.promptVersion || '--');
   const selectedModel = selectedReview?.model || selectedRaw.metadata?.model || '--';
   const selectedVersionTime = formatDateTime(selectedReview?.created_at || selectedReview?.createdAt);
+  const selectedVersionText = `第${selectedReview?.version_number || 1}版`;
 
   useEffect(() => {
     if (!selectedReview) return;
@@ -1761,7 +2373,7 @@ function TeacherEssayDetailPage() {
       setMessage(status === 'submitted' ? '教师评分已提交并写回数据库。' : '草稿已保存。');
       setData(result.detail);
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     } finally {
       setSavingReview(false);
     }
@@ -1772,11 +2384,11 @@ function TeacherEssayDetailPage() {
     setRerunning(true);
     try {
       const result = await api(`/teacher/essays/${encodeURIComponent(essayId)}/rerun`, { method: 'POST', body: rerunForm });
-      setMessage(`已重新批改，生成版本 V${result.review?.version_number || '?' }。`);
+      setMessage(`已重新批改，生成第${result.review?.version_number || '?'}版。`);
       setRerunOpen(false);
       await load();
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     } finally {
       setRerunning(false);
     }
@@ -1785,6 +2397,7 @@ function TeacherEssayDetailPage() {
   const summaryStrengths = compactList(selectedRaw.summary?.mainStrengths || selectedRaw.strengths || selectedRaw.coreAdvantages || []).slice(0, 3);
   const summaryProblems = compactList(selectedRaw.summary?.mainProblems || selectedRaw.problems || selectedRaw.mainProblems || []).slice(0, 3);
   const summaryImprovements = compactList(selectedRaw.summary?.priorityImprovements || selectedRaw.nextTraining || selectedRaw.suggestions || []).slice(0, 3);
+  const dimensionCards = useMemo(() => buildTeacherDimensionCards(selectedReview || {}, selectedRaw || {}), [selectedReview, selectedRaw]);
 
   if (!data) {
     return <Layout><Card title="教师工作台" icon={<FileText size={20} />}>{message ? <p className="error">{message}</p> : <p className="hint">正在加载作文详情...</p>}</Card></Layout>;
@@ -1802,7 +2415,7 @@ function TeacherEssayDetailPage() {
                 className={String(selectedVersion) === String(item.version_number || 1) ? 'version-button active' : 'version-button'}
                 onClick={() => setSelectedVersion(String(item.version_number || 1))}
               >
-                <b>V{item.version_number || 1}</b>
+                <b>第{item.version_number || 1}版</b>
                 <span>{item.total_score ?? '--'}分</span>
                 <small>{formatDateTime(item.created_at)}</small>
               </button>
@@ -1811,8 +2424,8 @@ function TeacherEssayDetailPage() {
           {versionItems.length > 1 && comparison && (
             <div className="version-compare">
               <p><b>分数变化</b>{comparison.scoreDelta >= 0 ? '+' : ''}{comparison.scoreDelta}</p>
-              <p><b>Prompt</b>{comparison.promptFrom || '--'} → {comparison.promptTo || '--'}</p>
-              <p><b>模型</b>{comparison.modelFrom || '--'} → {comparison.modelTo || '--'}</p>
+              <p><b>提示词版本</b>{comparison.promptFrom || '--'} → {comparison.promptTo || '--'}</p>
+              <p><b>模型名称</b>{comparison.modelFrom || '--'} → {comparison.modelTo || '--'}</p>
             </div>
           )}
         </Card>
@@ -1820,16 +2433,16 @@ function TeacherEssayDetailPage() {
         <Card title="历史记录" icon={<FileSpreadsheet size={20} />}>
           {versionItems.length > 1 && comparison && <div className="version-compare compact">
             <p><b>评分变化</b>{comparison.scoreDelta >= 0 ? '+' : ''}{comparison.scoreDelta}</p>
-            <p><b>Prompt</b>{comparison.promptFrom || '--'} → {comparison.promptTo || '--'}</p>
-            <p><b>模型</b>{comparison.modelFrom || '--'} → {comparison.modelTo || '--'}</p>
+            <p><b>提示词版本</b>{comparison.promptFrom || '--'} → {comparison.promptTo || '--'}</p>
+            <p><b>模型名称</b>{comparison.modelFrom || '--'} → {comparison.modelTo || '--'}</p>
           </div>}
           <div className="management-table">
             {versionItems.map((item) => <article className={String(selectedVersion) === String(item.version_number || 1) ? 'management-row active' : 'management-row'} key={item.id}>
-              <b>V{item.version_number || 1}<span>{formatDateTime(item.created_at)}</span></b>
+              <b>第{item.version_number || 1}版<span>{formatDateTime(item.created_at)}</span></b>
               <span>{item.total_score}分</span>
               <span>{item.level || '--'}</span>
-              <span>{item.model || '--'}</span>
-              <code>{item.prompt_version || '--'}</code>
+              <span>模型名称：{item.model || '--'}</span>
+              <code>{formatPromptVersion(item.prompt_version || '--')}</code>
             </article>)}
           </div>
         </Card>
@@ -1844,11 +2457,11 @@ function TeacherEssayDetailPage() {
             </div>
             <div>
               <strong>{essay.assignment_title || '未命名作文'}</strong>
-              <span>{essay.word_count || 0} 字 · 当前版本 V{selectedReview?.version_number || 1}</span>
+              <span>{essay.word_count || 0} 字 · 当前版本 {selectedVersionText}</span>
             </div>
             <div>
               <strong>{selectedReview?.total_score ?? selectedReview?.totalScore ?? '--'} / {selectedReview?.full_score ?? selectedReview?.fullScore ?? 60}</strong>
-              <span>{selectedReview?.level || selectedReview?.grade || '待评'} · {selectedModel}</span>
+              <span>{selectedReview?.level || selectedReview?.grade || '待评'} · 模型名称：{selectedModel}</span>
             </div>
           </div>
           {message && <p className={message.includes('已重新批改') || message.includes('已保存') || message.includes('已提交') ? 'success' : 'hint'}>{message}</p>}
@@ -1860,8 +2473,8 @@ function TeacherEssayDetailPage() {
 
         <Card title="作文全文" icon={<BookOpen size={20} />}>
           <div className="essay-meta-row">
-            <span>报告版本 {selectedReview?.report_version || selectedReview?.reportVersion || '2.0'}</span>
-            <span>Prompt {selectedPrompt}</span>
+            <span>批改报告版本 {selectedReview?.report_version || selectedReview?.reportVersion || '2.0'}</span>
+            <span>{selectedPrompt}</span>
             <span>{selectedVersionTime}</span>
           </div>
           <div className="essay-text-block">
@@ -1891,9 +2504,16 @@ function TeacherEssayDetailPage() {
             </div>
           </Card>
 
+          <TutorConversationHistory essayId={essayId} />
+
           <Card title="分项评分" icon={<ChartNoAxesCombined size={20} />}>
-            <div className="dimension-grid">
-              {Object.entries(selectedRaw.dimensions || {}).map(([key, value]) => <article key={key}><b>{key}</b><p>{typeof value === 'string' ? value : JSON.stringify(value)}</p></article>)}
+            <p className="hint">教师端版分项展示：下面是这篇作文的分项表现，方便老师快速定位讲评重点。</p>
+            <div className="dimension-grid teacher-dimension-grid">
+              {dimensionCards.map((item) => <article key={item.label}>
+                <b>{item.label}</b>
+                <p className="dimension-score-line">{item.summary}</p>
+                {item.comment ? <p>{item.comment}</p> : <p className="hint">暂无补充说明。</p>}
+              </article>)}
             </div>
           </Card>
 
@@ -1946,16 +2566,16 @@ function TeacherEssayDetailPage() {
           <details className="rerun-accordion" open={rerunOpen} onToggle={(event) => setRerunOpen(event.currentTarget.open)}>
             <summary>重新批改</summary>
             <div className="rerun-panel">
-              <p className="hint">默认收起。确认后将启动新的 gradingJob，并保留历史版本。</p>
-              <label>Prompt
+              <p className="hint">默认收起。确认后将启动新的批改任务，并保留历史版本。</p>
+              <label>提示词策略
                 <select value={rerunForm.promptMode} onChange={(e) => setRerunForm({ ...rerunForm, promptMode: e.target.value })}>
-                  <option value="keep_original">保持原 Prompt</option>
-                  <option value="update">更新 Prompt</option>
-                  <option value="latest">使用最新 Prompt</option>
+                  <option value="keep_original">保持原提示词</option>
+                  <option value="update">更新提示词</option>
+                  <option value="latest">使用最新提示词</option>
                 </select>
               </label>
-              <label>新 Prompt
-                <textarea rows="5" value={rerunForm.promptText} onChange={(e) => setRerunForm({ ...rerunForm, promptText: e.target.value })} placeholder="仅在更新 Prompt 时填写" />
+              <label>新提示词
+                <textarea rows="5" value={rerunForm.promptText} onChange={(e) => setRerunForm({ ...rerunForm, promptText: e.target.value })} placeholder="仅在更新提示词时填写" />
               </label>
               <label>重批原因
                 <textarea rows="4" value={rerunForm.rerunReason} onChange={(e) => setRerunForm({ ...rerunForm, rerunReason: e.target.value })} placeholder="例如：教师补充反馈后重批" />
@@ -1973,8 +2593,8 @@ function TeacherEssayDetailPage() {
         <Card title="报告操作" icon={<Download size={20} />}>
           <div className="report-action-stack">
             <button type="button" className="report-button" onClick={() => links.reportUrl && window.open(links.reportUrl, '_blank', 'noopener,noreferrer')}>查看归档报告</button>
-            <button type="button" className="report-button" onClick={() => links.pdfUrl && window.open(links.pdfUrl, '_blank', 'noopener,noreferrer')}>下载 PDF</button>
-            <button type="button" className="report-button" onClick={() => links.docxUrl && window.open(links.docxUrl, '_blank', 'noopener,noreferrer')}>下载 Word</button>
+            <button type="button" className="report-button" onClick={() => links.pdfUrl && window.open(links.pdfUrl, '_blank', 'noopener,noreferrer')}>下载打印版</button>
+            <button type="button" className="report-button" onClick={() => links.docxUrl && window.open(links.docxUrl, '_blank', 'noopener,noreferrer')}>下载可编辑版</button>
           </div>
         </Card>
       </aside>
@@ -2177,75 +2797,22 @@ function ExportButtons({ essayId, studentId, classId }) {
   }
   return <Card title="导出" icon={<Download size={20} />}>
     <div className="actions">
-      {essayId && <><button onClick={() => exp('essay', essayId, 'docx')}>作文 Word</button><button onClick={() => exp('essay', essayId, 'pdf')}>作文 PDF</button></>}
-      {studentId && <><button onClick={() => exp('student', studentId, 'docx')}>档案 Word</button><button onClick={() => exp('student', studentId, 'pdf')}>档案 PDF</button></>}
-      {classId && <><button onClick={() => exp('class', classId, 'docx')}>班级 Word</button><button onClick={() => exp('class', classId, 'pdf')}>班级 PDF</button></>}
+      {essayId && <><button onClick={() => exp('essay', essayId, 'docx')}>作文可编辑版</button><button onClick={() => exp('essay', essayId, 'pdf')}>作文打印版</button></>}
+      {studentId && <><button onClick={() => exp('student', studentId, 'docx')}>档案可编辑版</button><button onClick={() => exp('student', studentId, 'pdf')}>档案打印版</button></>}
+      {classId && <><button onClick={() => exp('class', classId, 'docx')}>班级可编辑版</button><button onClick={() => exp('class', classId, 'pdf')}>班级打印版</button></>}
     </div>
   </Card>;
 }
 
 function StudentProfile() {
-  const session = getSession();
-  const [data, setData] = useState(null);
-  useEffect(() => { api(`/analytics/students/${session.studentId}`).then(setData); }, []);
-  const personalized = useMemo(() => JSON.parse(data?.profile?.personalized_suggestions || '[]'), [data]);
-  const thinkingArchive = useMemo(() => personalized.find((item) => item?.type === 'thinking_growth') || {}, [personalized]);
-  const thinkingGrowth = useMemo(() => thinkingArchive.abilities || [
-    { name: '逻辑能力', score: '--', trend: '等待更多批改数据' },
-    { name: '思辨能力', score: '--', trend: '等待更多批改数据' },
-    { name: '论证能力', score: '--', trend: '等待更多批改数据' },
-    { name: '材料分析能力', score: '--', trend: '等待更多批改数据' },
-    { name: '语言表达能力', score: '--', trend: '等待更多批改数据' },
-    { name: '修改能力', score: '--', trend: '等待更多批改数据' }
-  ], [thinkingArchive]);
-  const thinkingAnalyses = useMemo(() => thinkingArchive.thinking_analyses || thinkingArchive.analyses || [], [thinkingArchive]);
-  const trend = useMemo(() => JSON.parse(data?.profile?.score_trend || '[]').map((item, index) => ({
-    ...item,
-    essayLabel: `第${index + 1}篇`
-  })), [data]);
-  const trendStats = useMemo(() => {
-    const scores = trend.map((item) => Number(item.score)).filter((score) => Number.isFinite(score));
-    const latestScore = scores.length ? scores.at(-1) : null;
-    const bestScore = scores.length ? Math.max(...scores) : null;
-    const scoreDelta = scores.length > 1 ? latestScore - scores[0] : null;
-    return { latestScore, bestScore, scoreDelta, count: scores.length };
-  }, [trend]);
-  return <Layout><div className="grid">
-    <Card title="个人作文档案" icon={<ChartNoAxesCombined size={20} />}>
-      <p>{data?.profile?.growth_report || '暂无档案'}</p>
-      <div className="profile-stats">
-        <span><b>{trendStats.latestScore ?? '--'}</b>最近得分</span>
-        <span><b>{trendStats.bestScore ?? '--'}</b>最高得分</span>
-        <span><b>{trendStats.scoreDelta == null ? '--' : `${trendStats.scoreDelta >= 0 ? '+' : ''}${trendStats.scoreDelta}`}</b>成绩变化</span>
-        <span><b>{trendStats.count}</b>已批改作文</span>
-      </div>
-      <div className="chart" aria-label="成绩趋势图">
-        {trend.length ? <ResponsiveContainer>
-          <LineChart data={trend} margin={{ top: 8, right: 18, bottom: 8, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e3ebe7" />
-            <XAxis dataKey="essayLabel" tick={{ fontSize: 12 }} />
-            <YAxis domain={[0, 60]} tick={{ fontSize: 12 }} />
-            <Tooltip formatter={(value) => [`${value}分`, '成绩']} labelFormatter={(label) => `成绩趋势图：${label}`} />
-            <Line type="monotone" dataKey="score" stroke="#226b5f" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-          </LineChart>
-        </ResponsiveContainer> : <div className="chart-empty">暂无已批改成绩，完成批改后会生成成绩趋势图。</div>}
-      </div>
-    </Card>
-    <Card title="思维成长档案" icon={<BrainCircuit size={20} />}>
-      <p className="hint">结合已批改作文的详细分析：{thinkingArchive.summary || '完成更多作文批改后，将按篇目归纳思维优势、薄弱点和下一步修改方向。'}</p>
-      <div className="thinking-growth-grid">{thinkingGrowth.map((item) => <article key={item.name}><b>{item.score}</b><span>{item.name}</span><p>{item.trend}</p></article>)}</div>
-      <div className="thinking-analysis-list">{thinkingAnalyses.map((item) => <article key={item.essay_id || item.essay_title}><h3>{item.essay_title}</h3><p>{item.detailed_analysis}</p><p><b>文本证据</b>{(item.evidence || []).join('；')}</p></article>)}</div>
-    </Card>
-    <Card title="历次作文" icon={<FileText size={20} />}>{data?.essays?.map((x) => <article className="item" key={x.id}><b>{x.assignment_title}</b><p>{x.total_score || '-'}分 · {x.level || '待批改'}</p><a href={`/review/${x.id}`}>查看</a></article>)}</Card>
-    <ExportButtons studentId={session.studentId} />
-  </div></Layout>;
+  return <StudentGrowthArchivePage />;
 }
 
 function PublicAccessPanel({ title = '外网访问', intro = '公网入口由 Cloudflare Tunnel 转发到本机 4000 端口。', compact = false }) {
   const [status, setStatus] = useState(null);
   const [message, setMessage] = useState('');
 
-  useEffect(() => { api('/public-access').then(setStatus).catch((err) => setMessage(err.message)); }, []);
+  useEffect(() => { api('/public-access').then(setStatus).catch((err) => setMessage(errorMessageText(err))); }, []);
 
   async function copyUrl() {
     if (!status?.url) return;
@@ -2283,18 +2850,16 @@ function TeacherDashboardCard() {
   return <Card title="教师工作台" icon={<School size={20} />}>
     {!data ? <p className="hint">正在读取教师后台数据...</p> : <>
       <div className="teacher-kpis">
-        <span><b>{data.classes.visible ?? data.classes.total}</b>可见班级</span>
-        <span><b>{data.students.visible ?? data.students.total}</b>可见学生</span>
-        <span><b>{data.classes.test ?? 0}</b>测试班级</span>
-        <span><b>{data.students.test ?? 0}</b>测试学生</span>
-        <span><b>{data.essays.total}</b>作文</span>
+        <span><b>{data.classes.visible ?? data.classes.total ?? 0}</b>我的班级</span>
+        <span><b>{data.students.visible ?? data.students.total ?? 0}</b>班级学生</span>
+        <span><b>{data.joinRequests?.pending ?? data.pendingRequests ?? 0}</b>待审核学生</span>
+        <span><b>{data.assignments?.active ?? data.assignments?.total ?? 0}</b>进行中任务</span>
+        <span><b>{data.submissions?.pendingReview ?? data.essays?.pending ?? 0}</b>待查看作文</span>
         <span><b>{data.scores.average7d ?? '--'}</b>7天均分</span>
       </div>
-      <div className="access-checks">
-        <span className={data.services.deepseek === 'healthy' ? 'ok' : 'warn'}>DeepSeek {data.services.deepseek}</span>
-        <span className={data.services.nas === 'healthy' ? 'ok' : 'warn'}>NAS {data.services.nas}</span>
-        <span className="ok">生产 {data.services.production}</span>
-        <span>队列 {data.queues.archivePending + data.queues.profilePending + data.queues.managementPending}</span>
+      <div className="teacher-home-summary">
+        <span>最近任务：{data.assignments?.latest?.title || '暂无'}</span>
+        <span>最近提交：{data.submissions?.latest?.student_name || '暂无'}</span>
       </div>
     </>}
   </Card>;
@@ -2315,111 +2880,20 @@ function TeacherManagementShell({ title, icon, children }) {
 }
 
 function BenchmarkCenterPage() {
-  const [status, setStatus] = useState(null);
-  const [datasets, setDatasets] = useState([]);
-  const [latest, setLatest] = useState(null);
-  const [message, setMessage] = useState('');
-  const [running, setRunning] = useState(false);
-
-  async function load() {
-    const [nextStatus, nextDatasets, nextLatest] = await Promise.all([
-      api('/benchmark/status'),
-      api('/benchmark/datasets?pageSize=20'),
-      api('/benchmark/reports/latest')
-    ]);
-    setStatus(nextStatus);
-    setDatasets(nextDatasets.items || []);
-    setLatest(nextLatest);
-  }
-
-  useEffect(() => { load().catch((err) => setMessage(err.message)); }, []);
-
-  async function runMockBenchmark() {
-    setRunning(true);
-    setMessage('');
-    try {
-      const result = await api('/benchmark/run', { method: 'POST', body: { mock: true, providerNames: ['mock'] } });
-      setMessage(`Benchmark 完成：样本 ${result.summary?.samples || 0}，均分 ${result.summary?.averageScore || 0}`);
-      await load();
-    } catch (error) {
-      setMessage(error.message);
-    } finally {
-      setRunning(false);
-    }
-  }
-
-  function downloadExport(file) {
-    window.open(`${apiBaseUrl()}/benchmark/download/${encodeURIComponent(file)}`, '_blank', 'noopener,noreferrer');
-  }
-
-  function downloadNamedExport(label, file) {
-    return <button type="button" onClick={() => downloadExport(file)} disabled={!(latest?.exports || []).includes(file)}><Download size={16} />{label}</button>;
-  }
-
-  return <TeacherManagementShell title="Benchmark Center" icon={<FileSpreadsheet size={20} />}>
-    <div className="teacher-kpis">
-      <span><b>{status?.datasets ?? '--'}</b>历史样本</span>
-      <span><b>{status?.summary?.averageScore ?? '--'}</b>平均分</span>
-      <span><b>{status?.summary?.averageImprovementRate ?? '--'}%</b>提升率</span>
-      <span><b>{status?.latestRun?.completedAt ? formatDateTime(status.latestRun.completedAt) : '--'}</b>最近运行时间</span>
-    </div>
-    <div className="actions">
-      <button type="button" onClick={runMockBenchmark} disabled={running}><RotateCcw size={16} />{running ? '运行中' : '重新运行 Benchmark'}</button>
-      <button type="button" onClick={() => load().catch((err) => setMessage(err.message))}><Search size={16} />刷新</button>
-      {downloadNamedExport('下载 Word', 'Benchmark_Report.docx')}
-      {downloadNamedExport('下载 PDF', 'Benchmark_Report.pdf')}
-      {downloadNamedExport('下载 Excel', 'Benchmark_Report.xlsx')}
-      {downloadNamedExport('下载 Markdown', 'Benchmark_Report.md')}
-    </div>
-    {message && <p className={message.includes('完成') ? 'success' : 'error'}>{message}</p>}
-    <div className="archive-grid">
-      <div className="archive-list">
-        <h3>历史作文</h3>
-        {datasets.map((item) => <article className="archive-row" key={item.id}>
-          <div>
-            <b>{item.title}</b>
-            <p>{item.grade} · {item.className} · {item.wordCount}字 · {item.authorId}</p>
-            <code>{item.id}</code>
-          </div>
-        </article>)}
-        {!datasets.length && <p className="hint">暂无 Benchmark 样本，可通过 API 或脚本导入历史作文。</p>}
-      </div>
-      <aside className="archive-detail">
-        <h3>历史运行记录</h3>
-        {(status?.recentRuns || []).slice(0, 6).map((run) => <article className="archive-row" key={run.runId}>
-          <div>
-            <b>{formatDateTime(run.completedAt)}</b>
-            <p>样本 {run.samples} · 成功 {run.successCount} · 均分 {run.averageScore} · 提升 {run.averageImprovementRate}%</p>
-            <code>{(run.providers || []).join(', ') || 'mock'} · {run.status}</code>
-          </div>
-        </article>)}
-        {!status?.recentRuns?.length && <p className="hint">暂无历史运行记录。</p>}
-        <h3>导出报告</h3>
-        {(latest?.exports || []).map((file) => <button key={file} type="button" onClick={() => downloadExport(file)}><Download size={16} />{file}</button>)}
-        {!latest?.exports?.length && <p className="hint">尚未生成 Benchmark 导出报告。</p>}
-        <p className="hint">待重试任务：{status?.queuePending ?? 0}</p>
-      </aside>
-    </div>
-  </TeacherManagementShell>;
+  return <TeacherLegacyRedirect to="/teacher/classes" />;
 }
 
 function TeacherClassesPage() {
   const [rows, setRows] = useState([]);
-  const [liveRows, setLiveRows] = useState([]);
-  const [filters, setFilters] = useState({ scope: 'production', keyword: '', grade: '', schoolYear: '', status: '' });
-  const [form, setForm] = useState({ name: '', grade: '', joinMode: 'approval', dataScope: 'production', maxStudents: 40 });
+  const [form, setForm] = useState({ name: '', grade: '', maxStudents: 40 });
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState('');
+
   async function load() {
-    const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString();
-    const [legacyRows, liveClasses] = await Promise.all([
-      api(`/teacher/classes${query ? `?${query}` : ''}`),
-      api('/classes').catch(() => [])
-    ]);
-    setRows(legacyRows.items || []);
-    setLiveRows(Array.isArray(liveClasses) ? liveClasses : liveClasses?.items || liveClasses?.rows || []);
+    const liveClasses = await api('/classes').catch(() => []);
+    setRows(Array.isArray(liveClasses) ? liveClasses : liveClasses?.items || liveClasses?.rows || []);
   }
-  useEffect(() => { load().catch((err) => setMessage(err.message)); }, []);
+  useTeacherLiveRefresh(() => load().catch((err) => setMessage(errorMessageText(err))), { deps: [] });
   async function archive(classKey) {
     if (!window.confirm('归档班级不会删除学生和历史作文，确认继续？')) return;
     await api(`/teacher/classes/${encodeURIComponent(classKey)}/archive`, { method: 'POST', body: {} });
@@ -2439,18 +2913,15 @@ function TeacherClassesPage() {
         body: {
           name: form.name.trim(),
           grade: form.grade.trim(),
-          joinMode: form.joinMode,
-          dataScope: form.dataScope,
-          maxStudents: Number(form.maxStudents || 0),
-          status: 'active'
+          maxStudents: Number(form.maxStudents || 0)
         }
       });
-      setForm({ name: '', grade: '', joinMode: 'approval', dataScope: 'production', maxStudents: 40 });
+      setForm({ name: '', grade: '', maxStudents: 40 });
       await load();
       window.dispatchEvent(new Event('classes-changed'));
-      setMessage('已创建班级。');
+      setMessage('班级创建成功。');
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     } finally {
       setBusy('');
     }
@@ -2470,98 +2941,46 @@ function TeacherClassesPage() {
       window.dispatchEvent(new Event('classes-changed'));
       setMessage(`已删除班级：${klass.name}`);
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     } finally {
       setBusy('');
     }
   }
-  return <TeacherManagementShell title="班级管理" icon={<Users size={20} />}>
+  return <TeacherManagementShell title="我的班级" icon={<Users size={20} />}>
     <Card title="新增班级" icon={<Plus size={20} />}>
       <form className="form-stack" onSubmit={createClass}>
-        <div className="teacher-review-columns">
-          <label>班级名称
-            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如：高一（3）班" />
-          </label>
-          <label>年级
-            <input value={form.grade} onChange={(e) => setForm({ ...form, grade: e.target.value })} placeholder="例如：高一" />
-          </label>
-        </div>
-        <div className="teacher-review-columns">
-          <label>加入模式
-            <select value={form.joinMode} onChange={(e) => setForm({ ...form, joinMode: e.target.value })}>
-              <option value="approval">approval</option>
-              <option value="open">open</option>
-              <option value="closed">closed</option>
-            </select>
-          </label>
-          <label>数据作用域
-            <select value={form.dataScope} onChange={(e) => setForm({ ...form, dataScope: e.target.value })}>
-              <option value="production">production</option>
-              <option value="system_test">system_test</option>
-              <option value="migrated_legacy">migrated_legacy</option>
-            </select>
-          </label>
-        </div>
-        <label>最大人数
+        <label>班级名称
+          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如：高一（3）班" />
+        </label>
+        <label>年级
+          <input value={form.grade} onChange={(e) => setForm({ ...form, grade: e.target.value })} placeholder="例如：高一" />
+        </label>
+        <label>人数限制
           <input type="number" min="0" value={form.maxStudents} onChange={(e) => setForm({ ...form, maxStudents: Number(e.target.value) })} />
         </label>
         <div className="actions">
-          <button type="submit" className="primary-button" disabled={busy === 'create'}>{busy === 'create' ? '创建中...' : '新增班级'}</button>
+          <button type="submit" className="primary-button" disabled={busy === 'create'}>{busy === 'create' ? '创建中...' : '创建班级'}</button>
         </div>
       </form>
     </Card>
-    <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
-      <select value={filters.scope} onChange={(e) => setFilters({ ...filters, scope: e.target.value })}><option value="production">仅正式数据</option><option value="">全部历史数据</option></select>
-      <label><Search size={18} /><input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="搜索班级/教师" /></label>
-      <input value={filters.grade} onChange={(e) => setFilters({ ...filters, grade: e.target.value })} placeholder="年级" />
-      <input value={filters.schoolYear} onChange={(e) => setFilters({ ...filters, schoolYear: e.target.value })} placeholder="学年" />
-      <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="">全部状态</option><option value="active">active</option><option value="archived">archived</option></select>
-      <button><Filter size={18} />筛选</button>
-    </form>
     {message && <p className="error">{message}</p>}
-    <Card title="当前班级" icon={<School size={20} />}>
-      <p className="hint">删除班级会级联清理该班的成员关系、任务和批改记录，需教师二次确认。</p>
-      <details className="collapsible-block">
-        <summary>点击展开当前班级（{liveRows.length}）</summary>
-        <div className="management-table">
-          {liveRows.map((klass) => <article className="management-row" key={klass.id}>
-            <b>{klass.name}<span>{klass.grade || '未填写年级'} · {klass.data_scope || 'production'}</span></b>
-            <span>{klass.student_count ?? 0} 人</span>
-            <span>{klass.assignment_count ?? 0} 任务</span>
-            <span>{klass.pending_join_requests ?? 0} 待审核</span>
-            <span>{klass.status || 'active'}</span>
-            <span className="record-actions">
-              <a href={`/teacher/classes/${encodeURIComponent(klass.id)}`}>详情</a>
-              <a href={`/teacher/classes/${encodeURIComponent(klass.id)}/members`}>成员管理</a>
-              <a href={buildTeacherJoinRequestsUrl(klass.id)}>入班申请</a>
-              <button type="button" className="danger-button" disabled={busy === `delete-${klass.id}`} onClick={() => deleteClass(klass)}>{busy === `delete-${klass.id}` ? '删除中...' : '删除班级'}</button>
-            </span>
-          </article>)}
-          {!liveRows.length && <p className="hint">暂无可管理班级，可先创建一个班级。</p>}
-        </div>
-      </details>
-    </Card>
-    <p className="hint">默认仅展示正式班级。切换到“全部历史数据”可以查看旧班级，但不会自动执行删除。</p>
-    <details className="collapsible-block">
-      <summary>点击展开历史班级（{rows.length}）</summary>
+    <Card title="班级列表" icon={<School size={20} />}>
       <div className="management-table">
-        {rows.map((klass) => <article className="management-row" key={klass.classKey}>
-          <b>{klass.className}<span>{klass.grade} · {klass.schoolYear}</span></b>
-          <span>{klass.studentCount} 人</span>
-          <span>{klass.assignmentCount ?? klass.assignment_count ?? 0} 任务</span>
-          <span>{klass.essayCount} 篇</span>
-          <span>均分 {klass.averageScore ?? '--'}</span>
-          <span>优秀率 {klass.excellentRate == null ? '--' : `${Math.round(klass.excellentRate * 100)}%`}</span>
-          <span>{klass.status}</span>
+        {rows.map((klass) => <article className="management-row" key={klass.classKey || klass.id}>
+          <b>{klass.name || klass.className}<span>{klass.grade || '未填写年级'}</span></b>
+          <span>{Number(klass.student_count ?? klass.studentCount ?? 0)} 人</span>
+          <span>{Number(klass.assignment_count ?? klass.assignmentCount ?? 0)} 任务</span>
+          <span>{Number(klass.pending_join_requests ?? klass.pendingJoinRequests ?? 0)} 待审核</span>
+          <span>{pickTeacherLabel(teacherClassStatusLabels, klass.status, '正常')}</span>
           <span className="record-actions">
-            <a href={`/teacher/classes/${encodeURIComponent(klass.classKey)}`}>详情</a>
-            <a href={`/teacher/classes/${encodeURIComponent(klass.classKey)}/members`}>成员管理</a>
-            {klass.status !== 'archived' ? <button type="button" onClick={() => archive(klass.classKey)}>归档</button> : <span className="hint">已归档</span>}
+            <a href={`/teacher/classes/${encodeURIComponent(klass.id || klass.classKey)}`}>班级详情</a>
+            <a href={`/teacher/classes/${encodeURIComponent(klass.id || klass.classKey)}/members`}>学生管理</a>
+            <button type="button" className="danger-button" disabled={busy === `delete-${klass.id || klass.classKey}`} onClick={() => deleteClass(klass)}>{busy === `delete-${klass.id || klass.classKey}` ? '删除中...' : '删除班级'}</button>
           </span>
         </article>)}
-        {!rows.length && <p className="hint">暂无班级数据，请先运行 classes:rebuild 或创建班级。</p>}
+        {!rows.length && <p className="hint">暂无班级，请先创建一个班级。</p>}
       </div>
-    </details>
+    </Card>
   </TeacherManagementShell>;
 }
 
@@ -2596,7 +3015,7 @@ function TeacherClassDetailPage() {
         essays: liveEssays.length ? liveEssays : (essays.items || essays.rows || []),
         assignments
       });
-    }).catch((err) => setMessage(err.message));
+    }).catch((err) => setMessage(errorMessageText(err)));
   }, [classKey]);
   const trendRows = data.stats?.submitTrend30d || [];
   return <TeacherManagementShell title="班级详情" icon={<School size={20} />}>
@@ -2629,10 +3048,10 @@ function TeacherClassDetailPage() {
         essays: liveEssays.length ? liveEssays : (essays.items || essays.rows || []),
         assignments
       });
-    }).catch((err) => setMessage(err.message))} />
-    <h3>学生</h3><div className="management-table">{data.students.map((student) => <a className="management-row" href={`/student-profiles/${encodeURIComponent(student.studentKey)}`} key={student.studentKey}><b>{student.studentName}<span>{student.studentId}</span></b><span>{student.essayCount}篇</span><span>{student.averageScore ?? '--'}分</span><span>{student.scoreTrend || '样本不足'}</span><span>{student.weakestAbility || '--'}</span></a>)}</div>
-    <h3>任务</h3><div className="management-table">{data.assignments.length ? data.assignments.map((assignment) => <article className="management-row" key={assignment.id}><b>{assignment.title}<span>{assignment.public_id || assignment.id}</span></b><span>{assignment.status}</span><span>{formatDateTime(assignment.created_at)}</span><span>{assignment.submitted_count || 0} 已交</span><span>{assignment.missing_count || 0} 未交</span><span className="record-actions"><a href={buildTeacherAssignmentDetailUrl(assignment.id)}>查看详情</a></span></article>) : <p className="hint">当前班级暂无已发布任务。</p>}</div>
-    <h3>作文</h3><div className="management-table">{data.essays.slice(0, 10).map((essay) => <article className="management-row" key={essay.id}><b>{essay.title || essay.assignment_title || '未命名作文'}<span>{essay.student_name || '未知学生'}</span></b><span>{essay.total_score ?? '--'}分</span><span>{essay.level || essay.grading_status || '待批改'}</span><span>{essay.class_name || '未知班级'}</span><span>{formatDateTime(essay.created_at)}</span><span className="record-actions"><a href={`/teacher/essays/${encodeURIComponent(essay.id)}`}>查看AI批阅</a></span></article>)}</div></>}
+    }).catch((err) => setMessage(errorMessageText(err)))} />
+    <h3>学生</h3><div className="management-table">{data.students.map((student) => <a className="management-row" href={`/student-profiles/${encodeURIComponent(student.studentKey)}`} key={student.studentKey}><b>{student.studentName}<span>{student.student_no || '未填学号'}</span></b><span>{student.essayCount}篇</span><span>{student.averageScore ?? '--'}分</span><span>{student.scoreTrend || '样本不足'}</span><span>{student.weakestAbility || '--'}</span></a>)}</div>
+    <h3>任务</h3><div className="management-table">{data.assignments.length ? data.assignments.map((assignment) => <article className="management-row" key={assignment.id}><b>{assignment.title}<span>{assignment.class_name || '当前班级'}</span></b><span>{pickTeacherLabel(teacherAssignmentStatusLabels, assignment.status, '已发布')}</span><span>{formatDateTime(assignment.created_at)}</span><span>{assignment.submitted_count || 0} 已交</span><span>{assignment.missing_count || 0} 未交</span><span className="record-actions"><a href={buildTeacherAssignmentDetailUrl(assignment.id)}>查看详情</a></span></article>) : <p className="hint">当前班级暂无已发布任务。</p>}</div>
+    <h3>作文</h3><div className="management-table">{data.essays.slice(0, 10).map((essay) => <article className="management-row" key={essay.id}><b>{essay.title || essay.assignment_title || '未命名作文'}<span>{essay.student_name || '未知学生'}</span></b><span>{essay.total_score ?? '--'}分</span><span>{pickTeacherLabel(teacherGradingStatusLabels, essay.level || essay.grading_status, '待批改')}</span><span>{essay.class_name || '当前班级'}</span><span>{formatDateTime(essay.created_at)}</span><span className="record-actions"><a href={`/teacher/essays/${encodeURIComponent(essay.id)}`}>查看批阅</a></span></article>)}</div></>}
   </TeacherManagementShell>;
 }
 
@@ -2665,7 +3084,7 @@ function TeacherTestCenterPage() {
       }
       setMessage('');
     } catch (error) {
-      setMessage(error.message);
+      setMessage(errorMessageText(error));
       setTaskError('任务数据加载失败，请重试。');
     } finally {
       setBusy('');
@@ -2741,7 +3160,7 @@ function TeacherTestCenterPage() {
       await load();
       setMessage('已重新生成邀请。');
     } catch (error) {
-      setMessage(error.message);
+      setMessage(errorMessageText(error));
     } finally {
       setBusy('');
     }
@@ -2765,7 +3184,7 @@ function TeacherTestCenterPage() {
       setData(result.snapshot);
       setMessage('系统测试环境已重置。');
     } catch (error) {
-      setMessage(error.message);
+      setMessage(errorMessageText(error));
     } finally {
       setBusy('');
     }
@@ -2777,9 +3196,9 @@ function TeacherTestCenterPage() {
       const result = await api('/teacher/cleanup/legacy/dry-run');
       const snapshot = await api('/teacher/test-center');
       setData({ ...snapshot, report: result.report, reportFiles: result.files });
-      setMessage(`dry-run 已生成：可归档 ${result.report?.archive?.length || 0} 条，物理删除候选 ${result.report?.physicalDelete?.length || 0} 条。`);
+      setMessage(`清理预演已生成：可归档 ${result.report?.archive?.length || 0} 条，物理删除候选 ${result.report?.physicalDelete?.length || 0} 条。`);
     } catch (error) {
-      setMessage(error.message);
+      setMessage(errorMessageText(error));
     } finally {
       setBusy('');
     }
@@ -2806,7 +3225,7 @@ function TeacherTestCenterPage() {
         <div className="test-center-hero-main">
           <p className="eyebrow">邀请学生</p>
           <h2>{fixtureClass?.className || '系统测试班'}</h2>
-          <p>{fixtureClass?.grade || '测试'} · {fixtureClass?.schoolYear || '当前学年'} · {fixtureClass?.joinMode || 'approval'} · {fixtureClass?.status || 'active'}</p>
+          <p>{fixtureClass?.grade || '测试'} · {fixtureClass?.schoolYear || '当前学年'} · {joinModeText(fixtureClass?.joinMode)} · {classStatusText(fixtureClass?.status)}</p>
           <div className="teacher-kpis test-center-mini-kpis">
             <span><b>{Number(fixtureClass?.studentCount || 0)}</b>当前学生</span>
             <a className="kpi-link" href={joinRequestsUrl} aria-label="打开入班申请列表"><b>{Number(report?.teacherManagement?.totals?.pendingRequests || report?.teacherManagement?.totals?.requests || 0)}</b>待审核人数<small>点击查看申请</small></a>
@@ -2816,7 +3235,7 @@ function TeacherTestCenterPage() {
           <div className="test-center-invite-code">
             <span>邀请码</span>
             <strong>{fixtureClass?.inviteCode || 'SYSTEM-TEST-001'}</strong>
-            <small>状态：{fixtureClass?.inviteStatus || 'active'} · 有效期：{formatDateTime(fixtureClass?.inviteCodeExpiresAt)}</small>
+            <small>状态：{pickTeacherLabel({ active: '可用', inactive: '已停用', expired: '已过期', disabled: '已停用' }, fixtureClass?.inviteStatus, '状态暂不明确')} · 有效期：{formatDateTime(fixtureClass?.inviteCodeExpiresAt)}</small>
           </div>
           <div className="actions test-center-primary-actions">
             <button type="button" onClick={() => setQrExpanded(true)} disabled={!qrDataUrl}>放大二维码</button>
@@ -2849,7 +3268,7 @@ function TeacherTestCenterPage() {
             <div className="actions">
               <a className="button-link" href={data?.links?.teacherAssignments || buildTeacherAssignmentsUrl(fixtureClass?.classId || fixtureClass?.id || '', 'system_test')}>发布测试作文</a>
               <a className="button-link" href={data?.links?.teacherTasks || buildTeacherAssignmentsUrl(fixtureClass?.classId || fixtureClass?.id || '', 'system_test')}>查看测试任务</a>
-              <button type="button" onClick={load} disabled={busy === 'load'}>{busy === 'load' ? '刷新中...' : '刷新任务'}</button>
+              <button type="button" onClick={load} disabled={busy === 'load'}>{busy === 'load' ? '刷新中……' : '刷新任务'}</button>
               <a className="button-link" href="/teacher/submissions">查看学生提交</a>
             </div>
             {assignments.length ? <div className="teacher-advanced-body"><p className="hint">最近任务：{assignments.slice(0, 3).map((assignment) => assignment.title).join(' · ')}</p></div> : null}
@@ -2877,12 +3296,12 @@ function TeacherTestCenterPage() {
           </div>
           <div className="archive-grid test-center-diagnostics">
             <aside className="archive-detail">
-              <h3>dry-run 结果</h3>
+              <h3>清理预演结果</h3>
               <p className="hint">备份：{report?.backupPath || '未找到最新备份'}</p>
               {report ? <>
                 <p>teacher-management：班级 {report.teacherManagement?.totals?.classes ?? 0}，学生 {report.teacherManagement?.totals?.students ?? 0}，作文 {report.teacherManagement?.totals?.essays ?? 0}</p>
                 <p>SQLite：班级 {report.sqlite?.tables?.classes ?? 0}，学生 {report.sqlite?.tables?.students ?? 0}，作文 {report.sqlite?.tables?.essays ?? 0}，AI 记录 {report.sqlite?.tables?.ai_reviews ?? 0}</p>
-              </> : <p className="hint">点击“重新生成 dry-run”后会显示清理建议。</p>}
+              </> : <p className="hint">点击“重新生成清理预演”后会显示清理建议。</p>}
             </aside>
             <div className="archive-list">
               <h3>保留 / 归档 / 删除建议</h3>
@@ -2904,8 +3323,8 @@ function TeacherTestCenterPage() {
         <p className="hint">仅清理 system_test 数据，不影响正式班级、学生和报告。</p>
         <div className="actions">
           <button type="button" onClick={resetFixture} disabled={busy === 'reset'}>{busy === 'reset' ? '重置中...' : '重置测试环境'}</button>
-          <button type="button" onClick={rerunDryRun} disabled={busy === 'dry-run'}>{busy === 'dry-run' ? '生成中...' : '重新生成 dry-run'}</button>
-          <button type="button" onClick={load} disabled={busy === 'load'}>{busy === 'load' ? '刷新中...' : '刷新'}</button>
+          <button type="button" onClick={rerunDryRun} disabled={busy === 'dry-run'}>{busy === 'dry-run' ? '生成中...' : '重新生成清理预演'}</button>
+          <button type="button" onClick={load} disabled={busy === 'load'}>{busy === 'load' ? '刷新中……' : '刷新'}</button>
         </div>
       </div>
     </div>
@@ -2936,17 +3355,17 @@ function TeacherEssaysPage({ title = '作文管理' } = {}) {
     setMessage('教师点评已保存。');
     await load();
   }
-  useEffect(() => { load().catch((err) => setMessage(err.message)); }, []);
+  useEffect(() => { load().catch((err) => setMessage(errorMessageText(err))); }, []);
   return <TeacherManagementShell title={title} icon={<FileText size={20} />}>
     <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
-      <label><Search size={18} /><input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="搜索作文/学生" /></label>
-      <input value={filters.classKey} onChange={(e) => setFilters({ ...filters, classKey: e.target.value })} placeholder="classKey" />
-      <select value={filters.archiveStatus} onChange={(e) => setFilters({ ...filters, archiveStatus: e.target.value })}><option value="">全部归档</option><option value="archived">archived</option><option value="queued">queued</option></select>
-      <select value={filters.provider} onChange={(e) => setFilters({ ...filters, provider: e.target.value })}><option value="">全部模型</option><option value="deepseek">deepseek</option></select>
+      <label><Search size={18} /><input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="搜索作文或学生" /></label>
+      <input value={filters.classKey} onChange={(e) => setFilters({ ...filters, classKey: e.target.value })} placeholder="班级编号" />
+      <select value={filters.archiveStatus} onChange={(e) => setFilters({ ...filters, archiveStatus: e.target.value })}><option value="">全部归档</option><option value="archived">已归档</option><option value="queued">排队中</option></select>
+      <select value={filters.provider} onChange={(e) => setFilters({ ...filters, provider: e.target.value })}><option value="">全部模型</option><option value="deepseek">深度求索</option></select>
       <button><Filter size={18} />筛选</button>
     </form>
     {message && <p className="success">{message}</p>}
-    <div className="management-table">{rows.map((essay) => <article className="management-row" key={essay.archiveId}><b>{essay.essayTitle}<span>{essay.studentId}_{essay.studentName}</span></b><span>{essay.className}</span><span>{essay.score ?? '--'}分</span><span>{essay.level || '--'}</span><span>{essay.provider}</span><span>{essay.nasArchiveStatus}</span><code>{essay.nasPath}</code><span className="record-actions"><a href={`/teacher/essays/${essay.id}`}>详情</a><button type="button" onClick={() => comment(essay.archiveId)}>点评</button></span></article>)}</div>
+    <div className="management-table">{rows.map((essay) => <article className="management-row" key={essay.archiveId}><b>{essay.essayTitle}<span>{essay.studentName} · 学号 {essay.studentNo || essay.student_no || essay.studentId || '未填写'}</span></b><span>{essay.className}</span><span>{essay.score ?? '--'}分</span><span>{essay.level || '--'}</span><span>{pickTeacherLabel({ deepseek: '深度求索', openai: '通用模型' }, essay.provider, '批改服务')}</span><span>{pickTeacherLabel({ done: '已归档', archived: '已归档', queued: '排队中', failed: '失败' }, essay.nasArchiveStatus, '状态未知')}</span><span className="hint">归档文件已保存</span><span className="record-actions"><a href={`/teacher/essays/${essay.id}`}>详情</a><button type="button" onClick={() => comment(essay.archiveId)}>点评</button></span></article>)}</div>
   </TeacherManagementShell>;
 }
 
@@ -2960,89 +3379,20 @@ function TeacherTasksPage({ title = '批改任务中心' } = {}) {
   useEffect(() => { load().catch(() => {}); }, []);
   return <TeacherManagementShell title={title} icon={<RotateCcw size={20} />}>
     <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); load(); }}>
-      <select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部状态</option><option value="queued">queued</option><option value="processing">processing</option><option value="completed">completed</option><option value="failed">failed</option><option value="retrying">retrying</option></select>
+      <select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部状态</option><option value="queued">排队中</option><option value="processing">处理中</option><option value="completed">已完成</option><option value="failed">失败</option><option value="retrying">重试中</option></select>
       <button><Filter size={18} />筛选</button>
       <button type="button" onClick={() => api('/teacher/tasks/retry-pending', { method: 'POST', body: {} }).then(load)}>重试队列</button>
     </form>
-    <div className="management-table">{rows.map((task) => <article className="management-row" key={task.taskId}><b>{task.essayTitle}<span>{task.taskId}</span></b><span>{task.status}</span><span>{task.progress}%</span><span>{task.provider}</span><span>{task.retryCount}次</span><code>{task.nasPath}</code></article>)}</div>
+    <div className="management-table">{rows.map((task, index) => <article className="management-row" key={task.taskId}><b>{task.essayTitle}<span>任务序号 {index + 1}</span></b><span>{pickTeacherLabel({ queued: '排队中', processing: '处理中', completed: '已完成', failed: '失败', retrying: '重试中' }, task.status, '未知')}</span><span>{task.progress}%</span><span>{pickTeacherLabel({ deepseek: '深度求索', openai: '通用模型' }, task.provider, '批改服务')}</span><span>{task.retryCount}次</span><span className="hint">归档路径已保存</span></article>)}</div>
   </TeacherManagementShell>;
 }
 
 function TeacherJoinRequestsPage() {
-  const location = useLocation();
-  const query = new URLSearchParams(location.search);
-  const classIdFilter = query.get('classId') || '';
-  const [rows, setRows] = useState([]);
-  const [statusFilter, setStatusFilter] = useState('pending');
-  const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState(false);
-  const loadRequests = useCallback(async () => {
-    setLoading(true);
-    setMessage('');
-    try {
-      if (classIdFilter) {
-        const data = await api(`/classes/${encodeURIComponent(classIdFilter)}/join-requests`);
-        setRows(data || []);
-        return;
-      }
-      const params = new URLSearchParams();
-      if (statusFilter) params.set('status', statusFilter);
-      const data = await api(`/teacher/join-requests${params.toString() ? `?${params.toString()}` : ''}`);
-      setRows(data.items || data || []);
-    } catch (err) {
-      setMessage(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [classIdFilter, statusFilter]);
-  useEffect(() => {
-    loadRequests().catch(() => {});
-  }, [loadRequests]);
-  const visibleRows = statusFilter && statusFilter !== 'all' ? rows.filter((row) => String(row.status || '').toLowerCase() === statusFilter) : rows;
-  return <TeacherManagementShell title="入班申请" icon={<UserPlus size={20} />}>
-    <p className="hint">{classIdFilter ? `当前班级 ${classIdFilter} 的待审核申请。` : '这里汇总当前教师负责班级的真实入班申请。'}</p>
-    <div className="actions">
-      <button type="button" className={statusFilter === 'pending' ? 'primary-button' : ''} onClick={() => setStatusFilter('pending')}>待审核</button>
-      <button type="button" className={statusFilter === 'approved' ? 'primary-button' : ''} onClick={() => setStatusFilter('approved')}>已批准</button>
-      <button type="button" className={statusFilter === 'rejected' ? 'primary-button' : ''} onClick={() => setStatusFilter('rejected')}>已拒绝</button>
-      <button type="button" className={statusFilter === 'duplicate' ? 'primary-button' : ''} onClick={() => setStatusFilter('duplicate')}>重复申请</button>
-      <button type="button" className={statusFilter === 'all' ? 'primary-button' : ''} onClick={() => setStatusFilter('all')}>全部</button>
-      <button type="button" onClick={() => loadRequests().catch(() => {})} disabled={loading}>{loading ? '刷新中...' : '刷新'}</button>
-    </div>
-    {message && <p className="error">{message}</p>}
-    <div className="management-table">
-      {visibleRows.map((request) => {
-        const requestClassId = request.class_id || request.classId || classIdFilter;
-        const requestKey = request.id || `${requestClassId}-${request.student_id || request.linked_student_id || request.student_name}`;
-        return <article className="management-row" key={requestKey}>
-          <b>{request.student_name || request.linked_student_name || '未填写姓名'}<span>{request.student_no || request.linked_student_no || '未填学号'}</span></b>
-          <span>{request.class_name || request.class_grade || '系统测试班'}</span>
-          <span>{request.source || 'student-mobile'}</span>
-          <span>{String(request.status || 'pending')}</span>
-          <span>{formatDateTime(request.requested_at)}</span>
-          <span className="record-actions">
-            <a href={`/teacher/join-requests?classId=${encodeURIComponent(String(requestClassId || ''))}`}>查看班级申请</a>
-            <button type="button" onClick={() => api(`/classes/${encodeURIComponent(String(requestClassId || classIdFilter))}/join-requests/${encodeURIComponent(request.id)}/approve`, { method: 'POST', body: {} }).then(() => loadRequests().catch(() => {})).catch((err) => setMessage(err.message))}>批准</button>
-            <button type="button" onClick={() => api(`/classes/${encodeURIComponent(String(requestClassId || classIdFilter))}/join-requests/${encodeURIComponent(request.id)}/reject`, { method: 'POST', body: {} }).then(() => loadRequests().catch(() => {})).catch((err) => setMessage(err.message))}>拒绝</button>
-          </span>
-        </article>;
-      })}
-      {!visibleRows.length && !loading && <p className="hint">{message ? '申请数据加载失败，请重试。' : '暂无待审核申请。'}</p>}
-      {loading && <p className="hint">申请列表加载中...</p>}
-    </div>
-  </TeacherManagementShell>;
+  return <TeacherLegacyRedirect to="/teacher/classes" />;
 }
 
 function TeacherAssignmentsPage() {
-  const location = useLocation();
-  const query = new URLSearchParams(location.search);
-  const classIdFilter = query.get('classId') || '';
-  const dataScopeFilter = query.get('dataScope') || '';
   return <TeacherManagementShell title="作文任务" icon={<BookOpen size={20} />}>
-    <div className="teacher-task-context">
-      {classIdFilter ? <p className="hint">当前班级：{classIdFilter}{dataScopeFilter ? ` · ${dataScopeFilter}` : ''}</p> : <p className="hint">查看全部已发布任务，或通过班级筛选定位系统测试班任务。</p>}
-      <div className="actions"><a className="button-link" href="/teacher/classes">返回班级工作台</a></div>
-    </div>
     <div className="grid">
       <AssignmentPublish />
       <AssignmentManagement />
@@ -3110,14 +3460,14 @@ function TeacherSubmissionsPage() {
         setAssignmentStatus(null);
       }
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    load().catch((err) => setMessage(err.message));
+    load().catch((err) => setMessage(errorMessageText(err)));
   }, [activeClassId, activeAssignmentId, filters.status, filters.gradingStatus, filters.keyword]);
 
   const classMap = useMemo(() => new Map(classes.map((klass) => [String(klass.id), klass])), [classes]);
@@ -3188,7 +3538,7 @@ function TeacherSubmissionsPage() {
         <span><b>{summary.completed}</b>已完成</span>
         <span><b>{summary.failed}</b>批改失败</span>
       </div>
-      <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); refresh().catch((err) => setMessage(err.message)); }}>
+      <form className="archive-toolbar" onSubmit={(e) => { e.preventDefault(); refresh().catch((err) => setMessage(errorMessageText(err))); }}>
         <select value={filters.classId} onChange={(e) => updateFilters({ classId: e.target.value, assignmentId: 'all' })}>
           <option value="all">全部班级</option>
           {classes.map((klass) => <option key={klass.id} value={klass.id}>{klass.name}</option>)}
@@ -3206,25 +3556,25 @@ function TeacherSubmissionsPage() {
         </select>
         <select value={filters.gradingStatus} onChange={(e) => updateFilters({ gradingStatus: e.target.value })}>
           <option value="all">全部批阅状态</option>
-          <option value="grading">grading</option>
-          <option value="graded">graded</option>
-          <option value="failed">failed</option>
+          <option value="grading">批改中</option>
+          <option value="graded">已完成</option>
+          <option value="failed">批改失败</option>
         </select>
         <label><Search size={18} /><input value={filters.keyword} onChange={(e) => updateFilters({ keyword: e.target.value })} placeholder="搜索学生、任务、班级" /></label>
-        <button type="submit" disabled={loading}>{loading ? '刷新中...' : '刷新'}</button>
+        <button type="submit" disabled={loading}>{loading ? '刷新中……' : '刷新'}</button>
       </form>
       <div className="grid">
         <Card title="最近发布任务" icon={<BookOpen size={20} />}>
           <div className="management-table">
             {assignments.slice(0, 6).map((assignment) => <article className="management-row" key={assignment.id}>
               <b>{assignment.title}<span>{assignment.class_name || classMap.get(String(assignment.class_id))?.name || '未知班级'}</span></b>
-              <span>{assignment.status || 'published'}</span>
+              <span>{pickTeacherLabel(teacherAssignmentStatusLabels, assignment.status, '已发布')}</span>
               <span>{formatDateTime(assignment.published_at || assignment.created_at)}</span>
               <span>{assignment.submitted_count || 0} 已交</span>
               <span>{assignment.missing_count || 0} 待交</span>
               <span className="record-actions">
                 <a href={buildTeacherAssignmentDetailUrl(assignment.id)}>查看任务</a>
-                <button type="button" onClick={() => openAssignmentStatus(assignment.id)}>看提交</button>
+                <button type="button" onClick={() => openAssignmentStatus(assignment.id)}>查看提交</button>
               </span>
             </article>)}
             {!assignments.length && <p className="hint">暂无发布任务。</p>}
@@ -3238,7 +3588,7 @@ function TeacherSubmissionsPage() {
               <span>{formatDateTime(essay.submitted_at || essay.created_at)}</span>
               <span>{essay.word_count || 0} 字</span>
               <span>{essay.total_score ?? '--'} 分</span>
-              <span>{essay.grading_status || essay.status || 'submitted'}</span>
+              <span>{pickTeacherLabel(teacherGradingStatusLabels, essay.grading_status || essay.status, '已提交')}</span>
               <span className="record-actions">
                 <button type="button" onClick={() => openEssay(essay.id)}>查看报告</button>
                 <a href={buildTeacherAssignmentDetailUrl(essay.assignment_id)}>查看任务</a>
@@ -3279,42 +3629,7 @@ function TeacherGrowthPage() {
 }
 
 function TeacherSettingsPage() {
-  const [feishu, setFeishu] = useState(null);
-  const [publicAccess, setPublicAccess] = useState(null);
-  const [system, setSystem] = useState(null);
-  useEffect(() => {
-    api('/feishu/health').then(setFeishu).catch(() => {});
-    api('/public-access').then(setPublicAccess).catch(() => {});
-    api('/system/status').then(setSystem).catch(() => {});
-  }, []);
-  return <TeacherManagementShell title="系统设置" icon={<PackageOpen size={20} />}>
-    <div className="archive-grid">
-      <aside className="archive-detail">
-        <h3>平台状态</h3>
-        <p>公网入口：{publicAccess?.publicOrigin || 'https://pi.zhenwanyue.icu'}</p>
-        <p>生产状态：{system?.status || (system?.ok ? 'healthy' : 'checking')}</p>
-        <p>飞书业务：已暂停</p>
-        <p>系统通知：{String(feishu?.feishuSystemNotificationEnabled ?? true)}</p>
-      </aside>
-      <div className="archive-list">
-        <h3>管理入口</h3>
-        <article className="archive-row">
-          <div>
-            <b>集成状态</b>
-            <p>管理飞书、Cloudflare、WebDAV 与账号集成。</p>
-          </div>
-          <span className="archive-actions"><a href="/admin/integrations">打开</a></span>
-        </article>
-        <article className="archive-row">
-          <div>
-            <b>飞书业务</b>
-            <p>已暂停。历史数据与兼容路由保留，仅由管理员集成页查看。</p>
-          </div>
-          <span className="archive-actions"><a href="/admin/integrations">查看状态</a></span>
-        </article>
-      </div>
-    </div>
-  </TeacherManagementShell>;
+  return <TeacherLegacyRedirect to="/teacher/classes" />;
 }
 
 function TeacherLegacyRedirect({ to }) {
@@ -3411,7 +3726,7 @@ function TeacherReviewCenter() {
       await refreshEssays();
       setMessage('批阅完成，可在批改记录中查看。');
     } catch (err) {
-      alert('批阅失败：' + err.message);
+      alert('批阅失败：' + errorMessageText(err));
     } finally {
       setReviewingId(null);
     }
@@ -3432,7 +3747,7 @@ function TeacherReviewCenter() {
       await refreshEssays();
       setMessage(`批量批改完成：已处理 ${reviewTargets.length} 篇作文，可在批改记录中查看。`);
     } catch (err) {
-      alert('批量批改失败：' + err.message);
+      alert('批量批改失败：' + errorMessageText(err));
     } finally {
       setReviewingId(null);
       setBatchReviewing(false);
@@ -3521,7 +3836,7 @@ function TeacherInsightPanel() {
       <h3>优文提取</h3>
       {(data?.excellentEssays || []).slice(0, 3).map((x) => <p key={x.id}>{x.student_name} · {x.total_score}分 · {x.title || '未命名作文'}</p>)}
     </div>
-    <div className="actions"><button onClick={() => exportExcellent('docx')}>优文包 Word</button><button onClick={() => exportExcellent('pdf')}>优文包 PDF</button></div>
+    <div className="actions"><button onClick={() => exportExcellent('docx')}>导出优文包（可编辑版）</button><button onClick={() => exportExcellent('pdf')}>导出优文包（打印版）</button></div>
   </Card>;
 }
 
@@ -3586,7 +3901,7 @@ function ArchivePage() {
       await load();
       setMessage(result.queued ? 'NAS 暂时离线，已重新写入同步队列。' : '已重新同步到 NAS。');
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     }
     setBusyId('');
   }
@@ -3629,8 +3944,16 @@ function ArchivePage() {
     URL.revokeObjectURL(objectUrl);
   }
 
+  function displayArchiveFileName(fileName) {
+    if (fileName === 'report.docx') return '作文完整批改报告.docx';
+    if (fileName === 'report.pdf') return '作文完整批改报告.pdf';
+    if (fileName === 'original.docx') return '作文原文.docx';
+    if (fileName === 'original.pdf') return '作文原文.pdf';
+    return fileName;
+  }
+
   return <Layout>
-    <Card title="Archive" icon={<PackageOpen size={20} />}>
+    <Card title="归档管理" icon={<PackageOpen size={20} />}>
       <form className="archive-toolbar" onSubmit={applyFilters}>
         <label><Search size={18} /><input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} placeholder="搜索班级、学生、作文标题" /></label>
         <input value={filters.className} onChange={(e) => setFilters({ ...filters, className: e.target.value })} placeholder="班级" />
@@ -3648,13 +3971,13 @@ function ArchivePage() {
         <div className="archive-list">
           {rows.map((record) => <article className="archive-row" key={record.id}>
             <div>
-              <b>{record.className} · {record.studentId}_{record.studentName}</b>
-              <p>{record.essayTitle} · {record.score ?? '--'}分 · {record.grade || '未评级'} · {record.archiveStatus}</p>
-              <code>{record.nasPath}</code>
+              <b>{record.className} · {record.studentName} · 学号 {record.studentNo || '未填写'}</b>
+              <p>{record.essayTitle} · {record.score ?? '--'}分 · {record.grade || '未评级'} · {pickTeacherLabel({ archived: '已归档', queued: '排队中', failed: '失败' }, record.archiveStatus, '状态未知')}</p>
+              <p className="hint">已同步到归档目录。</p>
             </div>
             <span className="archive-actions">
               <button type="button" onClick={() => openDetail(record)}>详情</button>
-              <button type="button" onClick={() => downloadArchiveFile(record, 'report.docx').catch((err) => setMessage(err.message))}><Download size={16} />Word</button>
+              <button type="button" onClick={() => downloadArchiveFile(record, '作文完整批改报告.docx').catch((err) => setMessage(errorMessageText(err)))}><Download size={16} />可编辑版</button>
               <button type="button" onClick={() => resync(record)} disabled={busyId === record.id}><RotateCcw size={16} />同步</button>
               <button type="button" className="danger-button" onClick={() => remove(record)} disabled={busyId === record.id}><Trash2 size={16} />删除</button>
             </span>
@@ -3663,9 +3986,9 @@ function ArchivePage() {
         </div>
         {selected && <aside className="archive-detail">
           <h3>{selected.essayTitle}</h3>
-          <p>{selected.className} · {selected.studentId}_{selected.studentName}</p>
-          <code>{selected.nasPath}</code>
-          <ul>{(selected.files || []).map((file) => <li key={file.remotePath}><span>{file.name} <button type="button" onClick={() => downloadArchiveFile(selected, file.name).catch((err) => setMessage(err.message))}>下载</button></span><code>{file.remotePath}</code></li>)}</ul>
+          <p>{selected.className} · {selected.studentName} · 学号 {selected.studentNo || '未填写'}</p>
+          <p className="hint">归档文件已保存，可按文件名下载。</p>
+          <ul>{(selected.files || []).map((file) => <li key={file.remotePath}><span>{displayArchiveFileName(file.name)} <button type="button" onClick={() => downloadArchiveFile(selected, file.name).catch((err) => setMessage(errorMessageText(err)))}>下载</button></span></li>)}</ul>
           <button type="button" onClick={() => downloadRecord(selected)}><Download size={16} />下载归档索引</button>
         </aside>}
       </div>
@@ -3692,7 +4015,7 @@ async function downloadProfileReport(studentKey, format) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${studentKey}-growth-report.${format}`;
+  link.download = `学生成长档案-${studentKey || '未知'}.${format}`;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -3743,13 +4066,13 @@ function StudentProfilesPage() {
       <p className="hint">共 {total} 个学生档案。</p>
       <div className="profile-table">
         {rows.map((profile) => <a className="profile-row" href={`/student-profiles/${encodeURIComponent(profile.studentKey)}`} key={profile.studentKey}>
-          <b>{profile.studentName || '未填写'} <span>{profile.studentId || '未填写学号'}</span></b>
+          <b>{profile.studentName || '未填写'} <span>学号 {profile.studentNo || profile.student_no || '未填写'}</span></b>
           <span>{profile.className || '未填写班级'}</span>
           <span>{profile.essayCount} 篇</span>
           <span>均分 {profile.averageScore}</span>
           <span>最近 {profile.latestScore}</span>
-          <span>{profile.scoreTrend}</span>
-          <span>{profile.weakestAbility || '样本不足'}</span>
+          <span>{trendText(profile.scoreTrend)}</span>
+          <span>{humanText(profile.weakestAbility, '样本不足')}</span>
           <time>{formatDateTime(profile.lastUpdatedAt)}</time>
         </a>)}
         {!rows.length && <p className="hint">暂无学生成长档案。可先运行 profiles:rebuild 或等待新作文归档后自动生成。</p>}
@@ -3762,8 +4085,8 @@ function StudentProfileDetailPage() {
   const { studentKey } = useParams();
   const [data, setData] = useState(null);
   const [message, setMessage] = useState('');
-  useEffect(() => { api(`/student-profiles/${encodeURIComponent(studentKey)}`).then(setData).catch((err) => setMessage(err.message)); }, [studentKey]);
-  if (!data) return <Layout><Card title="学生成长档案" icon={<TrendingUp size={20} />}>{message ? <p className="error">{message}</p> : <p className="hint">正在加载...</p>}</Card></Layout>;
+  useEffect(() => { api(`/student-profiles/${encodeURIComponent(studentKey)}`).then(setData).catch((err) => setMessage(errorMessageText(err))); }, [studentKey]);
+  if (!data) return <Layout><Card title="学生成长档案" icon={<TrendingUp size={20} />}>{message ? <p className="error">{message}</p> : <p className="hint">正在加载……</p>}</Card></Layout>;
   const profile = data.profile || {};
   const scoreRows = (data.scoreHistory?.items || []).map((item) => ({ ...item, label: String(item.createdAt || '').slice(5, 10) || item.essayTitle }));
   const abilityRows = Object.entries(data.abilityHistory?.dimensions || {}).map(([name, values]) => {
@@ -3778,15 +4101,14 @@ function StudentProfileDetailPage() {
       setData(next);
       setMessage('档案已重建。');
     } catch (err) {
-      setMessage(err.message);
+      setMessage(errorMessageText(err));
     }
   }
   return <Layout>
     <div className="profile-detail-grid">
       <Card title="学生信息" icon={<Users size={20} />}>
         <div className="stats"><span>{profile.studentName || '未填写'}</span><span>{profile.className || '未填写班级'}</span><span>{profile.essayCount || 0} 篇作文</span></div>
-        <p className="hint">studentKey：{profile.studentKey}</p>
-        <div className="actions"><button onClick={() => downloadProfileReport(studentKey, 'md').catch((err) => setMessage(err.message))}>导出 Markdown</button><button onClick={() => downloadProfileReport(studentKey, 'docx').catch((err) => setMessage(err.message))}>导出 Word</button><button onClick={() => downloadProfileReport(studentKey, 'pdf').catch((err) => setMessage(err.message))}>导出 PDF</button><button onClick={rebuild}><RotateCcw size={16} />重建档案</button></div>
+        <div className="actions"><button onClick={() => downloadProfileReport(studentKey, 'md').catch((err) => setMessage(errorMessageText(err)))}>导出文字版</button><button onClick={() => downloadProfileReport(studentKey, 'docx').catch((err) => setMessage(errorMessageText(err)))}>导出可编辑版</button><button onClick={() => downloadProfileReport(studentKey, 'pdf').catch((err) => setMessage(errorMessageText(err)))}>导出打印版</button><button onClick={rebuild}><RotateCcw size={16} />重建档案</button></div>
         {message && <p className={message.includes('已') ? 'success' : 'error'}>{message}</p>}
       </Card>
       <Card title="分数趋势" icon={<ChartNoAxesCombined size={20} />}>
@@ -3888,7 +4210,7 @@ function ClassRosterPanel({ klass, availableClasses = [], onChanged }) {
         </div>
       </> : <>
         <span>{student.name} · {student.student_no || '未填写学号'} · {student.username}</span>
-        <span className="hint">状态：{student.binding_status || 'active'} · 加入：{formatDateTime(student.joined_at)}</span>
+        <span className="hint">状态：{pickTeacherLabel({ active: '在班', paused: '已停用', removed: '已移出', transferred: '已转出' }, student.binding_status, '在班')} · 加入：{formatDateTime(student.joined_at)}</span>
         <div className="roster-actions">
           <button type="button" onClick={() => startEditStudent(student)}>修改姓名</button>
           <button type="button" onClick={() => pauseStudent(student.id)}>停用</button>
@@ -3903,55 +4225,252 @@ function ClassRosterPanel({ klass, availableClasses = [], onChanged }) {
 
 function AssignmentPublish() {
   const [classes, setClasses] = useState([]);
-  const location = useLocation();
-  const query = new URLSearchParams(location.search);
-  const classIdFilter = query.get('classId') || '';
-  const [form, setForm] = useState({ class_id: 1, essay_type: '周练', grade: '' });
+  const [classStudents, setClassStudents] = useState([]);
+  const [form, setForm] = useState({
+    classId: '',
+    title: '',
+    prompt: '',
+    requirements: '',
+    grade: '',
+    essayType: '周练',
+    wordCountMode: 'unlimited',
+    customMinWords: '',
+    customMaxWords: '',
+    deadline: '',
+    gradingMode: '普通批改',
+    publishTarget: 'class',
+    status: 'published',
+    selectedStudentIds: []
+  });
   const [published, setPublished] = useState(null);
   const [publishing, setPublishing] = useState(false);
-  const selectedClass = classes.find((item) => String(item.id) === String(form.class_id));
-  useEffect(() => { api('/classes').then((rows) => { setClasses(rows); setForm((f) => ({ ...f, class_id: Number(classIdFilter) || rows[0]?.id || 1 })); }); }, [classIdFilter]);
+  const [message, setMessage] = useState('');
+
+  const selectedClass = classes.find((item) => String(item.id) === String(form.classId)) || null;
+
+  const gradingPresets = {
+    普通批改: { scoringStandard: '常规批改', autoGrading: true, teacherReview: true, secondDraft: false },
+    深度批改: { scoringStandard: '深度批改', autoGrading: true, teacherReview: true, secondDraft: false },
+    升格指导: { scoringStandard: '升格指导', autoGrading: true, teacherReview: true, secondDraft: true }
+  };
+
+  async function loadClasses() {
+    const rows = await api('/classes').catch(() => []);
+    const nextClasses = Array.isArray(rows) ? rows : rows?.items || rows?.rows || [];
+    setClasses(nextClasses);
+    setForm((current) => {
+      const currentId = String(current.classId || '');
+      const preserved = currentId && nextClasses.some((item) => String(item.id) === currentId) ? currentId : '';
+      const fallback = preserved || String(nextClasses[0]?.id || '');
+      return { ...current, classId: fallback, grade: current.grade || nextClasses.find((item) => String(item.id) === fallback)?.grade || '' };
+    });
+  }
+
+  async function loadStudents(classId) {
+    if (!classId) {
+      setClassStudents([]);
+      return;
+    }
+    const rows = await api(`/classes/${encodeURIComponent(classId)}/members`).catch(() => []);
+    const nextStudents = Array.isArray(rows) ? rows : rows?.items || rows?.rows || [];
+    setClassStudents(nextStudents);
+    setForm((current) => ({
+      ...current,
+      selectedStudentIds: current.selectedStudentIds.filter((studentId) => nextStudents.some((student) => String(student.id) === String(studentId)))
+    }));
+  }
+
+  useTeacherLiveRefresh(() => {
+    loadClasses().catch((err) => setMessage(errorMessageText(err)));
+  }, { deps: [] });
+
+  useEffect(() => {
+    if (!form.classId) return;
+    loadStudents(form.classId).catch((err) => setMessage(errorMessageText(err)));
+  }, [form.classId]);
+
   async function copyLink(value) {
     try {
       await navigator.clipboard.writeText(value);
-      alert('提交链接已复制');
+      setMessage('提交链接已复制。');
     } catch {
       window.prompt('复制学生提交链接', value);
     }
   }
+
+  function updateWordCountMode(mode) {
+    setForm((current) => ({ ...current, wordCountMode: mode }));
+  }
+
+  function updateSelectedStudent(studentId, checked) {
+    setForm((current) => ({
+      ...current,
+      selectedStudentIds: checked
+        ? [...current.selectedStudentIds, studentId]
+        : current.selectedStudentIds.filter((value) => String(value) !== String(studentId))
+    }));
+  }
+
   async function save() {
     if (publishing) return;
+    if (!form.classId) {
+      setMessage('请先创建班级');
+      return;
+    }
+    if (!form.title.trim()) {
+      setMessage('请填写作文标题');
+      return;
+    }
+    if (!form.prompt.trim()) {
+      setMessage('请填写作文题目');
+      return;
+    }
+    const preset = gradingPresets[form.gradingMode] || gradingPresets.普通批改;
+    const minWords = form.wordCountMode === '600' ? 600 : form.wordCountMode === '800' ? 800 : form.wordCountMode === 'custom' ? Number(form.customMinWords || 0) : 0;
+    const maxWords = form.wordCountMode === 'custom' ? Number(form.customMaxWords || 0) : 0;
     setPublishing(true);
+    setMessage('');
     try {
-      const assignment = await api('/assignments', { method: 'POST', body: form });
+      const assignment = await api('/assignments', {
+        method: 'POST',
+        body: {
+          class_id: Number(form.classId),
+          grade: form.grade.trim() || selectedClass?.grade || '',
+          title: form.title.trim(),
+          prompt: form.prompt.trim(),
+          requirements: form.requirements.trim(),
+          essay_type: form.essayType,
+          min_words: Number.isFinite(minWords) ? Number(minWords) : 0,
+          max_words: Number.isFinite(maxWords) ? Number(maxWords) : 0,
+          deadline: form.deadline ? new Date(form.deadline).toISOString() : '',
+          status: form.status,
+          scoring_standard: preset.scoringStandard,
+          auto_grading: preset.autoGrading,
+          requires_teacher_review: preset.teacherReview,
+          second_draft_enabled: preset.secondDraft,
+          allow_student_view_result: true,
+          allow_resubmit: false,
+          allow_late_submit: false,
+          reminder_enabled: true,
+          publish_target: form.publishTarget,
+          target_student_ids: form.publishTarget === 'selected' ? form.selectedStudentIds : []
+        }
+      });
       setPublished(assignment);
       window.dispatchEvent(new Event('assignments-changed'));
-      alert('已发布');
+      setMessage('作文任务发布成功');
+      await loadClasses();
+      await loadStudents(form.classId);
+    } catch (err) {
+      setMessage(errorMessageText(err));
     } finally {
       setPublishing(false);
     }
   }
+
   return <Card title="作文任务发布" icon={<Plus size={20} />}>
-    <input type="hidden" value={form.class_id} readOnly />
-    <p className="hint">当前班级：{selectedClass?.name || '未选择班级'}</p>
-    <div className="row">
-      <input placeholder="年级" value={form.grade} onChange={(e) => setForm({ ...form, grade: e.target.value })} />
-      <select value={form.essay_type} onChange={(e) => setForm({ ...form, essay_type: e.target.value })} aria-label="作文训练类型">
-        <option value="周练">周练</option>
-        <option value="月考">月考</option>
-        <option value="单元测">单元测</option>
-        <option value="期中">期中</option>
-        <option value="期末">期末</option>
-        <option value="材料作文">材料作文</option>
-      </select>
+    {!classes.length && <p className="hint">请先创建班级</p>}
+    <div className="form-stack">
+      <label>发布班级
+        <select value={form.classId} onChange={(e) => setForm((current) => ({ ...current, classId: e.target.value, selectedStudentIds: [] }))}>
+          <option value="">请选择班级</option>
+          {classes.map((klass) => <option key={klass.id} value={klass.id}>{klass.name || klass.className} · {klass.grade || '未填写年级'}</option>)}
+        </select>
+      </label>
+      <label>作文标题
+        <input value={form.title} onChange={(e) => setForm((current) => ({ ...current, title: e.target.value }))} placeholder="例如：我的青春" />
+      </label>
+      <label>作文题目
+        <textarea rows="5" value={form.prompt} onChange={(e) => setForm((current) => ({ ...current, prompt: e.target.value }))} placeholder="请输入作文题目或材料" />
+      </label>
+      <label>写作要求
+        <textarea rows="4" value={form.requirements} onChange={(e) => setForm((current) => ({ ...current, requirements: e.target.value }))} placeholder="可填写字数、结构、文体和提交要求" />
+      </label>
+      <div className="row">
+        <label>年级
+          <input value={form.grade} onChange={(e) => setForm((current) => ({ ...current, grade: e.target.value }))} placeholder={selectedClass?.grade || '自动读取当前班级年级'} />
+        </label>
+        <label>作文类型
+          <select value={form.essayType} onChange={(e) => setForm((current) => ({ ...current, essayType: e.target.value }))}>
+            <option value="周练">周练</option>
+            <option value="月考">月考</option>
+            <option value="期中考试">期中考试</option>
+            <option value="期末考试">期末考试</option>
+            <option value="单元作文">单元作文</option>
+            <option value="自定义">自定义</option>
+          </select>
+        </label>
+      </div>
+      <div className="row">
+        <label>字数要求
+          <select value={form.wordCountMode} onChange={(e) => updateWordCountMode(e.target.value)}>
+            <option value="unlimited">不限</option>
+            <option value="600">600字以上</option>
+            <option value="800">800字以上</option>
+            <option value="custom">自定义</option>
+          </select>
+        </label>
+        {form.wordCountMode === 'custom' ? <div className="row">
+          <label>最少字数
+            <input type="number" min="0" value={form.customMinWords} onChange={(e) => setForm((current) => ({ ...current, customMinWords: e.target.value }))} />
+          </label>
+          <label>最多字数
+            <input type="number" min="0" value={form.customMaxWords} onChange={(e) => setForm((current) => ({ ...current, customMaxWords: e.target.value }))} />
+          </label>
+        </div> : null}
+      </div>
+      <div className="row">
+        <label>截止时间
+          <input type="datetime-local" value={form.deadline} onChange={(e) => setForm((current) => ({ ...current, deadline: e.target.value }))} />
+        </label>
+        <label>AI批改模式
+          <select value={form.gradingMode} onChange={(e) => setForm((current) => ({ ...current, gradingMode: e.target.value }))}>
+            <option value="普通批改">普通批改</option>
+            <option value="深度批改">深度批改</option>
+            <option value="升格指导">升格指导</option>
+          </select>
+        </label>
+      </div>
+      <div className="row">
+        <label>发布状态
+          <select value={form.status} onChange={(e) => setForm((current) => ({ ...current, status: e.target.value }))}>
+            <option value="draft">草稿</option>
+            <option value="published">已发布</option>
+            <option value="ended">已结束</option>
+          </select>
+        </label>
+        <fieldset className="compact-fieldset">
+          <legend>发布对象</legend>
+          <label><input type="radio" checked={form.publishTarget === 'class'} onChange={() => setForm((current) => ({ ...current, publishTarget: 'class', selectedStudentIds: [] }))} />当前班级全部学生</label>
+          <label><input type="radio" checked={form.publishTarget === 'selected'} onChange={() => setForm((current) => ({ ...current, publishTarget: 'selected' }))} />指定学生</label>
+        </fieldset>
+      </div>
+      {form.publishTarget === 'selected' && (
+        <div className="assignment-target-list">
+          {classStudents.length ? classStudents.map((student) => (
+            <label key={student.id} className="assignment-target-item">
+              <input
+                type="checkbox"
+                checked={form.selectedStudentIds.some((value) => String(value) === String(student.id))}
+                onChange={(e) => updateSelectedStudent(student.id, e.target.checked)}
+              />
+              <span>{student.name}<small>{student.student_no || '未填学号'}</small></span>
+            </label>
+          )) : <p className="hint">当前班级暂无学生。</p>}
+        </div>
+      )}
+      <div className="actions">
+        <button type="button" onClick={save} disabled={publishing}>{publishing ? '发布中...' : '发布作文任务'}</button>
+      </div>
     </div>
-    <button aria-label="发布按钮" onClick={save} disabled={publishing}>{publishing ? '发布中...' : '发布'}</button>
+    {message && <p className={message.includes('成功') || message.includes('已复制') ? 'success' : 'error'}>{message}</p>}
     {published && <div className="assignment-share-panel">
-      <p><b>学生提交链接：</b>{published.submission_url || published.share_url}</p>
+      <p><b>作文任务已发布：</b>{published.title}</p>
+      <p className="hint">{selectedClass?.name || '当前班级'} · {formatDateTime(published.published_at || published.created_at)}</p>
+      <p><b>学生提交入口：</b>已生成</p>
       <div className="actions">
         <button type="button" onClick={() => copyLink(published.submission_url || published.share_url)}>复制链接</button>
       </div>
-      <p className="hint">飞书业务已暂停，当前仅保留链接复制与二维码分享。</p>
       {published.qr_svg && <div className="qr-preview" dangerouslySetInnerHTML={{ __html: published.qr_svg }} />}
     </div>}
   </Card>;
@@ -3961,19 +4480,11 @@ function AssignmentManagement() {
   const [publishedAssignments, setPublishedAssignments] = useState([]);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const location = useLocation();
-  const query = new URLSearchParams(location.search);
-  const classIdFilter = query.get('classId') || '';
-  const dataScopeFilter = query.get('dataScope') || '';
   async function loadAssignments() {
-    const rows = await api(buildTeacherAssignmentsUrl(classIdFilter, dataScopeFilter));
+    const rows = await api('/assignments');
     setPublishedAssignments(Array.isArray(rows) ? rows : rows.items || rows.rows || []);
   }
-  useEffect(() => {
-    loadAssignments();
-    window.addEventListener('assignments-changed', loadAssignments);
-    return () => window.removeEventListener('assignments-changed', loadAssignments);
-  }, []);
+  useTeacherLiveRefresh(() => loadAssignments().catch((err) => setError(errorMessageText(err))), { deps: [] });
   async function deleteAssignment(assignment) {
     if (!window.confirm(`确定删除任务“${assignment.title}”吗？删除后学生端和学生独立界面将不再展示该任务。`)) return;
     setError('');
@@ -3983,7 +4494,7 @@ function AssignmentManagement() {
       window.dispatchEvent(new Event('assignments-changed'));
       setMessage(`已删除任务：${assignment.title}`);
     } catch (err) {
-      setError(err.message);
+      setError(errorMessageText(err));
     }
   }
   async function showStatus(assignment) {
@@ -3993,29 +4504,29 @@ function AssignmentManagement() {
       const names = data.missing.map((item) => `${item.student_no || '无学号'} ${item.student_name}`).join('\n') || '无';
       window.alert(`已交 ${data.assignment.submitted_count} 人，未交 ${data.assignment.missing_count} 人\n\n未交名单：\n${names}`);
     } catch (err) {
-      setError(err.message);
+      setError(errorMessageText(err));
     }
   }
   async function remindMissing(assignment) {
     const data = await api(`/assignments/${assignment.public_id || assignment.id}/remind-missing`, { method: 'POST', body: {} });
     setMessage(`未交提醒完成：已发送 ${data.sent || 0} 人，跳过 ${data.skipped || 0} 人`);
   }
-  return <Card title="发布任务管理" icon={<BookOpen size={20} />}>
+  return <Card title="已发布任务" icon={<BookOpen size={20} />}>
     {error && <p className="error">{error}</p>}
     {message && <p className="hint">{message}</p>}
     <div className="published-assignment-list">
       {publishedAssignments.map((assignment) => <article className="item published-assignment-item" key={assignment.id}>
         <div>
           <b>{assignment.title}</b>
-          <p>{assignment.class_name || '未指定班级'} · {assignment.essay_type} · 满分 {assignment.full_score} · 发布时间 {formatDateTime(assignment.created_at)}</p>
+          <p>{assignment.class_name || '当前班级'} · {pickTeacherLabel(teacherAssignmentTypeLabels, assignment.essay_type, '作文任务')} · 满分 {assignment.full_score} · 发布时间 {formatDateTime(assignment.created_at)}</p>
           {assignment.deadline && <p>截止时间 {formatDateTime(assignment.deadline)}</p>}
-          <p>提交进度：已交 {assignment.submitted_count || 0} 人 · 未交 {assignment.missing_count || 0} 人</p>
-          {assignment.submission_url && <p className="assignment-link">{assignment.submission_url}</p>}
+          <p>提交进度：已交 {assignment.submitted_count || 0} 人 · 未交 {assignment.missing_count || 0} 人 · 状态：{pickTeacherLabel(teacherAssignmentStatusLabels, assignment.status, '已发布')}</p>
+          {assignment.submission_url && <p className="hint">学生提交入口已生成，可在详情页复制。</p>}
         </div>
         <div className="roster-actions">
           <button type="button" onClick={() => window.open(buildTeacherAssignmentDetailUrl(assignment.id), '_self')}>查看详情</button>
           <button type="button" onClick={() => showStatus(assignment)}>查看提交状态</button>
-          <button type="button" onClick={() => window.open(`/teacher/submissions?classId=${encodeURIComponent(assignment.class_id)}&assignmentId=${encodeURIComponent(assignment.id)}`, '_self')}>查看报告</button>
+          <button type="button" onClick={() => window.open(`/teacher/submissions?assignmentId=${encodeURIComponent(assignment.id)}`, '_self')}>查看报告</button>
           <button type="button" className="danger-button" onClick={() => deleteAssignment(assignment)}>删除任务</button>
         </div>
         <div className="actions">
@@ -4040,7 +4551,7 @@ function TeacherAssignmentDetailPage() {
     api(`/assignments/${encodeURIComponent(assignmentId)}/status`).then((next) => {
       if (!cancelled) setData(next);
     }).catch((err) => {
-      if (!cancelled) setMessage(err.message);
+      if (!cancelled) setMessage(errorMessageText(err));
     });
     return () => { cancelled = true; };
   }, [assignmentId]);
@@ -4061,8 +4572,8 @@ function TeacherAssignmentDetailPage() {
       <Card title="任务内容" icon={<BookOpen size={20} />}>
         <div className="form-stack">
           <p><b>{assignment.title || '未命名任务'}</b></p>
-          <p className="hint">{assignment.class_name || '未知班级'} · {assignment.essay_type || '材料作文'} · {assignment.grade || '未填写年级'}</p>
-          <p className="hint">状态：{assignment.status || 'published'} · 发布时间：{formatDateTime(assignment.published_at || assignment.created_at)} · 截止：{formatDateTime(assignment.deadline)}</p>
+          <p className="hint">{assignment.class_name || '当前班级'} · {pickTeacherLabel(teacherAssignmentTypeLabels, assignment.essay_type, '作文任务')} · {assignment.grade || '未填写年级'}</p>
+          <p className="hint">状态：{pickTeacherLabel(teacherAssignmentStatusLabels, assignment.status, '已发布')} · 发布时间：{formatDateTime(assignment.published_at || assignment.created_at)} · 截止：{formatDateTime(assignment.deadline)}</p>
           <p className="hint">AI 将根据作文实际篇幅自动调整批改重点 · 满分：{assignment.full_score || 60}</p>
           <p className="hint">AI 自动批改：{Number(assignment.auto_grading ?? 1) ? '开启' : '关闭'} · 教师审核：{Number(assignment.requires_teacher_review ?? 1) ? '需要' : '不需要'} · 学生查看结果：{Number(assignment.allow_student_view_result ?? 1) ? '允许' : '不允许'}</p>
           <div className="assignment-submit-summary">
@@ -4078,7 +4589,7 @@ function TeacherAssignmentDetailPage() {
             <p style={{ whiteSpace: 'pre-wrap' }}>{assignment.scoring_standard || '未设置'}</p>
           </div>
           <div className="actions">
-            <a href={buildTeacherAssignmentsUrl(assignment.class_id, 'system_test')}>返回任务列表</a>
+            <a href="/teacher/assignments">返回任务列表</a>
             <a href={`/teacher/classes/${encodeURIComponent(assignment.class_id)}`}>返回班级详情</a>
             {assignment.share_url && <a href={assignment.share_url} target="_blank" rel="noreferrer">打开学生提交链接</a>}
           </div>
@@ -4094,8 +4605,8 @@ function TeacherAssignmentDetailPage() {
         <div className="management-table">
           {submissions.length ? submissions.map((submission) => <article className="management-row" key={submission.id}>
             <b>{submission.student_name}<span>{submission.student_no || '未填学号'}</span></b>
-            <span>{submission.status || 'submitted'}</span>
-            <span>{submission.grading_status || 'pending'}</span>
+            <span>{pickTeacherLabel(teacherSubmissionStatusLabels, submission.status, '已提交')}</span>
+            <span>{pickTeacherLabel(teacherGradingStatusLabels, submission.grading_status, '待批改')}</span>
             <span>{submission.word_count || 0}字</span>
             <span>{formatDateTime(submission.submitted_at || submission.created_at)}</span>
             <span className="record-actions"><a href={`/teacher/essays/${encodeURIComponent(submission.id)}`}>查看报告</a></span>
@@ -4144,7 +4655,7 @@ function AdminFeishuTeachersPage() {
     setData(await api(`/admin/feishu/teachers${query}`));
   }
 
-  useEffect(() => { load().catch((err) => setMessage(err.message)); }, []);
+  useEffect(() => { load().catch((err) => setMessage(errorMessageText(err))); }, []);
 
   async function createCode(teacher) {
     if (!window.confirm(`为 ${teacher.teacher_name} 创建一次性飞书教师绑定码？绑定码只显示一次。`)) return;
@@ -4202,7 +4713,7 @@ function TeacherFeishuClassesPage() {
   async function load() {
     setData(await api('/teacher/feishu/classes'));
   }
-  useEffect(() => { load().catch((err) => setMessage(err.message)); }, []);
+  useEffect(() => { load().catch((err) => setMessage(errorMessageText(err))); }, []);
 
   function updateInput(classId, patch) {
     setInputs((current) => ({ ...current, [classId]: { ...(current[classId] || {}), ...patch } }));
@@ -4291,19 +4802,19 @@ function AdminHome() {
       <p>生产状态：{system?.status || (system?.ok ? 'healthy' : 'checking')}</p>
     </Card>
     <Card title="模型配置" icon={<BrainCircuit size={20} />}>
-      <p>Provider：{ai?.primaryProvider || 'deepseek'}</p>
-      <p>Ready：{String(ai?.ready ?? false)}</p>
-      <p>Degraded：{String(ai?.degraded ?? false)}</p>
+      <p>模型提供方：{ai?.primaryProvider || 'deepseek'}</p>
+      <p>就绪状态：{String(ai?.ready ?? false)}</p>
+      <p>降级状态：{String(ai?.degraded ?? false)}</p>
     </Card>
     <Card title="WebDAV 状态" icon={<PackageOpen size={20} />}>
-      <p>Enabled：{String(storage?.enabled ?? false)}</p>
-      <p>Connected：{String(storage?.connected ?? false)}</p>
-      <p>Writable：{String(storage?.writable ?? false)}</p>
+      <p>已启用：{String(storage?.enabled ?? false)}</p>
+      <p>已连接：{String(storage?.connected ?? false)}</p>
+      <p>可写：{String(storage?.writable ?? false)}</p>
     </Card>
     <Card title="飞书配置" icon={<MessageCircle size={20} />}>
-      <p>App configured：{String(feishu?.appConfigured ?? false)}</p>
-      <p>Webhook：{String(feishu?.webhookConfigured ?? false)}</p>
-      <p>Connected：{String(feishu?.connected ?? false)}</p>
+      <p>应用配置：{String(feishu?.appConfigured ?? false)}</p>
+      <p>Webhook 配置：{String(feishu?.webhookConfigured ?? false)}</p>
+      <p>已连接：{String(feishu?.connected ?? false)}</p>
       <div className="actions"><a className="button-link" href="/admin/feishu/teachers">教师绑定管理</a></div>
     </Card>
     <Card title="Cloudflare 状态" icon={<Share2 size={20} />}>

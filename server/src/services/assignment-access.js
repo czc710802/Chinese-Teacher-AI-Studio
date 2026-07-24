@@ -3,6 +3,7 @@ import {
   markAssignmentMessageRevoked,
   recordFeishuAssignmentMessage
 } from './feishu-assignment-bindings.js';
+import { canonicalEssayGroupSql } from './essay-submission.js';
 import { buildFeishuBusinessMigrationNotice, isFeishuBusinessEnabled } from '../integrations/feishu/config.js';
 
 function getTeacher(database, user) {
@@ -43,10 +44,20 @@ function normalizeAssignmentRow(row) {
   return {
     ...row,
     data_scope: row.data_scope || row.class_data_scope || 'production',
+    target_student_ids: String(row.target_student_ids || '').trim(),
     requires_teacher_review: Number(row.requires_teacher_review ?? 1),
     auto_grading: Number(row.auto_grading ?? 1),
     allow_student_view_result: Number(row.allow_student_view_result ?? 1)
   };
+}
+
+function normalizeTargetStudentIds(value) {
+  return String(value || '')
+    .split(/[\s,，]+/)
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .filter((item) => /^\d+$/.test(item))
+    .join(',');
 }
 
 function assignmentKey(row) {
@@ -59,7 +70,8 @@ function assignmentKey(row) {
     Number(row.full_score || 0),
     Number(row.min_words || 0),
     Number(row.max_words || 0),
-    String(row.deadline || '').trim()
+    String(row.deadline || '').trim(),
+    String(row.target_student_ids || '').trim()
   ].join('\u001f');
 }
 
@@ -226,7 +238,7 @@ export function listAssignmentsForClass(database, classId, { dataScope = '', inc
   }
   if (!includeArchived) conditions.push(activeAssignmentCondition(database));
   const rows = database.prepare(`
-    SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(e.id) AS essay_count
+    SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(DISTINCT ${canonicalEssayGroupSql('e')}) AS essay_count
     FROM assignments a
     JOIN classes c ON c.id = a.class_id
     LEFT JOIN essays e ON e.assignment_id = a.id
@@ -240,7 +252,7 @@ export function listAssignmentsForClass(database, classId, { dataScope = '', inc
 export function getAssignmentById(database, assignmentId, options = {}) {
   const scopeExpression = assignmentScopeExpression(database);
   const assignment = database.prepare(`
-    SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(e.id) AS essay_count
+    SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(DISTINCT ${canonicalEssayGroupSql('e')}) AS essay_count
     FROM assignments a
     JOIN classes c ON c.id = a.class_id
     LEFT JOIN essays e ON e.assignment_id = a.id
@@ -263,8 +275,14 @@ export function listVisibleAssignmentsForStudent(database, studentId, { classId 
     conditions.push(`${scopeExpression} = ?`);
     params.push(String(dataScope));
   }
+  if (hasColumn(database, 'assignments', 'target_student_ids')) {
+    conditions.push(`(
+      COALESCE(TRIM(a.target_student_ids), '') = ''
+      OR instr(',' || replace(COALESCE(a.target_student_ids, ''), ' ', '') || ',', ',' || CAST(cs.student_id AS TEXT) || ',') > 0
+    )`);
+  }
   const rows = database.prepare(`
-    SELECT a.*, c.name AS class_name, c.grade AS class_grade, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(e.id) AS essay_count
+    SELECT a.*, c.name AS class_name, c.grade AS class_grade, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(DISTINCT ${canonicalEssayGroupSql('e')}) AS essay_count
     FROM assignments a
     JOIN classes c ON c.id = a.class_id
     JOIN class_students cs ON cs.class_id = c.id
@@ -305,7 +323,7 @@ export function listAssignmentsForUser(database, user, { classId, dataScope } = 
     }
     conditions.push(activeAssignmentCondition(database));
     const rows = database.prepare(`
-      SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(e.id) AS essay_count
+      SELECT a.*, c.name AS class_name, c.data_scope AS class_data_scope, ${scopeExpression} AS data_scope, COUNT(DISTINCT ${canonicalEssayGroupSql('e')}) AS essay_count
       FROM assignments a
       JOIN classes c ON c.id = a.class_id
       LEFT JOIN essays e ON e.assignment_id = a.id
@@ -348,6 +366,7 @@ export function createManagedAssignment(database, user, body, options = {}) {
     deadline: String(body.deadline || '').trim(),
     status: String(body.status || 'published').trim() || 'published',
     data_scope: String(body.data_scope || body.dataScope || klass.data_scope || '').trim(),
+    target_student_ids: normalizeTargetStudentIds(body.target_student_ids || body.targetStudentIds || body.publishTargetStudentIds || ''),
     fixture_key: String(body.fixture_key || body.fixtureKey || '').trim(),
     requires_teacher_review: body.requires_teacher_review === false || body.requiresTeacherReview === false ? 0 : 1,
     auto_grading: body.auto_grading === false || body.autoGrading === false ? 0 : 1,
@@ -359,7 +378,7 @@ export function createManagedAssignment(database, user, body, options = {}) {
     feishu_chat_id: String(body.feishu_chat_id || body.feishuChatId || '').trim()
   };
   const existing = database.prepare(`
-    SELECT a.*, COUNT(e.id) AS essay_count
+    SELECT a.*, COUNT(DISTINCT ${canonicalEssayGroupSql('e')}) AS essay_count
     FROM assignments a
     LEFT JOIN essays e ON e.assignment_id = a.id
     WHERE a.class_id = ?
@@ -371,12 +390,13 @@ export function createManagedAssignment(database, user, body, options = {}) {
       AND COALESCE(a.min_words, 0) = ?
       AND COALESCE(a.max_words, 0) = ?
       AND COALESCE(TRIM(a.deadline), '') = COALESCE(TRIM(?), '')
+      AND COALESCE(TRIM(a.target_student_ids), '') = COALESCE(TRIM(?), '')
       AND COALESCE(a.archived_at, '') = ''
       AND COALESCE(a.deleted_at, '') = ''
     GROUP BY a.id
     ORDER BY essay_count DESC, a.created_at DESC, a.id DESC
     LIMIT 1
-  `).get(next.class_id, next.title, next.prompt, next.requirements, next.essay_type, next.full_score, next.min_words, next.max_words, next.deadline || '');
+  `).get(next.class_id, next.title, next.prompt, next.requirements, next.essay_type, next.full_score, next.min_words, next.max_words, next.deadline || '', next.target_student_ids || '');
   if (existing) return { status: 200, assignment: withSubmissionStats(database, existing, options), reused: true };
 
   const publicId = createPublicId(database, { ...klass, grade: next.grade }, options.now);
@@ -389,14 +409,14 @@ export function createManagedAssignment(database, user, body, options = {}) {
        min_words, max_words, scoring_standard, data_scope, fixture_key, status,
        requires_teacher_review, auto_grading, allow_student_view_result, allow_resubmit, allow_late_submit,
        second_draft_enabled, reminder_enabled, published_at,
-       share_url, qr_svg, feishu_chat_id, deadline)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
+       share_url, qr_svg, feishu_chat_id, target_student_ids, deadline)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)
   `).run(
     next.class_id, publicId, next.title, next.prompt, next.requirements, next.essay_type, next.full_score, next.grade,
     next.min_words, next.max_words, next.scoring_standard, next.data_scope || null, next.fixture_key || null, next.status,
     next.requires_teacher_review, next.auto_grading, next.allow_student_view_result, next.allow_resubmit,
     next.allow_late_submit, next.second_draft_enabled, next.reminder_enabled,
-    submissionUrl, qrSvg, next.feishu_chat_id, next.deadline || null
+    submissionUrl, qrSvg, next.feishu_chat_id, next.target_student_ids || '', next.deadline || null
   );
   return {
     status: 200,

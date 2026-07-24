@@ -1,15 +1,18 @@
 import { db } from '../db/connection.js';
 import { parseJson, safeJson } from '../utils/json.js';
 import { recordStudentProfileSnapshot } from './storage-artifacts.js';
+import { canonicalEssayIdsSql } from './essay-submission.js';
 
 export function refreshStudentProfile(studentId, { storageService, logger = console } = {}) {
   const rows = db.prepare(`
+    ${canonicalEssayIdsSql('e')}
     SELECT e.id, e.title, e.created_at, a.title AS assignment_title, ar.total_score, ar.problems, ar.next_training, ar.raw_json
-    FROM essays e
+    FROM canonical_essays ce
+    JOIN essays e ON e.id = ce.id
     LEFT JOIN assignments a ON a.id = e.assignment_id
     LEFT JOIN ai_reviews ar ON ar.essay_id = e.id
     WHERE e.student_id = ?
-    ORDER BY e.created_at ASC
+    ORDER BY e.created_at ASC, e.id ASC
   `).all(studentId);
 
   const scoreTrend = rows.filter((row) => row.total_score !== null).map((row) => ({

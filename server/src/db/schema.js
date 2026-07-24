@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS assignments (
   share_url TEXT DEFAULT '',
   qr_svg TEXT DEFAULT '',
   feishu_chat_id TEXT DEFAULT '',
+  target_student_ids TEXT DEFAULT '',
   deadline TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE
@@ -173,6 +174,8 @@ CREATE TABLE IF NOT EXISTS essays (
   report_id INTEGER,
   submitted_at TEXT DEFAULT CURRENT_TIMESTAMP,
   submit_round INTEGER NOT NULL DEFAULT 1,
+  client_submission_key TEXT DEFAULT '',
+  submission_group_key TEXT DEFAULT '',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
@@ -315,7 +318,7 @@ CREATE TABLE IF NOT EXISTS export_records (
   FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- AI 辅导老师对话记录
+-- 师生互动交流对话记录
 CREATE TABLE IF NOT EXISTS ai_tutor_conversations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   student_id INTEGER NOT NULL,
@@ -413,4 +416,7 @@ CREATE TABLE IF NOT EXISTS student_weekly_reports (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_essays_client_submission_key ON essays(client_submission_key);
+CREATE INDEX IF NOT EXISTS idx_essays_submission_group_key ON essays(assignment_id, student_id, submission_group_key, submitted_at, id);
 `;

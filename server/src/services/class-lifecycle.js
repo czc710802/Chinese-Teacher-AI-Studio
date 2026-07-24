@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { db } from '../db/connection.js';
 import { assertAbsoluteHttpUrl, buildPublicUrl } from './public-access.js';
 import { listVisibleAssignmentsForStudent } from './assignment-access.js';
+import { canonicalEssayGroupSql } from './essay-submission.js';
 
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -765,7 +766,7 @@ export function listClassMembers(database = db, user, classId) {
            b.left_at,
            CASE WHEN COALESCE(b.status, 'active') = 'active' THEN 1 ELSE 0 END AS is_active,
            COALESCE((
-             SELECT COUNT(*)
+             SELECT COUNT(DISTINCT ${canonicalEssayGroupSql('e')})
              FROM essays e
              JOIN assignments a ON a.id = e.assignment_id
              WHERE e.student_id = s.id AND a.class_id = cs.class_id
@@ -846,7 +847,7 @@ export function deleteLifecycleClassCascade(database = db, user, classId, input 
       WHERE student_id = ? AND class_id != ?
     `).get(student.student_id, classId).count;
     const otherEssayCount = database.prepare(`
-      SELECT COUNT(*) AS count
+      SELECT COUNT(DISTINCT ${canonicalEssayGroupSql('e')}) AS count
       FROM essays e
       JOIN assignments a ON a.id = e.assignment_id
       WHERE e.student_id = ? AND a.class_id != ?
