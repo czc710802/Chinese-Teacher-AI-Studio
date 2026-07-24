@@ -94,6 +94,7 @@ install_job() {
   local label="$1"
   local plist="$2"
   launchctl bootout "$DOMAIN" "$plist" >/dev/null 2>&1 || true
+  launchctl enable "$DOMAIN/$label" >/dev/null 2>&1 || true
   launchctl bootstrap "$DOMAIN" "$plist"
   launchctl enable "$DOMAIN/$label" >/dev/null 2>&1 || true
   launchctl kickstart -k "$DOMAIN/$label"
