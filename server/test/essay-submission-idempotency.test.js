@@ -65,3 +65,39 @@ test('same clientSubmissionKey reuses the existing essay and does not create dup
   assert.equal(first.essayId, second.essayId);
   assert.equal(count, 1);
 });
+
+test('new clientSubmissionKey creates a new version and preserves the history', () => {
+  const fixture = createFixtureDb();
+
+  const first = createOrReuseEssaySubmission(fixture.database, {
+    assignment: fixture.assignment,
+    studentId: fixture.studentId,
+    title: '周练',
+    essayText: '这是一篇图片提交作文。',
+    attachments: [{ kind: 'image', name: 'essay-1.jpg', size: 1234, mimeType: 'image/jpeg' }],
+    clientSubmissionKey: 'client-key-001',
+    submitRound: 1,
+    submissionStatus: 'submitted'
+  });
+
+  const second = createOrReuseEssaySubmission(fixture.database, {
+    assignment: fixture.assignment,
+    studentId: fixture.studentId,
+    title: '周练',
+    essayText: '我修改后的第二版作文。',
+    attachments: [{ kind: 'image', name: 'essay-2.jpg', size: 2345, mimeType: 'image/jpeg' }],
+    clientSubmissionKey: 'client-key-002',
+    submitRound: 2,
+    submissionStatus: 'submitted'
+  });
+
+  const rows = fixture.database.prepare('SELECT id, submit_round AS submitRound, client_submission_key AS clientSubmissionKey FROM essays WHERE student_id = ? AND assignment_id = ? ORDER BY submit_round ASC, id ASC')
+    .all(fixture.studentId, fixture.assignment.id);
+
+  assert.equal(first.duplicate, false);
+  assert.equal(second.duplicate, false);
+  assert.equal(first.submissionVersion, 1);
+  assert.equal(second.submissionVersion, 2);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((row) => Number(row.submitRound)), [1, 2]);
+});

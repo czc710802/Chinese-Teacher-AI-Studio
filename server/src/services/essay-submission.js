@@ -90,6 +90,7 @@ export function ensureEssaySubmissionColumns(database) {
     updateRow.run(clientKey, groupKey, row.id);
   }
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_essays_client_submission_key ON essays(client_submission_key);');
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_essays_submission_version ON essays(assignment_id, student_id, submit_round);');
   database.exec('CREATE INDEX IF NOT EXISTS idx_essays_submission_group_key ON essays(assignment_id, student_id, submission_group_key, submitted_at, id);');
 }
 
@@ -148,7 +149,7 @@ export function createOrReuseEssaySubmission(database, {
 
   database.exec('BEGIN IMMEDIATE');
   try {
-    const existing = database.prepare(`
+  const existing = database.prepare(`
       SELECT id, grading_status AS gradingStatus, status, submit_round AS submitRound, client_submission_key AS clientSubmissionKey, submission_group_key AS submissionGroupKey
       FROM essays
       WHERE assignment_id = ? AND student_id = ? AND client_submission_key = ?
@@ -166,6 +167,7 @@ export function createOrReuseEssaySubmission(database, {
         gradingStatus: String(existing.gradingStatus || existing.status || resolvedStatus || 'submitted'),
         clientSubmissionKey: existing.clientSubmissionKey || submissionKey,
         submissionGroupKey: existing.submissionGroupKey || submissionKey,
+        submissionVersion: Number(existing.submitRound || submitRound || 1),
         normalizedGradingResult: reviewRow ? safeParseJson(reviewRow.raw_json, {}) : {}
       };
     }
@@ -175,10 +177,6 @@ export function createOrReuseEssaySubmission(database, {
       FROM essays
       WHERE assignment_id = ? AND student_id = ?
     `).get(assignment.id, studentId);
-    if (Number(existingRound.count || 0) > 0 && !allowResubmitFlag) {
-      database.exec('ROLLBACK');
-      throw new Error('该作业已提交，请勿重复提交');
-    }
 
     const nextEssayIdRow = database.prepare('SELECT COALESCE(MAX(id), 0) + 1 AS nextId FROM essays').get();
     const essayId = Number(nextEssayIdRow?.nextId || 1);
@@ -215,6 +213,7 @@ export function createOrReuseEssaySubmission(database, {
       duplicate: false,
       essayId,
       submitRound: nextSubmitRound,
+      submissionVersion: nextSubmitRound,
       submissionStatus: isPastDeadline ? 'late_submitted' : resolvedStatus,
       gradingStatus: 'grading',
       clientSubmissionKey: submissionKey,
