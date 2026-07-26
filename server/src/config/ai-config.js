@@ -83,8 +83,10 @@ function providerConfig(env, provider) {
   const baseUrl = safeUrl(env[`${upper}_BASE_URL`], defaultBaseUrl);
   const secret = sanitizeSecretValue(env[`${upper}_API_KEY`]);
   const model = normalizeEnvValue(env[`${upper}_MODEL`] || '');
-  const fastModel = normalizeEnvValue(env[`${upper}_FAST_MODEL`] || model);
-  const reasoningModel = normalizeEnvValue(env[`${upper}_REASONING_MODEL`] || model);
+  const legacyDeepSeekFastModel = provider === 'deepseek' && model === 'deepseek-chat' ? 'deepseek-v4-flash' : model;
+  const legacyDeepSeekReasoningModel = provider === 'deepseek' && model === 'deepseek-chat' ? 'deepseek-v4-pro' : model;
+  const fastModel = normalizeEnvValue(env[`${upper}_FAST_MODEL`] || legacyDeepSeekFastModel);
+  const reasoningModel = normalizeEnvValue(env[`${upper}_REASONING_MODEL`] || legacyDeepSeekReasoningModel);
   return {
     name: provider,
     model,

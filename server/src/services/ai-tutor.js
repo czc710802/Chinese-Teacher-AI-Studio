@@ -1,24 +1,66 @@
 import { getTextProvider, callTextModel, parseAIJsonObject } from './openai.js';
 
 /**
- * AI 辅导老师 — 解释作文得分和问题
+ * 师生互动交流 — 解释作文得分和问题
  */
-export async function tutorChat({ essay, review, studentQuestion, history = [] }) {
+export async function tutorChat({ essay, review, studentQuestion, history = [], interactionRequestId = '' }) {
+  const asList = (value) => {
+    if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+    if (typeof value === 'string') return value.split(/[；;，,\n]/).map((item) => item.trim()).filter(Boolean);
+    if (value && typeof value === 'object') {
+      return Object.values(value).flatMap((item) => asList(item));
+    }
+    return [];
+  };
   const messages = history.map((m) => `${m.role}：${m.message}`).join('\n');
-  const prompt = `你是一位耐心细致的高中语文教师，正在为学生解答关于作文批改的问题。
+  const studentTurns = history.filter((item) => String(item?.role || '').trim() === 'student').length;
+  const responseAngles = [
+    '从概念拆解角度',
+    '从提问步骤角度',
+    '从常见误区角度',
+    '从课堂练习角度',
+    '从自我检查角度'
+  ];
+  const responseAngle = responseAngles[studentTurns % responseAngles.length];
+  const question = String(studentQuestion || '').trim();
+  const prompt = `你是一名高中语文作文指导教师，正在与学生进行作文修改后的互动交流。
 
 【作文任务】${essay.assignment_title}（${essay.essay_type}）
-【学生作文片段】${(essay.original_text || '').slice(0, 600)}
+【学生作文原文】${(essay.original_text || '').slice(0, 800)}
+【作文题目】${essay.assignment_title || '暂无'}
+【本次问题ID】${interactionRequestId || '无'}
+【学生本次问题】${question || '暂无'}
 【AI批改总分】${review?.total_score || '暂无'}分
-【AI评语】${review?.problems?.join('；') || '暂无'}
+【AI批改结果】${review?.overallComment || review?.summary?.overallComment || '暂无'}
+【主要问题】${asList(review?.problems).join('；') || asList(review?.summary?.mainProblems).join('；') || '暂无'}
+【修改建议】${asList(review?.suggestions).join('；') || asList(review?.summary?.priorityImprovements).join('；') || '暂无'}
+【升格文章】${review?.upgraded_text || review?.summary?.upgradedText || '暂无'}
 【历史对话】
 ${messages || '无'}
+【本轮回答切入角度】${responseAngle}
+【重复回答要求】如果前一轮已经回答过类似问题，请换一个切入点，不要重复上一轮的开头句式、段落结构和示例。
 
 【学生提问】${studentQuestion}
 
-请以教师的口吻，用温和鼓励的语气解答学生的疑问，给出具体的修改建议和提升方向。回答要结合高考作文评分标准，指出学生可以实际操作的方法。控制在 300 字以内。`;
+请遵循以下要求回答：
+1. 基于本次作文，不要脱离具体文本空谈。
+2. 结合 AI 批改结果，指出具体问题。
+3. 给出可执行的修改方法。
+4. 引导学生进行深度逻辑思考。
+5. 避免直接代写整篇作文。
+6. 鼓励学生自主提升。
+7. 必须优先回应“学生本次问题”，不要套用固定模板。
+8. 只回答当前问题，回答内容要明显区别于其他问题。
+9. 按“${responseAngle}”组织答案。
 
-  return callTextModel(prompt, { taskType: 'quick_feedback' });
+回答风格要像语文老师课后指导：有针对性、有启发性、有教学价值、能承接多轮交流。控制在 300 字以内。`;
+
+  return callTextModel(prompt, {
+    taskType: 'quick_feedback',
+    allowedProviders: ['deepseek'],
+    fallbackEnabled: false,
+    temperature: 0.78
+  });
 }
 
 /**
