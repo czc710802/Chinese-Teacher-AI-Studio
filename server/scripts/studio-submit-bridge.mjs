@@ -112,6 +112,7 @@ function stripXmlText(xml) {
 
 function extensionFromMimeType(mimeType = '', name = '') {
   const type = String(mimeType || '').toLowerCase();
+  if (type.startsWith('image/')) return path.extname(String(name || '')).toLowerCase() || '.jpg';
   if (type === 'text/plain') return '.txt';
   if (type === 'text/markdown') return '.md';
   if (type === 'application/pdf') return '.pdf';
@@ -153,6 +154,11 @@ function materializeUploadedFiles(items = [], prefix = 'file') {
 
 function extractTextFromUploadedFile(file) {
   const ext = path.extname(file.originalname || file.path).toLowerCase();
+  if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.heic', '.heif'].includes(ext)) {
+    const error = new Error('图片请走图片批量上传流程，不要直接作为普通文件提交');
+    error.statusCode = 415;
+    throw error;
+  }
   if (['.txt', '.md'].includes(ext)) return fs.readFileSync(file.path, 'utf8');
   if (ext === '.docx') {
     const xml = execFileSync('unzip', ['-p', file.path, 'word/document.xml'], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
@@ -210,14 +216,34 @@ async function resolveEssayText(payloadValue) {
 
     if (files.length) {
       materializedFiles = materializeUploadedFiles(files, 'essay-file');
-      fileText = materializedFiles.files.map((file) => extractTextFromUploadedFile(file)).join('\n\n').trim();
-      uploadArtifacts.push(...materializedFiles.files.map((file) => ({
-        kind: 'file',
-        path: file.path,
-        originalname: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size,
-      })));
+      const imageFiles = materializedFiles.files.filter((file) => String(file.mimetype || '').toLowerCase().startsWith('image/') || ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.heic', '.heif'].includes(path.extname(file.originalname || file.path).toLowerCase()));
+      const documentFiles = materializedFiles.files.filter((file) => !imageFiles.includes(file));
+
+      if (imageFiles.length) {
+        const recognized = await recognizeImages(imageFiles);
+        fileText = [fileText, String(recognized || '').trim()].filter(Boolean).join('\n\n').trim();
+        uploadArtifacts.push(...imageFiles.map((file, index) => ({
+          kind: 'image',
+          path: file.path,
+          originalname: file.originalname,
+          mimetype: file.mimetype,
+          size: file.size,
+          ocrText: String(recognized || '').trim(),
+          sortOrder: index,
+        })));
+      }
+
+      if (documentFiles.length) {
+        const docText = documentFiles.map((file) => extractTextFromUploadedFile(file)).join('\n\n').trim();
+        fileText = [fileText, docText].filter(Boolean).join('\n\n').trim();
+        uploadArtifacts.push(...documentFiles.map((file) => ({
+          kind: 'file',
+          path: file.path,
+          originalname: file.originalname,
+          mimetype: file.mimetype,
+          size: file.size,
+        })));
+      }
     }
 
     const essayText = [imageText, fileText, originalText].find((value) => String(value || '').trim()) || '';
